@@ -1,0 +1,1005 @@
+// Prompters data model.
+// Content is edited in working tables (Topic, TopicSection, Visualization) and
+// snapshotted into TopicVersion on publish. Students always read the latest
+// TopicVersion, so drafts never leak and history stays tied to the version studied.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ───────────────────────── Users ─────────────────────────
+
+enum Role {
+  STUDENT
+  AUTHOR
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum StartLanguage {
+  PYTHON
+  JAVASCRIPT
+}
+
+enum ExplanationLocale {
+  hinglish
+  en
+  hi
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  name         String
+  passwordHash String?
+  googleId     String?    @unique
+  role         Role       @default(STUDENT)
+  status       UserStatus @default(ACTIVE)
+  /// Bumped on logout-all / password change / suspension to invalidate tokens.
+  tokenVersion Int        @default(0)
+  lastActiveAt DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  profile            UserProfile?
+  masteries          Mastery[]
+  quizAttempts       QuizAttempt[]
+  submissions        Submission[]
+  projectSubmissions ProjectSubmission[]
+  readiness          ReadinessSnapshot[]
+  events             LearningEvent[]
+  applications       Application[]
+  stageProgress      StageProgress[]
+  promptFavorites    PromptFavorite[]
+  promptRatings      PromptRating[]
+  interviewPractice  InterviewPractice[]
+  achievements       Achievement[]
+  auditLogs          AdminAuditLog[]
+  resumes            CareerResume[]
+  jobTargets         JobTarget[]
+  jobMatches         JobMatch[]
+  interviewSessions  InterviewSession[]
+  prepPlans          PrepPlan[]
+  prepAttempts       PrepAttempt[]
+  prepPacks          PrepPack[]
+
+  @@index([role])
+  @@index([createdAt])
+}
+
+model UserProfile {
+  userId               String            @id
+  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  avatarUrl            String?
+  education            String?
+  year                 Int?
+  codingLevel          String?
+  startLanguage        StartLanguage?
+  explanationLocale    ExplanationLocale @default(hinglish)
+  goalRole             String?
+  targetCompanies      String[]          @default([])
+  targetSalary         String?
+  targetDate           DateTime?
+  weeklyHours          Int?
+  skills               String[]          @default([])
+  goals                String?
+  headline             String?
+  summary              String?
+  links                Json?
+  onboardedAt          DateTime?
+  placementCompletedAt DateTime?
+  updatedAt            DateTime          @updatedAt
+}
+
+// ───────────────────────── Curriculum ─────────────────────────
+
+enum ContentStatus {
+  DRAFT
+  REVIEW
+  PUBLISHED
+  COMING_SOON
+  ARCHIVED
+}
+
+enum StageTrack {
+  COMMON
+  PYTHON
+  JAVASCRIPT
+}
+
+model Stage {
+  id          String        @id @default(cuid())
+  slug        String        @unique
+  code        String
+  title       String
+  description String
+  track       StageTrack    @default(COMMON)
+  order       Int
+  estHours    Int           @default(0)
+  targetRoles String[]      @default([])
+  icon        String?
+  color       String?
+  status      ContentStatus @default(PUBLISHED)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  modules     Module[]
+  progress    StageProgress[]
+  assessments Assessment[]
+
+  @@index([order])
+}
+
+model Module {
+  id          String        @id @default(cuid())
+  stageId     String
+  stage       Stage         @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  slug        String        @unique
+  title       String
+  description String
+  order       Int
+  difficulty  Int           @default(1)
+  status      ContentStatus @default(PUBLISHED)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  topics Topic[]
+
+  @@index([stageId, order])
+}
+
+model Topic {
+  id                  String        @id @default(cuid())
+  moduleId            String
+  module              Module        @relation(fields: [moduleId], references: [id], onDelete: Restrict)
+  slug                String        @unique
+  title               String
+  order               Int
+  difficulty          Int           @default(1)
+  estMinutes          Int           @default(15)
+  objectives          String[]      @default([])
+  technicalDefinition String?
+  tags                String[]      @default([])
+  status              ContentStatus @default(DRAFT)
+  /// Number of the latest published TopicVersion (0 = never published).
+  publishedVersion    Int           @default(0)
+  quizSize            Int           @default(5)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  sections      TopicSection[]
+  visualization Visualization?
+  versions      TopicVersion[]
+  prerequisites TopicPrerequisite[] @relation("TopicPrereqs")
+  requiredBy    TopicPrerequisite[] @relation("PrereqOf")
+  questions     Question[]
+  buildTasks    BuildTask[]
+  promptCards   PromptCard[]
+  interviewQs   InterviewQuestion[]
+  masteries     Mastery[]
+  quizAttempts  QuizAttempt[]
+
+  @@index([moduleId, order])
+  @@index([status])
+}
+
+model TopicPrerequisite {
+  topicId        String
+  topic          Topic  @relation("TopicPrereqs", fields: [topicId], references: [id], onDelete: Cascade)
+  prerequisiteId String
+  prerequisite   Topic  @relation("PrereqOf", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+
+  @@id([topicId, prerequisiteId])
+  @@index([prerequisiteId])
+}
+
+model TopicSection {
+  id         String  @id @default(cuid())
+  topicId    String
+  topic      Topic   @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  type       String
+  order      Int
+  /// { hinglish, en, hi? } — localisation lives in data, never in UI code.
+  content    Json
+  codeJs     String?
+  codePython String?
+
+  @@unique([topicId, type])
+}
+
+model Visualization {
+  id      String @id @default(cuid())
+  topicId String @unique
+  topic   Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  kind    String
+  title   String
+  /// [{ title, description, highlight?, durationMs? }]
+  steps   Json
+}
+
+model TopicVersion {
+  id            String   @id @default(cuid())
+  topicId       String
+  topic         Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  version       Int
+  /// Full topic snapshot (meta, sections, visualization) as students see it.
+  snapshot      Json
+  publishedById String?
+  note          String?
+  createdAt     DateTime @default(now())
+
+  @@unique([topicId, version])
+}
+
+// ───────────────────────── Assessment ─────────────────────────
+
+enum QuestionType {
+  MCQ
+  MULTI
+  PREDICT_OUTPUT
+  SPOT_BUG
+  FILL_CODE
+  SCENARIO
+  ORDER_STEPS
+  EXPLAIN
+}
+
+model Question {
+  id           String        @id @default(cuid())
+  topicId      String
+  topic        Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  type         QuestionType
+  difficulty   Int           @default(1)
+  prompt       String
+  code         String?
+  codeLanguage String?
+  options      Json?
+  /// Option indices; null for ORDER_STEPS (option order is the answer) and EXPLAIN.
+  correct      Json?
+  keywords     String[]      @default([])
+  explanation  String
+  tags         String[]      @default([])
+  points       Int           @default(1)
+  status       ContentStatus @default(PUBLISHED)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([topicId, status])
+}
+
+enum AttemptKind {
+  PLACEMENT
+  MASTERY
+  REVIEW
+  PRACTICE
+  STAGE_EXAM
+  MOCK_TEST
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  EXPIRED
+}
+
+enum ViolationPolicy {
+  LOG
+  FLAG
+  AUTO_SUBMIT
+}
+
+model Assessment {
+  id                String          @id @default(cuid())
+  slug              String          @unique
+  title             String
+  description       String?
+  kind              AttemptKind
+  stageId           String?
+  stage             Stage?          @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  /// Topic slugs the question pool is drawn from (empty = whole stage).
+  topicSlugs        String[]        @default([])
+  durationMinutes   Int             @default(30)
+  questionCount     Int             @default(20)
+  passingScore      Int             @default(70)
+  maxAttempts       Int?
+  tabSwitchLimit    Int             @default(3)
+  violationPolicy   ViolationPolicy @default(FLAG)
+  blockClipboard    Boolean         @default(true)
+  requireFullscreen Boolean         @default(true)
+  status            ContentStatus   @default(PUBLISHED)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  attempts QuizAttempt[]
+}
+
+model QuizAttempt {
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId        String?
+  topic          Topic?        @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  assessmentId   String?
+  assessment     Assessment?   @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  kind           AttemptKind
+  status         AttemptStatus @default(IN_PROGRESS)
+  topicVersion   Int?
+  questionIds    String[]
+  /// Per-question order of displayed option indices, so grading maps back correctly.
+  optionOrders   Json
+  /// Latest saved answers (autosave) — { [questionId]: answer }
+  draftAnswers   Json?
+  /// Graded result per question incl. a snapshot of the question as asked.
+  results        Json?
+  score          Float?
+  passed         Boolean?
+  flagged        Boolean       @default(false)
+  integrityScore Int?
+  startedAt      DateTime      @default(now())
+  expiresAt      DateTime?
+  finishedAt     DateTime?
+
+  integrityEvents IntegrityEvent[]
+
+  @@index([userId, kind, startedAt])
+  @@index([userId, topicId])
+}
+
+model IntegrityEvent {
+  id        String      @id @default(cuid())
+  attemptId String
+  attempt   QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  type      String
+  meta      Json?
+  createdAt DateTime    @default(now())
+
+  @@index([attemptId])
+}
+
+enum MasteryStatus {
+  LEARNING
+  MASTERED
+  NEEDS_REVIEW
+}
+
+model Mastery {
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId        String
+  topic          Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  status         MasteryStatus @default(LEARNING)
+  source         String?
+  bestScore      Float         @default(0)
+  lastScore      Float?
+  attempts       Int           @default(0)
+  readAt         DateTime?
+  masteredAt     DateTime?
+  reviewStep     Int           @default(0)
+  nextReviewAt   DateTime?
+  lastReviewedAt DateTime?
+  /// Latest spaced-review score (0–100); drives the "recall" part of readiness.
+  recallScore    Float?
+  updatedAt      DateTime      @updatedAt
+
+  @@id([userId, topicId])
+  @@index([userId, nextReviewAt])
+}
+
+model StageProgress {
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stageId       String
+  stage         Stage     @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  bestExamScore Float?
+  passedAt      DateTime?
+  passedBy      String?
+
+  @@id([userId, stageId])
+}
+
+// ───────────────────────── Build without AI ─────────────────────────
+
+model BuildTask {
+  id               String        @id @default(cuid())
+  slug             String        @unique
+  topicId          String?
+  topic            Topic?        @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  title            String
+  description      String
+  functionName     String
+  starterJs        String
+  starterPython    String
+  /// [{ name, args, expected, hidden }]
+  tests            Json
+  /// [concept, step, partial code]
+  hints            Json
+  /// [{ question, keywords }]
+  explainQuestions Json
+  difficulty       Int           @default(1)
+  estMinutes       Int           @default(20)
+  status           ContentStatus @default(PUBLISHED)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  submissions Submission[]
+}
+
+enum SubmissionStatus {
+  IN_PROGRESS
+  TESTS_PASSED
+  COMPLETED
+}
+
+model Submission {
+  id                String           @id @default(cuid())
+  userId            String
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  buildTaskId       String
+  buildTask         BuildTask        @relation(fields: [buildTaskId], references: [id], onDelete: Cascade)
+  language          String
+  code              String
+  status            SubmissionStatus @default(IN_PROGRESS)
+  hintsUsed         Int              @default(0)
+  runs              Int              @default(0)
+  submits           Int              @default(0)
+  testResult        Json?
+  passedCount       Int              @default(0)
+  totalCount        Int              @default(0)
+  explainAnswers    Json?
+  explainScore      Float?
+  independenceScore Float?
+  projectScore      Float?
+  startedAt         DateTime         @default(now())
+  completedAt       DateTime?
+  updatedAt         DateTime         @updatedAt
+
+  @@unique([userId, buildTaskId])
+}
+
+model Project {
+  id               String        @id @default(cuid())
+  slug             String        @unique
+  rung             Int           @unique
+  title            String
+  description      String
+  skills           String[]      @default([])
+  technologies     String[]      @default([])
+  /// ["requirement", ...]
+  requirements     Json
+  /// [{ title, description }]
+  milestones       Json
+  /// [{ question, keywords }]
+  explainQuestions Json
+  /// [concept, step, partial code]
+  hints            Json          @default("[]")
+  stageSlug        String?
+  difficulty       Int           @default(1)
+  status           ContentStatus @default(PUBLISHED)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  submissions ProjectSubmission[]
+}
+
+model ProjectSubmission {
+  id                String           @id @default(cuid())
+  userId            String
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId         String
+  project           Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  repoUrl           String
+  liveUrl           String?
+  /// { approach, bugFixed, tradeoff }
+  howIBuiltIt       Json
+  explainAnswers    Json
+  explainScore      Float
+  milestonesDone    Int              @default(0)
+  hintsUsed         Int              @default(0)
+  independenceScore Float
+  status            SubmissionStatus @default(COMPLETED)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@unique([userId, projectId])
+}
+
+// ───────────────────────── Prompts & interviews ─────────────────────────
+
+model PromptCard {
+  id              String        @id @default(cuid())
+  slug            String        @unique
+  topicId         String
+  topic           Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  title           String
+  category        String
+  task            String
+  whenToUse       String
+  template        String
+  variables       Json
+  whyItWorks      Json
+  verifyChecklist Json
+  sampleOutput    String
+  version         Int           @default(1)
+  status          ContentStatus @default(PUBLISHED)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  favorites PromptFavorite[]
+  ratings   PromptRating[]
+
+  @@index([topicId])
+  @@index([category])
+}
+
+model PromptFavorite {
+  userId   String
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  promptId String
+  prompt   PromptCard @relation(fields: [promptId], references: [id], onDelete: Cascade)
+
+  @@id([userId, promptId])
+}
+
+model PromptRating {
+  userId   String
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  promptId String
+  prompt   PromptCard @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  rating   Int
+
+  @@id([userId, promptId])
+}
+
+model InterviewQuestion {
+  id            String        @id @default(cuid())
+  topicId       String?
+  topic         Topic?        @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  category      String
+  question      String
+  short         String
+  deep          String
+  followUps     String[]      @default([])
+  commonMistake String
+  keywords      String[]      @default([])
+  difficulty    Int           @default(1)
+  roles         String[]      @default([])
+  status        ContentStatus @default(PUBLISHED)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  practice InterviewPractice[]
+
+  @@index([category])
+}
+
+model InterviewPractice {
+  id         String            @id @default(cuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionId String
+  question   InterviewQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  answer     String
+  score      Float
+  matched    String[]          @default([])
+  missing    String[]          @default([])
+  createdAt  DateTime          @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// ───────────────────────── Journey & career ─────────────────────────
+
+model ReadinessSnapshot {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score        Int
+  breakdown    Json
+  weakestAreas Json
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model LearningEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  topicId   String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+}
+
+model Achievement {
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key      String
+  earnedAt DateTime @default(now())
+
+  @@id([userId, key])
+}
+
+model Application {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company     String
+  role        String
+  status      String    @default("APPLIED")
+  round       String?
+  appliedAt   DateTime?
+  nextStepAt  DateTime?
+  interviewAt DateTime?
+  result      String?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+// ───────────────────────── Platform settings ─────────────────────────
+
+model FeatureFlag {
+  key            String   @id
+  description    String
+  enabled        Boolean  @default(false)
+  rolloutPercent Int      @default(100)
+  userIds        String[] @default([])
+  updatedAt      DateTime @updatedAt
+}
+
+model ScoringConfig {
+  id          String   @id @default(cuid())
+  version     Int      @unique
+  config      Json
+  active      Boolean  @default(false)
+  createdById String?
+  note        String?
+  createdAt   DateTime @default(now())
+}
+
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  actor      User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// ───────────────────────── Interview & Career Intelligence ─────────────────────────
+
+model CareerResume {
+  id         String        @id @default(cuid())
+  userId     String
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label      String
+  fileName   String?
+  /// Original upload in object storage (deleted with the resume).
+  storageKey String?
+  text       String
+  /// Structured extraction: skills, projects, experience, education, claims…
+  parsed     Json
+  createdAt  DateTime      @default(now())
+  /// Set once semantic chunks + claims have been extracted (older resumes get them lazily).
+  analyzedAt DateTime?
+  matches    JobMatch[]
+  chunks     ResumeChunk[]
+  claims     ResumeClaim[]
+  prepPlans  PrepPlan[]
+
+  @@index([userId, createdAt])
+}
+
+model JobTarget {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  company   String?
+  text      String
+  parsed    Json
+  createdAt DateTime   @default(now())
+  matches   JobMatch[]
+  prepPlans PrepPlan[]
+
+  @@index([userId, createdAt])
+}
+
+model JobMatch {
+  id        String             @id @default(cuid())
+  userId    String
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeId  String
+  resume    CareerResume       @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  jobId     String
+  job       JobTarget          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  /// Weighted from `breakdown` by code, not by the model.
+  score     Int
+  breakdown Json
+  strong    String[]           @default([])
+  missing   String[]           @default([])
+  risks     Json
+  claims    Json
+  /// Prioritised, resume-grounded question bank.
+  questions Json
+  model     String?
+  createdAt DateTime           @default(now())
+  sessions  InterviewSession[]
+
+  @@index([userId, createdAt])
+}
+
+enum InterviewStatus {
+  IN_PROGRESS
+  COMPLETED
+  ENDED_INTEGRITY
+  ABANDONED
+}
+
+model InterviewSession {
+  id                  String                    @id @default(cuid())
+  userId              String
+  user                User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matchId             String
+  match               JobMatch                  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  status              InterviewStatus           @default(IN_PROGRESS)
+  language            String                    @default("hinglish")
+  durationMinutes     Int                       @default(30)
+  questionTarget      Int                       @default(15)
+  /// { recording, integrity, preparationOnly, at }
+  consent             Json
+  screenShareWarnings Int                       @default(0)
+  readinessScore      Int?
+  result              String?
+  report              Json?
+  startedAt           DateTime                  @default(now())
+  endedAt             DateTime?
+  turns               InterviewTurn[]
+  integrityEvents     InterviewIntegrityEvent[]
+
+  @@index([userId, startedAt])
+}
+
+model InterviewTurn {
+  id            String           @id @default(cuid())
+  sessionId     String
+  session       InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  order         Int
+  /// QUESTION | FOLLOW_UP | CODING
+  kind          String
+  parentId      String?
+  /// Id of the question in JobMatch.questions (root questions only).
+  bankId        String?
+  question      String
+  /// What Manisha says before the question ("Okay, thanks.").
+  lead          String?
+  skill         String
+  category      String
+  level         Int              @default(1)
+  buildTaskSlug String?
+  answerText    String?
+  answerCode    String?
+  codeLanguage  String?
+  codeResult    Json?
+  audioKey      String?
+  audioMime     String?
+  durationSec   Int?
+  skipped       Boolean          @default(false)
+  evaluation    Json?
+  askedAt       DateTime         @default(now())
+  answeredAt    DateTime?
+
+  @@unique([sessionId, order])
+}
+
+model InterviewIntegrityEvent {
+  id        String           @id @default(cuid())
+  sessionId String
+  session   InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type      String
+  meta      Json?
+  createdAt DateTime         @default(now())
+
+  @@index([sessionId])
+}
+
+// ───────────────────────── Resume intelligence & Top-100 preparation ─────────────────────────
+
+enum ResumeChunkType {
+  SUMMARY
+  EXPERIENCE
+  PROJECT
+  SKILL
+  ACHIEVEMENT
+  EDUCATION
+  CERTIFICATION
+  OTHER
+}
+
+/// One semantic unit of a resume (a project, a job, a skill with its evidence…).
+model ResumeChunk {
+  id           String          @id @default(cuid())
+  resumeId     String
+  resume       CareerResume    @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  order        Int
+  type         ResumeChunkType
+  section      String
+  title        String
+  text         String
+  technologies String[]        @default([])
+  /// PROJECT: { problem, architecture, features[], contribution, complexity }; SKILL: { evidence[] }.
+  meta         Json?
+  /// HIGH | MEDIUM | LOW — how hard an interviewer is likely to probe it.
+  risk         String          @default("MEDIUM")
+  claims       ResumeClaim[]
+
+  @@index([resumeId, order])
+}
+
+/// An interviewable claim, grounded in a quote from the resume.
+model ResumeClaim {
+  id         String       @id @default(cuid())
+  resumeId   String
+  resume     CareerResume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  chunkId    String?
+  chunk      ResumeChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+  claim      String
+  /// Verbatim (or near-verbatim) resume text supporting the claim.
+  evidence   String
+  skills     String[]     @default([])
+  /// HIGH | MEDIUM | LOW — how clearly the resume supports it.
+  confidence String
+  risk       String
+  /// Levels an interviewer can drill (1 definition … 7 architecture).
+  depth      Int          @default(3)
+
+  @@index([resumeId])
+}
+
+enum PrepPlanStatus {
+  QUEUED
+  RUNNING
+  READY
+  FAILED
+}
+
+enum PrepCategory {
+  GENERAL
+  SKILL
+  PROJECT
+  CLAIM
+  ACHIEVEMENT
+  CONCEPTUAL
+  SCENARIO
+}
+
+enum PrepPriority {
+  INTENSE
+  IMPORTANT
+  GOOD
+  MAY_BE_ASKED
+}
+
+/// A personalised Top-100 question plan: resume + (JD or target role).
+model PrepPlan {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeId    String
+  resume      CareerResume   @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  jobId       String?
+  job         JobTarget?     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  /// Key from TARGET_ROLES when no JD was chosen.
+  targetRole  String?
+  title       String
+  status      PrepPlanStatus @default(QUEUED)
+  /// Per-step progress shown while generating.
+  progress    Json
+  /// Questions per category, decided by code from the resume/JD.
+  allocation  Json
+  /// Validator stats: generated / accepted / rejected by reason.
+  validation  Json?
+  error       String?
+  model       String?
+  createdAt   DateTime       @default(now())
+  completedAt DateTime?
+  questions   PrepQuestion[]
+  packs       PrepPack[]
+
+  @@index([userId, createdAt])
+}
+
+model PrepQuestion {
+  id            String        @id @default(cuid())
+  planId        String
+  plan          PrepPlan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  /// 1 = most likely to be asked. Assigned when the plan is finalised.
+  rank          Int           @default(0)
+  category      PrepCategory
+  priority      PrepPriority
+  question      String
+  skill         String
+  /// 0–1 likelihood an interviewer asks this.
+  probability   Float
+  /// 1 fundamental … 5 architecture
+  difficulty    Int
+  /// How many levels of follow-up this can be drilled (1–7).
+  followUpDepth Int
+  /// Why it was generated from THIS resume.
+  why           String
+  /// Resume text it is grounded in (empty for role-level questions).
+  evidence      String        @default("")
+  sourceType    String
+  sourceLabel   String
+  chunkId       String?
+  claimId       String?
+  hint          String
+  keyPoints     String[]      @default([])
+  followUps     String[]      @default([])
+  /// Cached translations: { hinglish: { question, hint, keyPoints[] }, hi: {...} }
+  translations  Json          @default("{}")
+  /// NEW | PRACTICED | CONFIDENT
+  status        String        @default("NEW")
+  createdAt     DateTime      @default(now())
+  attempts      PrepAttempt[]
+
+  @@index([planId, rank])
+  @@index([planId, category])
+}
+
+model PrepAttempt {
+  id         String       @id @default(cuid())
+  questionId String
+  question   PrepQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answer     String
+  score      Int
+  evaluation Json
+  createdAt  DateTime     @default(now())
+
+  @@index([questionId, createdAt])
+}
+
+/// A downloadable interview pack (PDF), generated in the background.
+model PrepPack {
+  id          String         @id @default(cuid())
+  planId      String
+  plan        PrepPlan       @relation(fields: [planId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// QUESTIONS | HINTS | GUIDE
+  variant     String
+  /// en | hinglish | hi
+  language    String
+  status      PrepPlanStatus @default(QUEUED)
+  storageKey  String?
+  error       String?
+  createdAt   DateTime       @default(now())
+  completedAt DateTime?
+
+  @@index([planId, createdAt])
+}

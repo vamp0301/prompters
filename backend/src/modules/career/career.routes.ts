@@ -1,0 +1,190 @@
+import { Router } from "express";
+import { z } from "zod";
+import { prisma } from "../../lib/prisma.js";
+import { aiLimiter, careerAnswerLimiter } from "../../middleware/rate-limit.js";
+import { currentUser } from "../../middleware/auth.js";
+import { AppError, notFound } from "../../utils/errors.js";
+import { handler, param, parse } from "../../utils/http.js";
+import { aiProvider } from "../../ai/provider.js";
+import { isEnabled } from "../platform/flags.js";
+import { MATCH_WEIGHTS, analyse, createJob, createResume, deleteResume } from "./analysis.service.js";
+import * as interview from "./interview.service.js";
+import { deletePackFiles } from "../prep/pack.service.js";
+
+const docSchema = z.object({
+  text: z.string().max(60000).optional(),
+  fileBase64: z.string().max(7_500_000).optional(),
+  mimeType: z.string().max(100).optional(),
+  fileName: z.string().max(200).optional(),
+});
+
+export async function ensureAiInterviewEnabled(userId: string) {
+  if (!(await isEnabled("AI_INTERVIEW", userId))) throw new AppError(403, "FEATURE_DISABLED", "AI interviews are not enabled for your account yet.");
+}
+
+export function careerRoutes() {
+  const r = Router();
+  const ai = aiLimiter();
+
+  r.get("/status", handler(async (req) => {
+    const enabled = await isEnabled("AI_INTERVIEW", currentUser(req).id);
+    const reason = !aiProvider() ? "NO_PROVIDER" : !enabled ? "FEATURE_DISABLED" : null;
+    return {
+    available: reason === null,
+    reason,
+    interviewer: interview.INTERVIEWER,
+    matchWeights: MATCH_WEIGHTS,
+    };
+  }));
+
+  // ───── Resumes & job descriptions ─────
+  r.get("/resumes", handler(async (req) =>
+    prisma.careerResume.findMany({ where: { userId: currentUser(req).id }, orderBy: { createdAt: "desc" }, select: { id: true, label: true, fileName: true, parsed: true, createdAt: true } })));
+  r.post("/resumes", ai, handler(async (req, res) => {
+    const me = currentUser(req);
+    await ensureAiInterviewEnabled(me.id);
+    const body = parse(docSchema.extend({ label: z.string().max(120).optional() }), req.body);
+    const resume = await createResume(me.id, body);
+    res.status(201);
+    return { id: resume.id, label: resume.label, parsed: resume.parsed, createdAt: resume.createdAt };
+  }));
+  r.delete("/resumes/:id", handler(async (req) => {
+    const me = currentUser(req);
+    const matches = await prisma.jobMatch.findMany({ where: { resumeId: param(req, "id"), userId: me.id }, select: { id: true } });
+    await interview.deleteAudioForMatches(matches.map((m) => m.id));
+    const plans = await prisma.prepPlan.findMany({ where: { resumeId: param(req, "id"), userId: me.id }, select: { id: true } });
+    await deletePackFiles(plans.map((p) => p.id));
+    await deleteResume(me.id, param(req, "id"));
+    return { deleted: true };
+  }));
+
+  r.get("/jobs", handler(async (req) =>
+    prisma.jobTarget.findMany({ where: { userId: currentUser(req).id }, orderBy: { createdAt: "desc" }, select: { id: true, title: true, company: true, parsed: true, createdAt: true } })));
+  r.post("/jobs", ai, handler(async (req, res) => {
+    const me = currentUser(req);
+    await ensureAiInterviewEnabled(me.id);
+    const body = parse(docSchema.extend({ title: z.string().max(160).optional(), company: z.string().max(160).optional() }), req.body);
+    const job = await createJob(me.id, body);
+    res.status(201);
+    return { id: job.id, title: job.title, company: job.company, parsed: job.parsed, createdAt: job.createdAt };
+  }));
+  r.delete("/jobs/:id", handler(async (req) => {
+    const me = currentUser(req);
+    const job = await prisma.jobTarget.findFirst({ where: { id: param(req, "id"), userId: me.id }, include: { matches: { select: { id: true } }, prepPlans: { select: { id: true } } } });
+    if (!job) throw notFound("Job description");
+    await interview.deleteAudioForMatches(job.matches.map((m) => m.id));
+    await deletePackFiles(job.prepPlans.map((p) => p.id));
+    await prisma.jobTarget.delete({ where: { id: job.id } });
+    return { deleted: true };
+  }));
+
+  // ───── Job-specific analysis ─────
+  r.post("/analyses", ai, handler(async (req, res) => {
+    const me = currentUser(req);
+    await ensureAiInterviewEnabled(me.id);
+    const { resumeId, jobId } = parse(z.object({ resumeId: z.string(), jobId: z.string() }), req.body);
+    const match = await analyse(me.id, resumeId, jobId);
+    res.status(201);
+    return match;
+  }));
+  r.get("/analyses", handler(async (req) =>
+    prisma.jobMatch.findMany({
+      where: { userId: currentUser(req).id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, score: true, createdAt: true, job: { select: { title: true, company: true } }, resume: { select: { label: true } }, _count: { select: { sessions: true } } },
+    })));
+  r.get("/analyses/:id", handler(async (req) => {
+    const me = currentUser(req);
+    const match = await prisma.jobMatch.findFirst({
+      where: { id: param(req, "id"), userId: me.id },
+      include: {
+        job: { select: { id: true, title: true, company: true, parsed: true } },
+        resume: { select: { id: true, label: true, parsed: true } },
+        sessions: { orderBy: { startedAt: "desc" }, select: { id: true, status: true, readinessScore: true, result: true, startedAt: true } },
+      },
+    });
+    if (!match) throw notFound("Analysis");
+    return { ...match, weights: MATCH_WEIGHTS };
+  }));
+  r.delete("/analyses/:id", handler(async (req) => {
+    const me = currentUser(req);
+    const match = await prisma.jobMatch.findFirst({ where: { id: param(req, "id"), userId: me.id } });
+    if (!match) throw notFound("Analysis");
+    await interview.deleteAudioForMatches([match.id]);
+    await prisma.jobMatch.delete({ where: { id: match.id } });
+    return { deleted: true };
+  }));
+
+  // ───── Interviews ─────
+  r.get("/sessions", handler(async (req) =>
+    prisma.interviewSession.findMany({
+      where: { userId: currentUser(req).id },
+      orderBy: { startedAt: "desc" },
+      select: { id: true, status: true, readinessScore: true, result: true, startedAt: true, endedAt: true, matchId: true, match: { select: { job: { select: { title: true, company: true } } } } },
+    })));
+
+  r.post("/sessions", ai, handler(async (req, res) => {
+    const me = currentUser(req);
+    await ensureAiInterviewEnabled(me.id);
+    const body = parse(
+      z.object({
+        matchId: z.string(),
+        // Ignored: interviews are English-only. Still accepted so older clients don't get a 400.
+        language: z.enum(["hinglish", "en", "hi"]).optional(),
+        durationMinutes: z.number().int().min(10).max(90).default(30),
+        questionTarget: z.number().int().min(5).max(25).default(15),
+        consent: z.object({ recording: z.boolean(), integrity: z.boolean(), preparationOnly: z.boolean(), storeAudio: z.boolean().default(true) }),
+      }),
+      req.body,
+    );
+    res.status(201);
+    return interview.startSession(me.id, { matchId: body.matchId, durationMinutes: body.durationMinutes, questionTarget: body.questionTarget, consent: body.consent });
+  }));
+
+  r.get("/sessions/:id", handler(async (req) => interview.getSession(currentUser(req).id, param(req, "id"))));
+
+  r.post("/sessions/:id/answer", careerAnswerLimiter(), handler(async (req) => {
+    const body = parse(
+      z.object({
+        turnId: z.string(),
+        answerText: z.string().max(10000).optional(),
+        skipped: z.boolean().optional(),
+        durationSec: z.number().int().min(0).max(3600).optional(),
+        audioBase64: z.string().max(5_600_000).optional(),
+        audioMime: z.string().max(60).optional(),
+        code: z.string().max(65536).optional(),
+        codeLanguage: z.enum(["javascript", "python"]).optional(),
+      }),
+      req.body,
+    );
+    return interview.submitAnswer(currentUser(req).id, param(req, "id"), body);
+  }));
+
+  r.post("/sessions/:id/run-code", careerAnswerLimiter(), handler(async (req) => {
+    const body = parse(z.object({ turnId: z.string(), language: z.enum(["javascript", "python"]), code: z.string().max(65536) }), req.body);
+    return interview.runCode(currentUser(req).id, param(req, "id"), body.turnId, body.language, body.code);
+  }));
+
+  r.post("/sessions/:id/integrity", handler(async (req) => {
+    const { events } = parse(z.object({ events: z.array(z.object({ type: z.enum(interview.INTERVIEW_INTEGRITY_EVENTS), meta: z.record(z.unknown()).optional() })).min(1).max(50) }), req.body);
+    return interview.logIntegrity(currentUser(req).id, param(req, "id"), events);
+  }));
+
+  r.post("/sessions/:id/end", handler(async (req) => interview.endSession(currentUser(req).id, param(req, "id"))));
+
+  r.get("/sessions/:id/turns/:turnId/audio", async (req, res, next) => {
+    try {
+      const obj = await interview.audioFor(currentUser(req).id, param(req, "id"), param(req, "turnId"));
+      res.setHeader("content-type", obj.contentType);
+      res.setHeader("cache-control", "private, no-store");
+      res.send(obj.body);
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  r.delete("/sessions/:id/recordings", handler(async (req) => interview.deleteRecordings(currentUser(req).id, param(req, "id"))));
+  r.delete("/sessions/:id", handler(async (req) => interview.deleteSession(currentUser(req).id, param(req, "id"))));
+
+  return r;
+}

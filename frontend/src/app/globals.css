@@ -1,0 +1,264 @@
+@import "tailwindcss";
+
+/*
+ * "Ink on Paper" tokens. Light = warm study paper with ink; dark = archival paper with cream ink.
+ * Default is light; dark via data-theme="dark", or the OS preference when the user picked "system".
+ */
+:root,
+:root[data-theme="light"] {
+  --bg: #f6f0e1;
+  --surface: #fbf7ee;
+  --surface-2: #f1e9d6;
+  --border: #e4dac4;
+  --border-strong: #d2c4a6;
+  --text: #1e1b16;
+  --muted: #5f5747;
+  --subtle: #7a6f5c;
+  --accent: #1f6f4a;
+  --accent-strong: #185a3c;
+  --accent-fg: #fbf7ee;
+  --accent-soft: rgba(31, 111, 74, 0.1);
+  --accent-2: #c2410c;
+  --accent-2-soft: rgba(194, 65, 12, 0.09);
+  --danger: #b42318;
+  --danger-soft: rgba(180, 35, 24, 0.08);
+  --warn: #92560a;
+  --warn-soft: rgba(146, 86, 10, 0.1);
+  --info: #1d4ed8;
+  --info-soft: rgba(29, 78, 216, 0.08);
+  --code-bg: #f3ecdc;
+  --ink-green: rgba(31, 111, 74, 0.13);
+  --ink-red: rgba(194, 65, 12, 0.1);
+  --ink-indigo: rgba(67, 56, 202, 0.08);
+  --vellum: rgba(251, 247, 238, 0.62);
+  --grain-opacity: 0.035;
+  --grain-blend: multiply;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #15130f;
+  --surface: #1d1a15;
+  --surface-2: #26221b;
+  --border: #3a332a;
+  --border-strong: #4d4437;
+  --text: #ede6d6;
+  --muted: #b3a891;
+  --subtle: #8e836f;
+  --accent: #6bbf92;
+  --accent-strong: #84cfa6;
+  --accent-fg: #0f1a13;
+  --accent-soft: rgba(107, 191, 146, 0.13);
+  --accent-2: #e8865a;
+  --accent-2-soft: rgba(232, 134, 90, 0.14);
+  --danger: #f08a7e;
+  --danger-soft: rgba(240, 138, 126, 0.13);
+  --warn: #e2b05a;
+  --warn-soft: rgba(226, 176, 90, 0.13);
+  --info: #8fb0ef;
+  --info-soft: rgba(143, 176, 239, 0.13);
+  --code-bg: #191611;
+  --ink-green: rgba(107, 191, 146, 0.16);
+  --ink-red: rgba(232, 134, 90, 0.12);
+  --ink-indigo: rgba(129, 140, 248, 0.12);
+  --vellum: rgba(36, 32, 26, 0.62);
+  --grain-opacity: 0.05;
+  --grain-blend: soft-light;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    --bg: #15130f;
+    --surface: #1d1a15;
+    --surface-2: #26221b;
+    --border: #3a332a;
+    --border-strong: #4d4437;
+    --text: #ede6d6;
+    --muted: #b3a891;
+    --subtle: #8e836f;
+    --accent: #6bbf92;
+    --accent-strong: #84cfa6;
+    --accent-fg: #0f1a13;
+    --accent-soft: rgba(107, 191, 146, 0.13);
+    --accent-2: #e8865a;
+    --accent-2-soft: rgba(232, 134, 90, 0.14);
+    --danger: #f08a7e;
+    --danger-soft: rgba(240, 138, 126, 0.13);
+    --warn: #e2b05a;
+    --warn-soft: rgba(226, 176, 90, 0.13);
+    --info: #8fb0ef;
+    --info-soft: rgba(143, 176, 239, 0.13);
+    --code-bg: #191611;
+    --ink-green: rgba(107, 191, 146, 0.16);
+    --ink-red: rgba(232, 134, 90, 0.12);
+    --ink-indigo: rgba(129, 140, 248, 0.12);
+    --vellum: rgba(36, 32, 26, 0.62);
+    --grain-opacity: 0.05;
+    --grain-blend: soft-light;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-code: var(--code-bg);
+  --color-accent-2: var(--accent-2);
+  --color-accent-2-soft: var(--accent-2-soft);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
+  --font-script: var(--font-pinyon), cursive;
+  --font-deva: var(--font-tiro-deva), var(--font-geist-sans), serif;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Ink-style focus ring. */
+:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Paper grain: one tiny inline SVG noise tile over everything, never interactive. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  mix-blend-mode: var(--grain-blend);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Display headings use the editorial serif. */
+.font-display {
+  font-optical-sizing: auto;
+  letter-spacing: -0.02em;
+}
+
+/* Faint ruled notebook lines + optional vermilion margin, for selected long-form cards only. */
+.paper-ruled {
+  background-image: repeating-linear-gradient(to bottom, transparent 0 27px, color-mix(in srgb, var(--border) 70%, transparent) 27px 28px);
+}
+.paper-margin {
+  position: relative;
+}
+.paper-margin::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2.25rem;
+  width: 1px;
+  background: color-mix(in srgb, var(--accent-2) 35%, transparent);
+  pointer-events: none;
+}
+
+/* Frosted "vellum": translucent paper over the ink-wash background, with a solid fallback. */
+.vellum {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset, 0 24px 60px -28px rgba(30, 27, 22, 0.35), 0 2px 6px -2px rgba(30, 27, 22, 0.12);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .vellum {
+    background: var(--vellum);
+    -webkit-backdrop-filter: blur(16px) saturate(1.1);
+    backdrop-filter: blur(16px) saturate(1.1);
+  }
+}
+
+/* Subtle dotted grid used behind hero / empty states. */
+.bg-grid {
+  background-image: radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0);
+  background-size: 22px 22px;
+}
+
+/* Faint graph paper that fades towards the edges. */
+.graph-paper {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px);
+  background-size: 28px 28px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 75%);
+  mask-image: radial-gradient(ellipse at 50% 40%, #000 30%, transparent 75%);
+}
+
+/* Landing-page loops: transform/opacity only, paused off-screen or on hover via [data-paused]. */
+@keyframes ink-drift-a { 0%, 100% { transform: translate3d(0, 0, 0) scale(1); } 50% { transform: translate3d(6%, 4%, 0) scale(1.08); } }
+@keyframes ink-drift-b { 0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); } 50% { transform: translate3d(-5%, 6%, 0) scale(0.95); } }
+@keyframes ink-drift-c { 0%, 100% { transform: translate3d(0, 0, 0); } 50% { transform: translate3d(4%, -5%, 0); } }
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+@keyframes spin-slow-reverse { to { transform: rotate(-360deg); } }
+@keyframes marquee-left { to { transform: translate3d(-50%, 0, 0); } }
+@keyframes marquee-right { from { transform: translate3d(-50%, 0, 0); } to { transform: translate3d(0, 0, 0); } }
+[data-paused="true"] .anim,
+[data-paused="true"].anim {
+  animation-play-state: paused !important;
+}
+
+.prose-prompters p { margin: 0.6rem 0; line-height: 1.75; }
+.prose-prompters ul { list-style: disc; padding-left: 1.25rem; margin: 0.6rem 0; }
+.prose-prompters ol { list-style: decimal; padding-left: 1.25rem; margin: 0.6rem 0; }
+.prose-prompters li { margin: 0.25rem 0; line-height: 1.7; }
+.prose-prompters strong { color: var(--text); font-weight: 600; }
+.prose-prompters code:not(pre code) {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.1em 0.35em;
+}
+.prose-prompters pre {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+.prose-prompters h3 { font-weight: 600; margin-top: 1rem; }
+.prose-prompters a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.prose-prompters table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.9rem; }
+.prose-prompters th, .prose-prompters td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .anim { animation: none !important; }
+}

@@ -1,0 +1,12 @@
+node_modules
+.env
+.env.local
+.env*.local
+dist
+.next
+coverage
+test-results
+playwright-report
+.DS_Store
+.neon
+.claude/settings.local.json
