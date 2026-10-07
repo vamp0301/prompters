@@ -34,6 +34,7 @@ const NAV: { group: string; items: { href: string; label: string; icon: typeof B
     group: "Get hired",
     items: [
       { href: "/career", label: "Career AI", icon: BriefcaseBusiness },
+      { href: "/career/skills", label: "Learn my skills", icon: BookOpen },
       { href: "/interviews", label: "Interview prep", icon: MessagesSquare },
       { href: "/mock-tests", label: "Mock tests", icon: Timer },
       { href: "/readiness", label: "Readiness", icon: Gauge },
@@ -53,7 +54,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
           <div className="mb-1.5 px-2 font-mono text-[10px] uppercase tracking-wider text-subtle">{g.group}</div>
           <ul className="space-y-0.5">
             {g.items.map(({ href, label, icon: Icon }) => {
-              const active = pathname === href || pathname.startsWith(`${href}/`);
+              const active = (pathname === href || pathname.startsWith(`${href}/`)) && !(href === "/career" && pathname.startsWith("/career/skills"));
               return (
                 <li key={href}>
                   <Link

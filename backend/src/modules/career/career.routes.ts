@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
-import { aiLimiter, careerAnswerLimiter } from "../../middleware/rate-limit.js";
+import { aiLimiter, careerAnswerLimiter, skillGuideLimiter } from "../../middleware/rate-limit.js";
 import { currentUser } from "../../middleware/auth.js";
 import { AppError, notFound } from "../../utils/errors.js";
 import { handler, param, parse } from "../../utils/http.js";
@@ -9,6 +9,8 @@ import { aiProvider } from "../../ai/provider.js";
 import { isEnabled } from "../platform/flags.js";
 import { MATCH_WEIGHTS, analyse, createJob, createResume, deleteResume } from "./analysis.service.js";
 import * as interview from "./interview.service.js";
+import { careerOverview } from "./overview.service.js";
+import { GUIDE_LOCALES, resumeSkills, skillGuide } from "./skills.service.js";
 import { deletePackFiles } from "../prep/pack.service.js";
 
 const docSchema = z.object({
@@ -35,6 +37,17 @@ export function careerRoutes() {
     interviewer: interview.INTERVIEWER,
     matchWeights: MATCH_WEIGHTS,
     };
+  }));
+
+  // One-call summary for the dashboard: resume decoded + Top-100 split by priority and category.
+  r.get("/overview", handler(async (req) => careerOverview(currentUser(req).id)));
+
+  // ───── Skill guides: learn each resume skill (real-world use, implementation, perks, drawbacks) ─────
+  r.get("/skills", handler(async (req) => resumeSkills(currentUser(req).id)));
+  r.get("/skills/guide", skillGuideLimiter(), handler(async (req) => {
+    const me = currentUser(req);
+    const q = parse(z.object({ name: z.string().trim().min(1).max(80), lang: z.enum(GUIDE_LOCALES).default("en") }), req.query);
+    return skillGuide(me.id, q.name, q.lang);
   }));
 
   // ───── Resumes & job descriptions ─────

@@ -130,6 +130,20 @@ export class FakeAI implements AIProvider {
       case "prep_conceptual":
       case "prep_scenario":
         return JSON.stringify({ questions: this.prepBatch(task.slice(5), Number(system.match(/Write exactly (\d+)/)?.[1] ?? 5)) });
+      case "skill_guide":
+        return JSON.stringify({
+          summary: "A runtime for JavaScript on the server.",
+          howItWorks: ["Event loop", "Non-blocking I/O"],
+          realWorld: [{ where: "API backends", how: "Serving JSON over HTTP" }],
+          implementation: { steps: ["npm init", "Write an HTTP server"], code: { language: "javascript", snippet: "require('http').createServer((q, s) => s.end('ok')).listen(3000);" } },
+          perks: ["Fast I/O", "Huge ecosystem"],
+          drawbacks: ["CPU-bound work blocks the loop"],
+          whenToUse: ["I/O-heavy APIs"],
+          whenNotToUse: ["Heavy number crunching"],
+          alternatives: [{ name: "Go", whenBetter: "CPU-heavy concurrency" }],
+          mistakes: ["Blocking the event loop"],
+          interviewTips: ["Explain the event loop phases"],
+        });
       case "prep_dedupe": {
         // Flags the first two questions as the same ask, plus a bogus id that must be ignored.
         const ids = [...user.matchAll(/^(q\d+):/gm)].map((m) => m[1]);

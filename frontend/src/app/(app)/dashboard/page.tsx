@@ -9,6 +9,7 @@ import { EmptyState, ErrorState, PageSkeleton } from "@/components/ui/misc";
 import { Progress, ScoreRing } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
 import type { Dashboard } from "@/lib/api/types";
+import { CareerOverview } from "@/features/dashboard/career-overview";
 
 const FACTOR_LABEL: Record<string, string> = { mastery: "Topic mastery", dsa: "DSA", projects: "Projects", recall: "Recall", interview: "Interview", resume: "Resume & profile" };
 
@@ -26,7 +27,7 @@ export default function DashboardPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="font-mono text-[11px] uppercase tracking-wider text-accent">Dashboard</div>
-          <h1 className="text-2xl font-semibold tracking-tight">Namaste, {d.user.name.split(" ")[0]} 👋</h1>
+          <h1 className="font-display text-2xl font-semibold sm:text-3xl">Namaste, {d.user.name.split(" ")[0]} 👋</h1>
         </div>
         <div className="flex items-center gap-2 text-sm text-muted">
           <Flame className={d.streak.activeToday ? "size-4 text-warn" : "size-4"} /> {d.streak.current}-day streak
@@ -39,6 +40,8 @@ export default function DashboardPage() {
           <Link href="/practice?placement=1" className={buttonClass("secondary", "sm")}>Take placement test</Link>
         </div>
       )}
+
+      <CareerOverview />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
         <Card>

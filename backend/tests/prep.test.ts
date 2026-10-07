@@ -336,6 +336,59 @@ describe("Top-100 preparation plan", () => {
     expect((await other.agent.get(`/api/career/prep/${plan.id}/questions/${qs[0].id}`)).status).toBe(404);
   });
 
+  it("dashboard overview: resume decoded and the Top 100 split by priority and category — own data only", async () => {
+    const { agent } = await login();
+    const other = await login();
+    expect((await agent.get("/api/career/overview")).body.data).toEqual({ resume: null, plan: null, match: null, interview: null });
+    const resumeId = await resumeFor(agent);
+    const plan = await planStatus(agent, (await agent.post("/api/career/prep").send({ resumeId, targetRole: "backend" })).body.data.id);
+    const o = (await agent.get("/api/career/overview")).body.data;
+    expect(o.resume).toMatchObject({ id: resumeId, name: "Riya Sharma", analyzed: true });
+    expect(o.resume.skills.frameworks).toContain("Node.js");
+    expect(o.resume.projects[0].name).toBe("Notes API");
+    expect(o.resume.claims[0].risk).toBe("HIGH");
+    expect(o.plan).toMatchObject({ id: plan.id, status: "READY", total: 100 });
+    const sum = (x: Record<string, number>) => Object.values(x).reduce((a, b) => a + b, 0);
+    expect(sum(o.plan.byPriority)).toBe(100);
+    expect(sum(o.plan.byCategory)).toBe(100);
+    expect(o.plan.intense.length).toBeGreaterThan(0);
+    expect(o.plan.intense.every((q: { rank: number }, i: number, a: { rank: number }[]) => i === 0 || a[i - 1].rank < q.rank)).toBe(true);
+    expect(o.plan.topics.length).toBeGreaterThan(0);
+    // Another user sees only their own (empty) overview.
+    expect((await other.agent.get("/api/career/overview")).body.data.resume).toBeNull();
+  });
+
+  it("skill guides: one per resume skill, cached per language, only for the user's own skills", async () => {
+    const { agent } = await login();
+    const other = await login();
+    const resumeId = await resumeFor(agent);
+    await planStatus(agent, (await agent.post("/api/career/prep").send({ resumeId, targetRole: "backend" })).body.data.id);
+    const list = (await agent.get("/api/career/skills")).body.data;
+    const node = list.groups.flatMap((g: { skills: { name: string }[] }) => g.skills).find((x: { name: string }) => x.name === "Node.js");
+    expect(node).toMatchObject({ key: "nodejs", usedIn: ["Notes API"] });
+    expect(node.questions).toBeGreaterThan(0);
+
+    const calls = () => fake.calls.filter((c) => c.task === "skill_guide").length;
+    const before = calls();
+    const g = await agent.get("/api/career/skills/guide").query({ name: "Node.js", lang: "en" });
+    expect(g.status).toBe(200);
+    expect(g.body.data.content.perks.length).toBeGreaterThan(0);
+    expect(g.body.data.content.drawbacks.length).toBeGreaterThan(0);
+    expect(g.body.data.content.implementation.code.snippet).toContain("createServer");
+    expect(g.body.data.usedIn[0].name).toBe("Notes API");
+    expect(g.body.data.questions.length).toBeGreaterThan(0);
+    // Second open (any spelling) is served from the cache; a new language is generated once.
+    await agent.get("/api/career/skills/guide").query({ name: "nodejs", lang: "en" });
+    expect(calls()).toBe(before + 1);
+    expect((await agent.get("/api/career/skills/guide").query({ name: "Node.js", lang: "hi" })).status).toBe(200);
+    expect(calls()).toBe(before + 2);
+    // Not on this user's resume → not an open AI endpoint.
+    expect((await agent.get("/api/career/skills/guide").query({ name: "Kubernetes Operators", lang: "en" })).status).toBe(404);
+    expect((await other.agent.get("/api/career/skills/guide").query({ name: "Node.js", lang: "en" })).status).toBe(404);
+    // The guide content itself is untrusted model output fenced in the prompt.
+    expect(fake.calls.find((c) => c.task === "skill_guide")!.user).toContain("<skill>");
+  });
+
   it("reuses a saved plan, regenerates only on request, and enforces the daily limit", async () => {
     const { agent } = await login();
     const resumeId = await resumeFor(agent);

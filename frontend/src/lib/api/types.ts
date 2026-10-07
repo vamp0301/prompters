@@ -1281,3 +1281,64 @@ export interface PrepUsage {
   remaining: number;
   resetAt: string | null;
 }
+
+export interface CareerOverview {
+  resume: null | {
+    id: string;
+    label: string;
+    createdAt: string;
+    analyzed: boolean;
+    name: string | null;
+    headline: string | null;
+    experienceMonths: number;
+    skills: { languages: string[]; frameworks: string[]; databases: string[]; cloud: string[]; devops: string[]; other: string[] } | null;
+    projects: { name: string; description: string; technologies: string[] }[];
+    experience: { role: string; company: string; months: number | null }[];
+    education: { degree: string; institution: string; year?: string | null }[];
+    achievements: string[];
+    claims: { id: string; claim: string; evidence: string; risk: "HIGH" | "MEDIUM" | "LOW"; skills: string[] }[];
+    claimCount: number;
+  };
+  plan: null | {
+    id: string;
+    title: string;
+    status: PrepStatus;
+    createdAt: string;
+    total: number;
+    byPriority: Partial<Record<PrepPriority, number>>;
+    byCategory: Partial<Record<PrepCategory, number>>;
+    practice: Partial<Record<PrepPracticeStatus, number>>;
+    intense: { id: string; rank: number; question: string; skill: string; category: PrepCategory }[];
+    topics: { topic: string; total: number; confident: number }[];
+  };
+  match: null | { id: string; score: number; missing: string[]; strong: string[]; job: { title: string; company: string | null } };
+  interview: null | { id: string; readinessScore: number; result: string | null; startedAt: string };
+}
+
+export interface ResumeSkillList {
+  resume: { id: string; label: string } | null;
+  planId?: string | null;
+  groups: { group: string; skills: { name: string; key: string; usedIn: string[]; questions: number; confident: number; guideReady: boolean }[] }[];
+}
+
+export interface SkillGuide {
+  name: string;
+  key: string;
+  locale: "en" | "hinglish" | "hi";
+  content: {
+    summary: string;
+    howItWorks: string[];
+    realWorld: { where: string; how: string }[];
+    implementation: { steps: string[]; code?: { language: string; snippet: string } | null };
+    perks: string[];
+    drawbacks: string[];
+    whenToUse: string[];
+    whenNotToUse: string[];
+    alternatives: { name: string; whenBetter: string }[];
+    mistakes: string[];
+    interviewTips: string[];
+  };
+  usedIn: { name: string; description: string }[];
+  planId: string | null;
+  questions: { id: string; rank: number; question: string; priority: PrepPriority; status: PrepPracticeStatus; skill: string }[];
+}

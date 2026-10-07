@@ -1003,3 +1003,19 @@ model PrepPack {
 
   @@index([planId, createdAt])
 }
+
+/// A study guide for one skill in one language (what it is, real-world use, implementation, perks,
+/// drawbacks…). Generic, so it is generated once and shared; personal context is added per request.
+model SkillGuide {
+  id        String   @id @default(cuid())
+  /// Canonical skill key ("nodejs" for Node.js / NodeJS / node js).
+  key       String
+  name      String
+  /// en | hinglish | hi
+  locale    String
+  content   Json
+  model     String?
+  createdAt DateTime @default(now())
+
+  @@unique([key, locale])
+}

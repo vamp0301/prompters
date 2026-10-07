@@ -38,3 +38,5 @@ export const authLimiter = () => limiter("auth", 15 * 60_000, 20, { passOnStoreE
 export const codeRunLimiter = () => limiter("code", 60_000, 30);
 export const aiLimiter = () => limiter("ai", 60_000, 10);
 export const careerAnswerLimiter = () => limiter("career", 60_000, 40);
+/** Opening skill guides: cached ones are cheap; this caps how fast new ones can be generated. */
+export const skillGuideLimiter = () => limiter("skill-guide", 60_000, 20);

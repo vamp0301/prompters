@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field, Select } from "@/components/ui/input";
-import { EmptyState, ErrorState, PageHeader, Skeleton } from "@/components/ui/misc";
+import { EmptyState, ErrorState, PageHeader, Skeleton, Tabs } from "@/components/ui/misc";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
 import type { CareerAnalysisItem, CareerJob, CareerResume, CareerSessionItem, CareerStatus } from "@/lib/api/types";
@@ -18,15 +18,6 @@ import { DocumentForm } from "./document-form";
 import { PrepPlansCard, PrepStartCard } from "./prep/prep-start-card";
 import { AI_UNAVAILABLE_COPY, careerKeys, ConfirmButton, InlineError, ResultBadge, scoreTone } from "./shared";
 
-/** Index tabs across the dossier; each jumps to its section (Readiness is its own page). */
-const DOSSIER = [
-  { label: "RESUME", href: "#resumes" },
-  { label: "JOB MATCH", href: "#job-match" },
-  { label: "TOP 100", href: "#top-100" },
-  { label: "PRACTICE", href: "#plans" },
-  { label: "INTERVIEW", href: "#interviews" },
-  { label: "READINESS", href: "/readiness" },
-];
 
 export function useCareerStatus() {
   return useQuery({ queryKey: careerKeys.status, queryFn: () => api.get<CareerStatus>("/career/status") });
@@ -46,6 +37,7 @@ export function AiUnavailableNotice({ reason }: { reason?: "NO_PROVIDER" | "FEAT
 export function CareerHub() {
   const status = useCareerStatus();
   const disabled = !status.data?.available;
+  const [tab, setTab] = useState<"prep" | "match">("prep");
 
   return (
     <div className="space-y-6">
@@ -55,40 +47,34 @@ export function CareerHub() {
         description="Upload your resume once. Get the 100 technical questions you're most likely to face — built from your projects, skills, claims and achievements — then practise them and download your personal interview pack."
       />
 
-      <nav aria-label="Career dossier" className="relative">
-        <div className="font-mono text-[10px] font-semibold tracking-[0.2em] text-subtle">CAREER DOSSIER</div>
-        <ul className="mt-2 flex gap-1 overflow-x-auto border-b border-border-strong">
-          {DOSSIER.map((t) => (
-            <li key={t.label} className="shrink-0">
-              <Link
-                href={t.href}
-                className="block rounded-t-md border border-b-0 border-border bg-surface px-3 py-1.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-muted transition-colors hover:-translate-y-px hover:text-text"
-              >
-                {t.label}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </nav>
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        items={[
+          { value: "prep", label: "Top 100 prep" },
+          { value: "match", label: "Job match & interview" },
+        ]}
+      />
 
       {status.isLoading ? <Skeleton className="h-12" /> : status.error ? <ErrorState error={status.error} retry={() => status.refetch()} /> : disabled && <AiUnavailableNotice reason={status.data?.reason} />}
 
-      <PrepStartCard disabled={disabled} />
-      <PrepPlansCard />
-
-      <div className="pt-2">
-        <h2 className="text-lg font-semibold tracking-tight">Job match & live interview</h2>
-        <p className="text-sm text-muted">Match a resume to a real job, then take a live technical interview with Manisha (conducted in English).</p>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ResumesCard disabled={disabled} />
-        <JobsCard disabled={disabled} />
-      </div>
-
-      <AnalyseCard disabled={disabled} />
-      <AnalysesCard />
-      <SessionsCard />
+      {tab === "prep" ? (
+        <div className="space-y-6">
+          <PrepStartCard disabled={disabled} />
+          <PrepPlansCard />
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <p className="text-sm text-muted">Match a resume to a real job description, then take a live technical interview with Manisha (conducted in English).</p>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ResumesCard disabled={disabled} />
+            <JobsCard disabled={disabled} />
+          </div>
+          <AnalyseCard disabled={disabled} />
+          <AnalysesCard />
+          <SessionsCard />
+        </div>
+      )}
     </div>
   );
 }

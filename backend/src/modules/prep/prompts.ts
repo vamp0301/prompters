@@ -17,9 +17,9 @@ const CATEGORY_BRIEF: Record<PrepCategory, string> = {
   ACHIEVEMENT:
     "ACHIEVEMENT-BASED technical questions that verify ONE listed achievement or certification (e.g. a CodeChef/LeetCode rating → an algorithm question at that level; a hackathon → what they built and the hardest technical problem; an AWS certificate → an AWS question). sourceRef: the A# ref (required).",
   CONCEPTUAL:
-    "CONCEPTUAL questions about the fundamentals underneath the candidate's stack — why and how things work (event loop, indexing internals, ACID, closures, garbage collection, HTTP caching…). sourceRef: null or the project where it matters.",
+    "CONCEPTUAL questions about the fundamentals underneath the candidate's stack — why and how things work (event loop, indexing internals, ACID, closures, garbage collection, HTTP caching…). Include system design fundamentals (scalability, caching, load balancing, consistency) and DevOps fundamentals (containers, CI/CD, observability). Follow the FOCUS list. sourceRef: null or the project where it matters.",
   SCENARIO:
-    "SCENARIO / DEBUGGING questions: a realistic production or debugging situation in the candidate's own stack or project ('Your API's p95 latency doubled after a release — how do you investigate?'). sourceRef: a P#/E# ref when it is about their project, else null.",
+    "SCENARIO questions, mostly SYSTEM DESIGN and DEVOPS applied to the candidate's own projects: how they would scale it, cache it, split it, queue work or survive a traffic spike; how they would containerise, deploy, roll back, monitor and alert on it; plus realistic debugging situations ('Your API's p95 latency doubled after a release — how do you investigate?'). Follow the FOCUS list. sourceRef: a P#/E# ref when it is about their project, else null.",
 };
 
 export const prepPrompts = {

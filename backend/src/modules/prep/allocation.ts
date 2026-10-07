@@ -13,7 +13,8 @@ export const CATEGORY_LABEL: Record<PrepCategory, string> = {
 };
 
 /** The default split when a resume gives every category enough material. */
-export const DEFAULT_ALLOCATION: Record<PrepCategory, number> = { GENERAL: 15, SKILL: 25, PROJECT: 25, CLAIM: 15, ACHIEVEMENT: 5, CONCEPTUAL: 10, SCENARIO: 5 };
+// SCENARIO carries the system-design and DevOps scenarios, so it gets a larger share than at first.
+export const DEFAULT_ALLOCATION: Record<PrepCategory, number> = { GENERAL: 12, SKILL: 23, PROJECT: 25, CLAIM: 15, ACHIEVEMENT: 5, CONCEPTUAL: 10, SCENARIO: 10 };
 
 export const TOTAL_QUESTIONS = 100;
 

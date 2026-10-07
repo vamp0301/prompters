@@ -9,6 +9,14 @@ import type { Source } from "./validator.js";
 /** CS fundamentals any Indian technical interview may touch, whatever the role. */
 const BASE_CONCEPTS = ["Data structures", "Algorithms", "Time complexity", "OOP", "DBMS", "SQL", "Operating systems", "Networking", "HTTP", "Git", "Debugging", "Testing"];
 
+/**
+ * System design and DevOps are covered in every plan (user requirement): interviewers ask them of
+ * every developer, applied to the candidate's own projects. They widen the accepted skill universe
+ * and are spread across the CONCEPTUAL and SCENARIO batches.
+ */
+export const SYSTEM_DESIGN = ["System design", "Scalability", "Caching", "Load balancing", "Database scaling", "Message queues", "Rate limiting", "API design", "Consistency", "High availability"];
+export const DEVOPS = ["DevOps", "Docker", "CI/CD", "Deployment", "Monitoring", "Logging", "Cloud", "Linux", "Kubernetes", "Infrastructure"];
+
 /** Infers the closest target role from a JD title so GENERAL/CONCEPTUAL questions have a role to lean on. */
 export function inferRole(title: string): TargetRoleKey {
   const t = title.toLowerCase();
@@ -126,7 +134,7 @@ export function buildProfile(intel: ResumeIntelligence, target: { job: JobTarget
   return {
     text: lines.join("\n"),
     sources,
-    matchSkill: skillMatcher([...resumeSet, ...jobSet, ...role.skills, ...role.concepts, ...BASE_CONCEPTS]),
+    matchSkill: skillMatcher([...resumeSet, ...jobSet, ...role.skills, ...role.concepts, ...BASE_CONCEPTS, ...SYSTEM_DESIGN, ...DEVOPS]),
     target: targetText,
     targetSource,
     level: levelFor(parsed.totalExperienceMonths),
@@ -134,7 +142,8 @@ export function buildProfile(intel: ResumeIntelligence, target: { job: JobTarget
       SKILL: [...evidenced, ...skillChunks.filter((c) => !evidenced.includes(c))].map((c) => c.title).concat(gapSkills),
       PROJECT: [...sources.entries()].filter(([, v]) => v.type === "PROJECT" || v.type === "EXPERIENCE").map(([k, v]) => `${k} ${v.label}`),
       CLAIM: [...sources.entries()].filter(([, v]) => v.type === "CLAIM").map(([k, v]) => `${k} ${v.label}`),
-      CONCEPTUAL: [...role.concepts],
+      CONCEPTUAL: [...role.concepts, "System design: scalability, caching, load balancing", "DevOps: containers, CI/CD, monitoring"],
+      SCENARIO: ["System design: scale one of your projects to 100× users", "System design: caching and database bottlenecks", "DevOps: a failed deployment / rollback", "DevOps: production incident — logs, metrics, alerts", "Debugging a slow API in your stack"],
     },
     counts: { projects: projects.length + experience.length, claims: claims.length, achievements: achievements.length, skills: skillChunks.length, gapSkills: gapSkills.length },
     gapSkills,

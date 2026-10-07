@@ -169,7 +169,7 @@ async function generateCategory(opts: {
     });
     let items: unknown[];
     try {
-      items = (await opts.limit(() => aiJson(`prep_${opts.category.toLowerCase()}`, p.system, p.user, questionBatchSchema, 12000, { timeoutMs: AI_TIMEOUT }))).questions;
+      items = (await opts.limit(() => aiJson(`prep_${opts.category.toLowerCase()}`, p.system, p.user, questionBatchSchema, 12000, { timeoutMs: AI_TIMEOUT, fast: true }))).questions;
     } catch (e) {
       logger.warn({ err: e, planId: opts.planId, category: opts.category }, "Prep batch failed");
       opts.aiErrors.push(e);
@@ -221,7 +221,7 @@ async function semanticDedupe(planId: string) {
   const p = prepPrompts.dedupe(rows.map((r, i) => ({ id: ids[i], question: r.question })));
   let groups: string[][];
   try {
-    groups = (await aiJson("prep_dedupe", p.system, p.user, dedupeSchema, 6000, { timeoutMs: AI_TIMEOUT })).groups;
+    groups = (await aiJson("prep_dedupe", p.system, p.user, dedupeSchema, 6000, { timeoutMs: AI_TIMEOUT, fast: true })).groups;
   } catch (e) {
     logger.warn({ err: e, planId }, "Semantic de-duplication skipped");
     return [];

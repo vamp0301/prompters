@@ -11,7 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
 import type { PrepCategory, PrepPlanDetail, PrepPracticeStatus, PrepPriority, PrepQuestion } from "@/lib/api/types";
 import { cn, formatDate } from "@/lib/utils";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { careerKeys, ConfirmButton, InlineError } from "../shared";
 import { usePrepUsage } from "./prep-start-card";
 import { PackDialog } from "./pack-dialog";
@@ -181,8 +181,10 @@ const STATUS_LABEL: Record<PrepPracticeStatus, string> = { NEW: "Not practised",
 function ReadyView({ plan }: { plan: PrepPlanDetail }) {
   const uid = useId();
   const questions = useQuery({ queryKey: careerKeys.prepQuestions(plan.id), queryFn: () => api.get<PrepQuestion[]>(`/career/prep/${plan.id}/questions`) });
-  const [priorities, setPriorities] = useState<PrepPriority[]>([]);
-  const [categories, setCategories] = useState<PrepCategory[]>([]);
+  // Dashboard bars link here pre-filtered (?priority=INTENSE or ?category=PROJECT).
+  const params = useSearchParams();
+  const [priorities, setPriorities] = useState<PrepPriority[]>(() => (PRIORITY_ORDER.includes(params.get("priority") as PrepPriority) ? [params.get("priority") as PrepPriority] : []));
+  const [categories, setCategories] = useState<PrepCategory[]>(() => (PREP_CATEGORY_ORDER.includes(params.get("category") as PrepCategory) ? [params.get("category") as PrepCategory] : []));
   const [skill, setSkill] = useState("");
   const [status, setStatus] = useState<PrepPracticeStatus | "">("");
   const [search, setSearch] = useState("");
@@ -313,9 +315,7 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
             </Field>
           </div>
           <div className="flex items-center justify-between text-xs text-muted">
-            <span aria-live="polite">
-              Showing {filtered.length} of {all.length}
-            </span>
+            <span aria-live="polite">{questions.data ? `Showing ${filtered.length} of ${all.length}` : "Loading questions…"}</span>
             {anyFilter ? (
               <button
                 type="button"
