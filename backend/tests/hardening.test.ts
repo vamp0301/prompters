@@ -4,7 +4,8 @@ import type { Worker } from "bullmq";
 import { app, login, resetDb, seedFixture } from "./helpers.js";
 import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
-import { productionProblems } from "../src/config/env.js";
+import { env, productionProblems } from "../src/config/env.js";
+import { sandbox } from "../src/sandbox/index.js";
 import { Queue } from "bullmq";
 import { CODE_QUEUE, executeCode } from "../src/jobs/queues.js";
 import { liveTargets } from "../src/jobs/prep-queue.js";
@@ -214,6 +215,9 @@ describe("production configuration guard", () => {
   it("accepts a safe production config", () => {
     expect(productionProblems(good)).toEqual([]);
   });
+  it("accepts code execution disabled instead of the Docker sandbox", () => {
+    expect(productionProblems({ ...good, SANDBOX_DRIVER: "disabled" })).toEqual([]);
+  });
   it("refuses the process sandbox, example secrets, insecure cookies and a bucket-less S3 driver", () => {
     expect(productionProblems({ ...good, SANDBOX_DRIVER: "process" })).toEqual([expect.stringMatching(/SANDBOX_DRIVER/)]);
     for (const secret of ["change-me-to-a-long-random-string-at-least-32-chars", "dev-only-secret-dev-only-secret-dev-only", "YOUR_RANDOM_SECRET_AT_LEAST_32_CHARS"]) {
@@ -221,6 +225,80 @@ describe("production configuration guard", () => {
     }
     expect(productionProblems({ ...good, COOKIE_SECURE: false })).toEqual([expect.stringMatching(/COOKIE_SECURE/)]);
     expect(productionProblems({ ...good, STORAGE_DRIVER: "s3" })).toEqual([expect.stringMatching(/S3_BUCKET/)]);
+  });
+});
+
+// ───────────────────────── code execution disabled ─────────────────────────
+
+describe("code execution disabled (SANDBOX_DRIVER=disabled)", () => {
+  const previous = env.SANDBOX_DRIVER;
+  beforeAll(() => {
+    env.SANDBOX_DRIVER = "disabled";
+  });
+  afterAll(() => {
+    env.SANDBOX_DRIVER = previous;
+  });
+
+  it("every code-run path answers 503 CODE_EXECUTION_DISABLED and /me tells the UI", async () => {
+    const { agent } = await login();
+    expect((await agent.get("/api/auth/me")).body.data.flags.CODE_EXECUTION).toBe(false);
+    const run = await agent.post("/api/code/run").send({ language: "javascript", code: "console.log(1)" });
+    expect(run.status).toBe(503);
+    expect(run.body.error.code).toBe("CODE_EXECUTION_DISABLED");
+    const task = await prisma.buildTask.findFirstOrThrow({ where: { status: "PUBLISHED" } });
+    await agent.post(`/api/build-tasks/${task.slug}/start`).send({ language: "javascript" });
+    const buildRun = await agent.post(`/api/build-tasks/${task.slug}/run`).send({ language: "javascript", code: "function x() {}" });
+    expect(buildRun.status).toBe(503);
+    // The process runner is never used as a fallback.
+    expect(() => sandbox()).toThrow(/disabled/);
+  });
+
+  const interviewKinds = async () => {
+    const { agent } = await login();
+    const resumeId = (await agent.post("/api/career/resumes").send({ text: RESUME })).body.data.id;
+    const jobId = (await agent.post("/api/career/jobs").send({ text: JD })).body.data.id;
+    const matchId = (await agent.post("/api/career/analyses").send({ resumeId, jobId })).body.data.id;
+    const start = await agent.post("/api/career/sessions").send({ matchId, questionTarget: 5, consent: { recording: true, integrity: true, preparationOnly: true } });
+    const sessionId = start.body.data.id;
+    let current = start.body.data.current;
+    const kinds: string[] = [];
+    for (let i = 0; i < 12 && current; i++) {
+      kinds.push(current.kind);
+      if (current.kind === "CODING") break;
+      const r = await agent.post(`/api/career/sessions/${sessionId}/answer`).send({ turnId: current.id, answerText: "I store it in an HTTP-only cookie." });
+      expect(r.status).toBe(200);
+      current = r.body.data.done ? null : r.body.data.current;
+    }
+    return kinds;
+  };
+
+  beforeAll(async () => {
+    // Coding turns are drawn from DSA build tasks; without one the test below would pass vacuously.
+    const stage = await prisma.stage.findFirstOrThrow({ where: { slug: "foundations" } });
+    const dsa = await prisma.module.create({ data: { stageId: stage.id, slug: "dsa", title: "DSA", description: "", order: 9, status: "PUBLISHED" } });
+    const topic = await prisma.topic.create({ data: { moduleId: dsa.id, slug: "arrays-hardening", title: "Arrays", order: 0, status: "PUBLISHED", publishedVersion: 1 } });
+    await prisma.buildTask.create({
+      data: {
+        slug: "sum-hardening", topicId: topic.id, title: "Sum", description: "Return a + b", functionName: "sum",
+        starterJs: "function sum(a, b) {}", starterPython: "def sum(a, b):\n    pass",
+        tests: [{ name: "one", args: [1, 2], expected: 3 }], hints: ["a", "b", "c"], explainQuestions: [{ question: "Why?", keywords: ["plus"] }], status: "PUBLISHED",
+      },
+    });
+  });
+
+  it("Manisha interviews continue with spoken questions only", async () => {
+    const kinds = await interviewKinds();
+    expect(kinds.length).toBeGreaterThan(3);
+    expect(kinds).not.toContain("CODING");
+  });
+
+  it("control: with execution enabled the same interview does include a coding turn", async () => {
+    env.SANDBOX_DRIVER = "process";
+    try {
+      expect(await interviewKinds()).toContain("CODING");
+    } finally {
+      env.SANDBOX_DRIVER = "disabled";
+    }
   });
 });
 

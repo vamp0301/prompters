@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/input";
 import { Markdown } from "@/components/ui/markdown";
 import { EmptyState, ErrorState, PageSkeleton, Tabs } from "@/components/ui/misc";
 import { ScoreRing } from "@/components/ui/progress";
-import { useMe } from "@/features/auth/use-me";
+import { CODE_EXECUTION_OFF, useCodeExecution, useMe } from "@/features/auth/use-me";
 import { api, ApiError } from "@/lib/api/client";
 import type { BuildTask, TestView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -87,6 +87,7 @@ function Workspace({ slug, task, preferred }: { slug: string; task: BuildTask; p
     return () => clearInterval(t);
   }, [slug, lang, code]);
 
+  const canRun = useCodeExecution();
   const runM = useMutation({
     mutationFn: () => api.post<RunResponse>(`/build-tasks/${slug}/run`, { language: lang, code: code[lang] }),
     onSuccess: (r) => { setRun(r); setPanel(r.stderr && !r.tests.length ? "output" : "tests"); },
@@ -217,10 +218,11 @@ function Workspace({ slug, task, preferred }: { slug: string; task: BuildTask; p
           <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
             <Tabs value={lang} onChange={(v) => setLang(v)} items={[{ value: "javascript", label: "JavaScript" }, { value: "python", label: "Python" }]} />
             <div className="flex gap-2">
-              <Button size="sm" variant="secondary" onClick={() => runM.mutate()} loading={runM.isPending}><Play className="size-3.5" /> Run tests</Button>
-              <Button size="sm" onClick={() => submitM.mutate()} loading={submitM.isPending}><Send className="size-3.5" /> Submit</Button>
+              <Button size="sm" variant="secondary" onClick={() => runM.mutate()} loading={runM.isPending} disabled={!canRun}><Play className="size-3.5" /> Run tests</Button>
+              <Button size="sm" onClick={() => submitM.mutate()} loading={submitM.isPending} disabled={!canRun}><Send className="size-3.5" /> Submit</Button>
             </div>
           </div>
+          {!canRun && <p role="status" className="border-b border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn">{CODE_EXECUTION_OFF}</p>}
           <div className="min-h-0 flex-1 bg-code">
             <CodeEditor value={code[lang]} onChange={(v) => { dirty.current = true; setCode((c) => ({ ...c, [lang]: v })); }} language={lang} ariaLabel={`${lang} solution`} />
           </div>

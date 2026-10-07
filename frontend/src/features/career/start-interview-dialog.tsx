@@ -10,6 +10,7 @@ import { Dialog } from "@/components/ui/misc";
 import { ApiError, api } from "@/lib/api/client";
 import type { Interviewer, StartInterviewResponse } from "@/lib/api/types";
 import { careerKeys, InlineError } from "./shared";
+import { useCodeExecution } from "@/features/auth/use-me";
 
 const FALLBACK: Interviewer = { name: "Manisha", role: "Senior Technical Interviewer", company: "Prompters", tone: "Professional, calm, neutral, technical", thinkingSeconds: 30, answerSeconds: 120, codingSeconds: 900 };
 
@@ -26,6 +27,7 @@ function StartForm({ matchId, interviewer, onCancel }: { matchId: string; interv
   const uid = useId();
   const router = useRouter();
   const qc = useQueryClient();
+  const codingOn = useCodeExecution();
   const [duration, setDuration] = useState(30);
   const [questions, setQuestions] = useState(15);
   const [recording, setRecording] = useState(false);
@@ -107,7 +109,7 @@ function StartForm({ matchId, interviewer, onCancel }: { matchId: string; interv
           <li>
             <span className="font-mono">{interviewer.thinkingSeconds}s</span> thinking time, then about <span className="font-mono">{answerMin} min</span> to answer each question.
           </li>
-          <li>Up to 2 coding questions, plus follow-ups based on what you say.</li>
+          <li>{codingOn ? "Up to 2 coding questions, plus follow-ups based on what you say." : "Spoken technical questions and follow-ups based on what you say (coding questions are turned off on this server for now)."}</li>
           <li>Screen sharing is required. If it stops 3 times, the interview ends.</li>
           <li>Tab switches, fullscreen exits and clipboard actions are logged as integrity signals.</li>
           <li>Eye contact is not tracked or scored.</li>

@@ -1,4 +1,5 @@
 import "../config/load-env.js";
+import { codeExecutionEnabled } from "../config/env.js";
 import { CODE_QUEUE } from "../jobs/queues.js";
 import { PREP_QUEUE } from "../jobs/prep-queue.js";
 import { startHeartbeat } from "../lib/heartbeat.js";
@@ -9,10 +10,12 @@ import { startCodeWorker } from "./code-worker.js";
 import { startMaintenanceWorker } from "./maintenance-worker.js";
 import { startPrepWorker } from "./prep-worker.js";
 
-const worker = startCodeWorker();
+// No code runner at all when execution is disabled — not even the process driver.
+const worker = codeExecutionEnabled() ? startCodeWorker() : null;
+if (!worker) logger.warn("Code execution disabled (SANDBOX_DRIVER=disabled): code worker not started");
 const maintenance = await startMaintenanceWorker();
 const prep = startPrepWorker();
-const stopHeartbeat = startHeartbeat([CODE_QUEUE, PREP_QUEUE, "maintenance"]);
+const stopHeartbeat = startHeartbeat([...(worker ? [CODE_QUEUE] : []), PREP_QUEUE, "maintenance"]);
 
 /** Generous: an in-flight Top-100 batch or sandbox run is allowed to finish before we force exit. */
 const SHUTDOWN_GRACE_MS = 150_000;
@@ -28,7 +31,7 @@ async function shutdown(signal: string) {
   }, SHUTDOWN_GRACE_MS);
   force.unref();
   // close() stops taking jobs and waits for the active ones to finish.
-  await Promise.allSettled([worker.close(), prep.close(), maintenance.worker.close()]);
+  await Promise.allSettled([worker?.close(), prep.close(), maintenance.worker.close()]);
   await Promise.allSettled([maintenance.queue.close(), stopHeartbeat()]);
   await Promise.allSettled([closeRedis(), prisma.$disconnect()]);
   logger.info("Worker stopped cleanly");

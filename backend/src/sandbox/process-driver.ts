@@ -11,7 +11,7 @@ import type { RunRequest, RunResult, SandboxDriver } from "./types.js";
  * which blocks file writes, child processes and workers.
  *
  * This is NOT a security boundary — Python can still reach the network and the
- * file system. Production must use SANDBOX_DRIVER=docker.
+ * file system. Production must use SANDBOX_DRIVER=docker (or disabled); startup refuses process.
  */
 export class ProcessDriver implements SandboxDriver {
   readonly name = "process";

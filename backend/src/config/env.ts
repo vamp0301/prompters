@@ -12,7 +12,11 @@ const schema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   /** Not needed for ID-token sign-in; kept for a future server-side OAuth flow. */
   GOOGLE_CLIENT_SECRET: z.string().optional(),
-  SANDBOX_DRIVER: z.enum(["process", "docker"]).default("process"),
+  /**
+   * process: development only (not a security boundary). docker: production sandbox.
+   * disabled: no user code runs at all — the safe production choice until the Docker sandbox is deployed.
+   */
+  SANDBOX_DRIVER: z.enum(["process", "docker", "disabled"]).default("process"),
   SANDBOX_TIMEOUT_MS: z.coerce.number().default(4000),
   SANDBOX_MEMORY_MB: z.coerce.number().default(128),
   SANDBOX_JS_IMAGE: z.string().default("node:22-alpine"),
@@ -71,7 +75,7 @@ export function productionProblems(e: Pick<Env, "JWT_SECRET" | "SANDBOX_DRIVER" 
   const problems: string[] = [];
   if (EXAMPLE_SECRETS.some((re) => re.test(e.JWT_SECRET))) problems.push("JWT_SECRET is a development/example value — generate a real secret.");
   // The process driver is not a security boundary: untrusted code would run on the worker host.
-  if (e.SANDBOX_DRIVER !== "docker") problems.push("SANDBOX_DRIVER must be 'docker' in production.");
+  if (e.SANDBOX_DRIVER === "process") problems.push("SANDBOX_DRIVER=process is not allowed in production — use 'docker', or 'disabled' until the Docker sandbox is deployed.");
   if (e.STORAGE_DRIVER === "s3" && !e.S3_BUCKET) problems.push("STORAGE_DRIVER=s3 requires S3_BUCKET.");
   if (e.COOKIE_SECURE === false) problems.push("COOKIE_SECURE=false would send session cookies over plain HTTP.");
   return problems;
@@ -79,4 +83,6 @@ export function productionProblems(e: Pick<Env, "JWT_SECRET" | "SANDBOX_DRIVER" 
 
 export const env = load();
 export const isProd = env.NODE_ENV === "production";
+/** False when SANDBOX_DRIVER=disabled: build tasks, playground runs and interview coding turns are off. */
+export const codeExecutionEnabled = () => env.SANDBOX_DRIVER !== "disabled";
 export const corsOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim()).filter(Boolean);

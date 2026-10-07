@@ -2,6 +2,7 @@ import { Queue, QueueEvents } from "bullmq";
 import { bullConnection } from "../lib/redis.js";
 import type { RunRequest, RunResult } from "../sandbox/types.js";
 import { AppError } from "../utils/errors.js";
+import { codeExecutionEnabled } from "../config/env.js";
 
 export const CODE_QUEUE = "code-execution";
 
@@ -22,6 +23,9 @@ function codeQueue() {
  * runs inside the API process.
  */
 export async function executeCode(req: RunRequest, waitMs = 20_000): Promise<RunResult> {
+  if (!codeExecutionEnabled()) {
+    throw new AppError(503, "CODE_EXECUTION_DISABLED", "Running code is turned off on this server for now. Everything else keeps working.");
+  }
   const { queue: q, events: ev } = codeQueue();
   const job = await q.add("run", req);
   try {

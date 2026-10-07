@@ -367,7 +367,7 @@ Only variables that the code actually reads are listed. Use placeholders. Never 
 | `APP_URL` | no | `http://localhost:3000` | `config/env.ts` | Frontend URL; also an allowed origin for the CSRF check. |
 | `GOOGLE_CLIENT_ID` | no | — | `config/env.ts` | Enables Google sign-in (ID-token verification). |
 | `GOOGLE_CLIENT_SECRET` | no | — | `config/env.ts` | Validated but unused; reserved for a server-side OAuth flow. |
-| `SANDBOX_DRIVER` | no | `process` | `config/env.ts` | `process` (development only) or `docker` (production). |
+| `SANDBOX_DRIVER` | no | `process` | `config/env.ts` | `process` (development only), `docker` (production sandbox) or `disabled` (no user code runs anywhere; the code worker isn't started, run endpoints return `503 CODE_EXECUTION_DISABLED`, interviews skip coding turns). Production refuses `process`. |
 | `SANDBOX_TIMEOUT_MS` | no | `4000` | `config/env.ts` | Per-run time limit. |
 | `SANDBOX_MEMORY_MB` | no | `128` | `config/env.ts` | Per-run memory limit. |
 | `SANDBOX_JS_IMAGE` | no | `node:22-alpine` | `config/env.ts` | Docker image for JavaScript. |
@@ -488,7 +488,7 @@ Base path `/api`. Requests with a body must be JSON. Responses use one envelope:
 { "success": false, "error": { "code": "VALIDATION_ERROR", "message": "…", "details": { }, "requestId": "…" } }
 ```
 
-Common error codes: `400 VALIDATION_ERROR | BAD_REQUEST | INVALID_JSON`, `401 UNAUTHORIZED`, `403 FORBIDDEN | CSRF_REJECTED | FEATURE_DISABLED`, `404 NOT_FOUND` (also returned for resources owned by someone else), `409 CONFLICT`, `413 PAYLOAD_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `423 LOCKED`, `429 RATE_LIMITED | PREP_DAILY_LIMIT`, `502 AI_BAD_OUTPUT | AI_UPSTREAM_ERROR`, `503 AI_UNAVAILABLE | SANDBOX_UNAVAILABLE`.
+Common error codes: `400 VALIDATION_ERROR | BAD_REQUEST | INVALID_JSON`, `401 UNAUTHORIZED`, `403 FORBIDDEN | CSRF_REJECTED | FEATURE_DISABLED`, `404 NOT_FOUND` (also returned for resources owned by someone else), `409 CONFLICT`, `413 PAYLOAD_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `423 LOCKED`, `429 RATE_LIMITED | PREP_DAILY_LIMIT`, `502 AI_BAD_OUTPUT | AI_UPSTREAM_ERROR`, `503 AI_UNAVAILABLE | SANDBOX_UNAVAILABLE | CODE_EXECUTION_DISABLED`.
 
 Health endpoints (outside `/api`):
 
@@ -751,7 +751,7 @@ See also [docs/security.md](docs/security.md).
 | Logging | pino with request IDs; no stack traces in responses |
 | Account deletion | `DELETE /api/auth/account` first deletes every stored file the user owns (`resumes/`, `interviews/`, `prep-packs/` under their ID) through the storage abstraction, then the database rows. Idempotent, and tested. |
 | Body limits | Oversized bodies return `413 PAYLOAD_TOO_LARGE` (8 MB on `/api/career`, 1 MB elsewhere); malformed JSON returns `400 INVALID_JSON`. |
-| Production guard | The API and worker refuse to start in production with `SANDBOX_DRIVER=process`, an example/development `JWT_SECRET`, `COOKIE_SECURE=false`, or `STORAGE_DRIVER=s3` without a bucket. A localhost `CORS_ORIGIN` and local storage are logged as warnings. |
+| Production guard | The API and worker refuse to start in production with `SANDBOX_DRIVER=process` (use `docker`, or `disabled` until the Docker sandbox is deployed), an example/development `JWT_SECRET`, `COOKIE_SECURE=false`, or `STORAGE_DRIVER=s3` without a bucket. A localhost `CORS_ORIGIN` and local storage are logged as warnings. |
 | Log redaction | Cookies, `set-cookie`, authorization, API-key headers, passwords, tokens and credentials are redacted from logs. |
 
 Cross-account access (IDOR) is covered by `tests/hardening.test.ts`: another user's resumes, JDs, analyses, interviews, audio, plans, questions, attempts, PDFs and applications all return 404, and write attempts change nothing.
@@ -897,6 +897,7 @@ Coding turns in the Manisha interview use published `BuildTask`s from the `dsa`,
 | Driver | What it enforces | Use |
 |---|---|---|
 | `SANDBOX_DRIVER=process` | Child process with a clean env and empty temp dir, hard timeout (`SANDBOX_TIMEOUT_MS`), SIGKILL on timeout. For Node: `--permission` (file reads limited to the temp dir; no writes, child processes or workers) and `--max-old-space-size`. For Python: `-I` isolated mode only. | **Development only. Not a security boundary.** Python can reach the network and the file system. |
+| `SANDBOX_DRIVER=disabled` | Nothing runs. Build tasks, the topic playground and admin code checks return `503 CODE_EXECUTION_DISABLED`; `/api/auth/me` reports `flags.CODE_EXECUTION: false` so the UI explains it; Manisha interviews continue without coding turns. | **Safe production choice until the Docker sandbox host exists.** |
 | `SANDBOX_DRIVER=docker` | Fresh throw-away container per run: `--network none`, `--memory`/`--memory-swap` = `SANDBOX_MEMORY_MB`, `--cpus 0.5`, `--pids-limit 64`, `--read-only` root fs, `/tmp` tmpfs 16 MB `noexec,nosuid`, user `65534:65534`, `--cap-drop ALL`, `no-new-privileges`, code on stdin (no host mounts), timeout + 2 s, forced `docker rm -f` on timeout | **Required for production.** |
 
 The Docker driver has not been run in this environment; its adversarial test suite (`tests/sandbox-docker.test.ts`) runs in CI, where Docker is available. Production startup refuses `SANDBOX_DRIVER=process`. Because the worker needs access to the Docker daemon, run it on a dedicated, isolated host. See [docs/code-sandbox.md](docs/code-sandbox.md).
@@ -932,7 +933,7 @@ Note on storage and the worker: PDF packs are written by the worker and read by 
 - [ ] Serve everything over HTTPS
 - [ ] Set `CORS_ORIGIN` and `APP_URL` to the production frontend origin(s)
 - [ ] Confirm secure cookies (`NODE_ENV=production` or `COOKIE_SECURE=true`)
-- [ ] Switch the sandbox to Docker (`SANDBOX_DRIVER=docker`) on an isolated worker host
+- [ ] Switch the sandbox to Docker (`SANDBOX_DRIVER=docker`) on an isolated worker host — or launch with `SANDBOX_DRIVER=disabled` and add code execution later
 - [ ] Verify sandbox network is disabled (`--network none`)
 - [ ] Verify CPU / memory / time limits (`--cpus`, `SANDBOX_MEMORY_MB`, `SANDBOX_TIMEOUT_MS`, pids limit)
 - [ ] Configure production storage shared by API and worker
@@ -963,6 +964,7 @@ Note on storage and the worker: PDF packs are written by the worker and read by 
 | `/health` returns 503 | Database or Redis unreachable. Check `DATABASE_URL` / `REDIS_URL` (TLS needs `rediss://`). |
 | Code runs time out / "Run" never returns | The worker isn't running. Start `npm run dev:worker`. |
 | Top-100 plan stuck in `QUEUED` | Worker not running (`GET /health` shows `worker: false`), or it is connected to a different Redis than the API. Once the worker runs, a maintenance sweep every 5 minutes re-queues plans and packs whose job was lost; after 3 interruptions in a day the plan is marked FAILED with a Retry message. |
+| `503 CODE_EXECUTION_DISABLED` | The server runs with `SANDBOX_DRIVER=disabled` on purpose. The UI disables Run/Submit and explains why; set `docker` once the sandbox host is ready. |
 | `503 SANDBOX_UNAVAILABLE` on Run | No code worker picked the job up within 20 s. Start `npm run dev:worker`. |
 | `413 PAYLOAD_TOO_LARGE` | Upload over the body limit (files must be ≤ 5 MB). |
 | `Refusing to start in production: …` | The listed setting is unsafe in production (process sandbox, example JWT secret, `COOKIE_SECURE=false`, S3 without bucket). |

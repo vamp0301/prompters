@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { CodeEditor } from "@/components/ui/code-editor";
 import { Tabs } from "@/components/ui/misc";
 import { api } from "@/lib/api/client";
+import { CODE_EXECUTION_OFF, useCodeExecution } from "@/features/auth/use-me";
 import { cn } from "@/lib/utils";
 
 interface RunResult { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; durationMs: number }
@@ -17,6 +18,7 @@ export function CodePlayground({ codeJs, codePython, defaultLanguage, topicSlug 
   const [code, setCode] = useState(original);
   const [result, setResult] = useState<RunResult | null>(null);
   const [running, setRunning] = useState(false);
+  const canRun = useCodeExecution();
 
   const run = async () => {
     setRunning(true);
@@ -38,7 +40,7 @@ export function CodePlayground({ codeJs, codePython, defaultLanguage, topicSlug 
         ) : <span className="font-mono text-xs text-muted">{lang}</span>}
         <div className="flex gap-2">
           <Button size="sm" variant="ghost" onClick={() => { setCode(original); setResult(null); }}><RotateCcw className="size-3.5" /> Reset</Button>
-          <Button size="sm" onClick={run} loading={running}><Play className="size-3.5" /> Run</Button>
+          <Button size="sm" onClick={run} loading={running} disabled={!canRun}><Play className="size-3.5" /> Run</Button>
         </div>
       </div>
       <div className="h-72 bg-code">
@@ -54,7 +56,7 @@ export function CodePlayground({ codeJs, codePython, defaultLanguage, topicSlug 
             {result.stdout}
             {result.stderr && <span className={cn("block text-danger", result.stdout && "mt-2")}>{result.stderr}</span>}
           </pre>
-        ) : <span className="text-subtle">Press Run to execute this code in a sandbox.</span>}
+        ) : <span className="text-subtle">{canRun ? "Press Run to execute this code in a sandbox." : CODE_EXECUTION_OFF}</span>}
       </div>
     </div>
   );

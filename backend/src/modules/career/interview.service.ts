@@ -1,6 +1,6 @@
 import type { BuildTask, InterviewSession, InterviewTurn, Prisma } from "@prisma/client";
 import { aiJson, requireAI } from "../../ai/json.js";
-import { env } from "../../config/env.js";
+import { codeExecutionEnabled, env } from "../../config/env.js";
 import { executeCode } from "../../jobs/queues.js";
 import { prisma } from "../../lib/prisma.js";
 import { storage } from "../../lib/storage.js";
@@ -93,6 +93,8 @@ function pickNextQuestion(bank: BankQuestion[], turns: InterviewTurn[]) {
 }
 
 async function pickCodingTask(userId: string, used: string[]) {
+  // With code execution disabled the interview simply continues with spoken questions.
+  if (!codeExecutionEnabled()) return null;
   const tasks = await prisma.buildTask.findMany({
     where: { status: "PUBLISHED", slug: { notIn: used }, topic: { module: { slug: { in: ["dsa", "js-fundamentals", "js-intermediate", "python-fundamentals", "server-development"] } } } },
   });
