@@ -36,7 +36,12 @@ jobs:
       - run: npm run typecheck
       - name: Content integrity (runs every code sample)
         run: npm run test:content
+      - name: Pull sandbox images (the Docker sandbox tests use them)
+        run: docker pull node:22-alpine && docker pull python:3.12-alpine
       - run: npm test
+        env:
+          # Fail instead of skipping if the runner has no Docker: the production sandbox must be tested.
+          REQUIRE_DOCKER_SANDBOX: "1"
       - run: npm run build
 
   frontend:

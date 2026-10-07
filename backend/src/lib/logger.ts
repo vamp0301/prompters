@@ -3,6 +3,22 @@ import { env, isProd } from "../config/env.js";
 
 export const logger = pino({
   level: env.NODE_ENV === "test" ? "silent" : isProd ? "info" : "debug",
-  redact: ["req.headers.cookie", "req.headers.authorization", "*.password", "*.passwordHash"],
+  // Never log credentials: session cookies (both directions), auth headers, passwords, tokens, API keys.
+  redact: {
+    paths: [
+      "req.headers.cookie",
+      "req.headers.authorization",
+      'req.headers["x-goog-api-key"]',
+      'res.headers["set-cookie"]',
+      "*.password",
+      "*.passwordHash",
+      "*.newPassword",
+      "*.currentPassword",
+      "*.token",
+      "*.credential",
+      "*.apiKey",
+    ],
+    censor: "[redacted]",
+  },
   transport: isProd || env.NODE_ENV === "test" ? undefined : { target: "pino-pretty", options: { colorize: true } },
 });

@@ -5,6 +5,7 @@ import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 import { corsOrigins, isProd } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
+import { workerAlive } from "../lib/heartbeat.js";
 import { redis } from "../lib/redis.js";
 import { logger } from "../lib/logger.js";
 import { loadUser, requireAuth } from "../middleware/auth.js";
@@ -37,7 +38,7 @@ export function createApp() {
   if (isProd) app.set("trust proxy", 1);
 
   app.use(requestId);
-  app.use(pinoHttp({ logger, genReqId: (req) => (req as express.Request).id, autoLogging: { ignore: (req) => req.url === "/health" } }));
+  app.use(pinoHttp({ logger, genReqId: (req) => (req as express.Request).id, autoLogging: { ignore: (req) => req.url === "/health" || req.url === "/live" || req.url === "/ready" } }));
   app.use(helmet());
   app.use(cors({ origin: corsOrigins, credentials: true }));
   // Resume PDFs and answer audio arrive as base64 JSON; only these routes get the larger limit.
@@ -45,10 +46,29 @@ export function createApp() {
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
 
+  // Liveness: the process is up (no dependency checks, so a DB blip doesn't restart the API).
+  app.get("/live", (_req, res) => {
+    res.json({ success: true, data: { alive: true } });
+  });
+
+  // Readiness: can this instance serve traffic? Database and Redis must answer.
+  const dependencies = async () => {
+    const [db, cache] = await Promise.allSettled([prisma.$queryRaw`SELECT 1`, redis().ping()]);
+    return { database: db.status === "fulfilled", redis: cache.status === "fulfilled" };
+  };
+  app.get("/ready", async (_req, res) => {
+    const deps = await dependencies();
+    const ok = deps.database && deps.redis;
+    res.status(ok ? 200 : 503).json({ success: ok, data: deps });
+  });
+
+  // Overall health for dashboards: readiness plus whether a background worker is alive. The worker
+  // doesn't affect the status code (the API can serve while it restarts) but is reported.
   app.get("/health", async (_req, res) => {
-    const checks = await Promise.allSettled([prisma.$queryRaw`SELECT 1`, redis().ping()]);
-    const ok = checks.every((c) => c.status === "fulfilled");
-    res.status(ok ? 200 : 503).json({ success: ok, data: { database: checks[0].status === "fulfilled", redis: checks[1].status === "fulfilled" } });
+    const deps = await dependencies();
+    const worker = deps.redis ? await workerAlive().catch(() => false) : false;
+    const ok = deps.database && deps.redis;
+    res.status(ok ? 200 : 503).json({ success: ok, data: { ...deps, worker } });
   });
 
   const api = express.Router();

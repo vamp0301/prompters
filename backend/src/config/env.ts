@@ -53,10 +53,28 @@ function load(): Env {
     const issues = parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid environment configuration:\n${issues}`);
   }
-  if (parsed.data.NODE_ENV === "production" && parsed.data.JWT_SECRET.startsWith("dev-only")) {
-    throw new Error("Refusing to start in production with the development JWT_SECRET");
+  if (parsed.data.NODE_ENV === "production") {
+    const problems = productionProblems(parsed.data);
+    if (problems.length) throw new Error(`Refusing to start in production:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
   }
   return parsed.data;
+}
+
+/** Placeholder secrets from .env.example / docs that must never reach production. */
+const EXAMPLE_SECRETS = [/^dev-only/, /^change-me/i, /^YOUR_/, /^ci-secret/];
+
+/**
+ * Settings that are fine in development but unsafe in production. Fatal, because the safe
+ * alternative is always available. Exported for tests.
+ */
+export function productionProblems(e: Pick<Env, "JWT_SECRET" | "SANDBOX_DRIVER" | "STORAGE_DRIVER" | "S3_BUCKET" | "COOKIE_SECURE">) {
+  const problems: string[] = [];
+  if (EXAMPLE_SECRETS.some((re) => re.test(e.JWT_SECRET))) problems.push("JWT_SECRET is a development/example value — generate a real secret.");
+  // The process driver is not a security boundary: untrusted code would run on the worker host.
+  if (e.SANDBOX_DRIVER !== "docker") problems.push("SANDBOX_DRIVER must be 'docker' in production.");
+  if (e.STORAGE_DRIVER === "s3" && !e.S3_BUCKET) problems.push("STORAGE_DRIVER=s3 requires S3_BUCKET.");
+  if (e.COOKIE_SECURE === false) problems.push("COOKIE_SECURE=false would send session cookies over plain HTTP.");
+  return problems;
 }
 
 export const env = load();

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
+import { deleteUserObjects } from "../../lib/storage.js";
 import { authLimiter } from "../../middleware/rate-limit.js";
 import { clearSession, currentUser, issueSession, requireAuth } from "../../middleware/auth.js";
 import { handler, parse } from "../../utils/http.js";
@@ -77,6 +78,9 @@ export function authRoutes() {
     const me = currentUser(req);
     if (confirm !== me.email) throw badRequest("Type your email to confirm account deletion.");
     if (me.role !== "STUDENT") throw badRequest("Staff accounts must be demoted before deletion.");
+    // Files first: if storage fails the account still exists and the user can retry, rather than
+    // leaving private files with no owner. Idempotent, so a retry is safe.
+    await deleteUserObjects(me.id);
     await prisma.user.delete({ where: { id: me.id } });
     clearSession(res);
     return { deleted: true };

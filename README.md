@@ -208,7 +208,7 @@ flowchart TB
 ```
 
 - **Modular monolith.** One API process with feature modules (`backend/src/modules/*`), plus one worker process.
-- **The worker runs three BullMQ workers:** `code-execution` (sandbox), `career-prep` (Top-100 plans and PDF packs) and `maintenance` (daily recording purge at 03:30 Asia/Kolkata).
+- **The worker runs three BullMQ workers:** `code-execution` (sandbox), `career-prep` (Top-100 plans and PDF packs) and `maintenance` (daily recording purge at 03:30 Asia/Kolkata, and a 5-minute sweep that re-queues stuck Top-100 work). It writes a Redis heartbeat and shuts down gracefully on SIGTERM (stops taking jobs, lets active ones finish, then disconnects).
 - **Student code never runs in the API process.** The API enqueues a job and waits up to 20 s for the result.
 - **The frontend proxies `/api/*`** to the backend (`next.config.ts` rewrites), so the session cookie stays first-party.
 - **AI is optional for the core platform.** With `AI_PROVIDER=none`, learning, quizzes, builds and admin all work. Career features return `503 AI_UNAVAILABLE`, and `GET /api/career/status` reports `NO_PROVIDER`.
@@ -488,9 +488,15 @@ Base path `/api`. Requests with a body must be JSON. Responses use one envelope:
 { "success": false, "error": { "code": "VALIDATION_ERROR", "message": "…", "details": { }, "requestId": "…" } }
 ```
 
-Common error codes: `400 VALIDATION_ERROR | BAD_REQUEST | INVALID_JSON`, `401 UNAUTHORIZED`, `403 FORBIDDEN | CSRF_REJECTED | FEATURE_DISABLED`, `404 NOT_FOUND` (also returned for resources owned by someone else), `409 CONFLICT`, `415 UNSUPPORTED_MEDIA_TYPE`, `423 LOCKED`, `429 RATE_LIMITED`, `502 AI_BAD_OUTPUT | AI_UPSTREAM_ERROR`, `503 AI_UNAVAILABLE`.
+Common error codes: `400 VALIDATION_ERROR | BAD_REQUEST | INVALID_JSON`, `401 UNAUTHORIZED`, `403 FORBIDDEN | CSRF_REJECTED | FEATURE_DISABLED`, `404 NOT_FOUND` (also returned for resources owned by someone else), `409 CONFLICT`, `413 PAYLOAD_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `423 LOCKED`, `429 RATE_LIMITED | PREP_DAILY_LIMIT`, `502 AI_BAD_OUTPUT | AI_UPSTREAM_ERROR`, `503 AI_UNAVAILABLE | SANDBOX_UNAVAILABLE`.
 
-`GET /health` (outside `/api`) checks the database and Redis, and returns 200 or 503.
+Health endpoints (outside `/api`):
+
+| Endpoint | Meaning |
+|---|---|
+| `GET /live` | Process is up (no dependency checks). Use for liveness probes. |
+| `GET /ready` | Database and Redis answer; 200 or 503. Use for readiness / load-balancer checks. |
+| `GET /health` | Readiness plus `worker: true/false` from the worker's Redis heartbeat (refreshed every 20 s). The worker doesn't affect the status code. |
 
 A fuller reference for the learning and admin endpoints is in [backend/docs/api.md](backend/docs/api.md). It does not cover the career and prep endpoints below.
 
@@ -701,6 +707,8 @@ The full transcript, per-turn evaluations and audio links are returned only afte
 |---|---|---|---|
 | Backend API / unit | Vitest + Supertest | `backend/tests/*.test.ts` | Runs against a **local** Postgres database `prompters_test` and **local** Redis db 15. Never Neon/Upstash. `global-setup.ts` resets the test DB with `prisma migrate reset`. Files run serially. AI is replaced by a deterministic `FakeAI` (`tests/fake-ai.ts`). |
 | Content integrity | `scripts/verify-content.ts` | `npm run test:content` | Executes seeded code samples with the process sandbox (needs Python 3). |
+| Hardening | Vitest + Supertest | `backend/tests/hardening.test.ts` | 413/400 errors, logout-all and password-change session invalidation, tampered cookies, IDOR across every career/prep/application resource, account-deletion file cleanup, production config guard, health endpoints, stuck-job recovery, code-runner outage. |
+| Docker sandbox (adversarial) | Vitest | `backend/tests/sandbox-docker.test.ts` | Infinite loop, memory bomb, huge stdout/stderr, network access, secret/env leakage, host file writes, docker socket, non-root user, fork bomb, container cleanup. **Skipped when no Docker daemon is available**; CI sets `REQUIRE_DOCKER_SANDBOX=1` so they must run there. Not yet run on this machine (no Docker). |
 | Frontend unit | Vitest + Testing Library (jsdom) | `frontend/tests/unit` | |
 | Frontend E2E | Playwright | `frontend/tests/e2e` | Needs the API **and** worker running; starts `npm run dev` unless `E2E_BASE_URL` is set. |
 
@@ -741,10 +749,12 @@ See also [docs/security.md](docs/security.md).
 | Private files | Audio and PDFs are served through authenticated, owner-checked endpoints with `cache-control: private, no-store` |
 | Prompt injection | Resume, JD and answer text are fenced in tags (`fence()` in `ai/json.ts`); every career/prep system prompt says the fenced text is untrusted and its instructions must not be followed; output is schema-validated and code-validated |
 | Logging | pino with request IDs; no stack traces in responses |
+| Account deletion | `DELETE /api/auth/account` first deletes every stored file the user owns (`resumes/`, `interviews/`, `prep-packs/` under their ID) through the storage abstraction, then the database rows. Idempotent, and tested. |
+| Body limits | Oversized bodies return `413 PAYLOAD_TOO_LARGE` (8 MB on `/api/career`, 1 MB elsewhere); malformed JSON returns `400 INVALID_JSON`. |
+| Production guard | The API and worker refuse to start in production with `SANDBOX_DRIVER=process`, an example/development `JWT_SECRET`, `COOKIE_SECURE=false`, or `STORAGE_DRIVER=s3` without a bucket. A localhost `CORS_ORIGIN` and local storage are logged as warnings. |
+| Log redaction | Cookies, `set-cookie`, authorization, API-key headers, passwords, tokens and credentials are redacted from logs. |
 
-**Known gaps (to address before production)**
-- Account deletion (`DELETE /api/auth/account`) cascades database rows but does **not** delete stored objects (resume files, interview audio, PDF packs) from storage.
-- The 8 MB JSON body limit on `/api/career` is enforced by Express, but an oversized body currently surfaces as a generic 500 rather than 413.
+Cross-account access (IDOR) is covered by `tests/hardening.test.ts`: another user's resumes, JDs, analyses, interviews, audio, plans, questions, attempts, PDFs and applications all return 404, and write attempts change nothing.
 
 ### Communication scoring and sensitive characteristics
 
@@ -889,7 +899,7 @@ Coding turns in the Manisha interview use published `BuildTask`s from the `dsa`,
 | `SANDBOX_DRIVER=process` | Child process with a clean env and empty temp dir, hard timeout (`SANDBOX_TIMEOUT_MS`), SIGKILL on timeout. For Node: `--permission` (file reads limited to the temp dir; no writes, child processes or workers) and `--max-old-space-size`. For Python: `-I` isolated mode only. | **Development only. Not a security boundary.** Python can reach the network and the file system. |
 | `SANDBOX_DRIVER=docker` | Fresh throw-away container per run: `--network none`, `--memory`/`--memory-swap` = `SANDBOX_MEMORY_MB`, `--cpus 0.5`, `--pids-limit 64`, `--read-only` root fs, `/tmp` tmpfs 16 MB `noexec,nosuid`, user `65534:65534`, `--cap-drop ALL`, `no-new-privileges`, code on stdin (no host mounts), timeout + 2 s, forced `docker rm -f` on timeout | **Required for production.** |
 
-The Docker driver has not been run in this environment. Because the worker needs access to the Docker daemon, run it on a dedicated, isolated host. See [docs/code-sandbox.md](docs/code-sandbox.md).
+The Docker driver has not been run in this environment; its adversarial test suite (`tests/sandbox-docker.test.ts`) runs in CI, where Docker is available. Production startup refuses `SANDBOX_DRIVER=process`. Because the worker needs access to the Docker daemon, run it on a dedicated, isolated host. See [docs/code-sandbox.md](docs/code-sandbox.md).
 
 ---
 
@@ -900,7 +910,7 @@ The Docker driver has not been run in this environment. Because the worker needs
 | Component | Recommendation |
 |---|---|
 | Frontend | A Next.js host. Set `NEXT_PUBLIC_API_URL` at build time (it is baked into the rewrite) and `NEXT_PUBLIC_GOOGLE_CLIENT_ID`. |
-| API | A Node host running `npm run build` then `npm run db:deploy && npm start` (the backend Dockerfile's default command runs `prisma migrate deploy` and then the server). Health check: `GET /health`. |
+| API | A Node host running `npm run build` then `npm run db:deploy && npm start` (the backend Dockerfile's default command runs `prisma migrate deploy` and then the server). Health checks: `GET /live` (liveness) and `GET /ready` (readiness). |
 | Worker | A **separate** process: `npm run start:worker`. It runs the code sandbox, maintenance and prep jobs. It is required for coding questions, Top-100 plans, PDF packs and recording purge. |
 | Sandbox | Worker on an isolated host with Docker and `SANDBOX_DRIVER=docker`. |
 | Database | Neon PostgreSQL in a region close to the API. Pooled `DATABASE_URL`, direct `DIRECT_URL`. |
@@ -952,7 +962,10 @@ Note on storage and the worker: PDF packs are written by the worker and read by 
 | `Refusing to start in production with the development JWT_SECRET` | Generate a real secret. |
 | `/health` returns 503 | Database or Redis unreachable. Check `DATABASE_URL` / `REDIS_URL` (TLS needs `rediss://`). |
 | Code runs time out / "Run" never returns | The worker isn't running. Start `npm run dev:worker`. |
-| Top-100 plan stuck in `QUEUED` | Worker not running, or it is connected to a different Redis than the API. |
+| Top-100 plan stuck in `QUEUED` | Worker not running (`GET /health` shows `worker: false`), or it is connected to a different Redis than the API. Once the worker runs, a maintenance sweep every 5 minutes re-queues plans and packs whose job was lost; after 3 interruptions in a day the plan is marked FAILED with a Retry message. |
+| `503 SANDBOX_UNAVAILABLE` on Run | No code worker picked the job up within 20 s. Start `npm run dev:worker`. |
+| `413 PAYLOAD_TOO_LARGE` | Upload over the body limit (files must be ≤ 5 MB). |
+| `Refusing to start in production: …` | The listed setting is unsafe in production (process sandbox, example JWT secret, `COOKIE_SECURE=false`, S3 without bucket). |
 | Plan `FAILED: Only N questions passed quality checks` | Model output was too thin or rejected. Use **Retry**; accepted questions are kept. |
 | `503 AI_UNAVAILABLE` | `AI_PROVIDER=none`, or no `AI_API_KEY`. |
 | `502 AI_UPSTREAM_ERROR` | Provider busy or rate-limited after retries and fallbacks. On the Gemini free tier, each model has a small **requests-per-day** quota. One Top-100 plan uses roughly 20–25 model calls, so a free key supports only a few plans per day per model. Wait for the daily reset, add fallback models, or use a paid key. |

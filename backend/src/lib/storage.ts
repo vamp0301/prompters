@@ -1,6 +1,6 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { env } from "../config/env.js";
 
 export interface StoredObject {
@@ -12,7 +12,15 @@ interface StorageDriver {
   put(key: string, body: Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<StoredObject | null>;
   delete(key: string): Promise<void>;
+  /** Deletes every object under a folder-like prefix (must end with "/"). Missing objects are fine. */
+  deletePrefix(prefix: string): Promise<number>;
 }
+
+/** A prefix must be a non-empty, folder-like path ("resumes/<userId>/") so it can never match the whole store. */
+const safePrefix = (prefix: string) => {
+  if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+\/$/.test(prefix) || prefix.includes("..")) throw new Error("Invalid storage prefix");
+  return prefix;
+};
 
 const safeKey = (key: string) => {
   if (!/^[a-zA-Z0-9/_.-]+$/.test(key) || key.includes("..")) throw new Error("Invalid storage key");
@@ -41,6 +49,12 @@ class LocalStorage implements StorageDriver {
     const file = path.join(this.root, safeKey(key));
     await Promise.all([rm(file, { force: true }), rm(`${file}.type`, { force: true })]);
   }
+  async deletePrefix(prefix: string) {
+    const dir = path.join(this.root, safePrefix(prefix));
+    const files = await readdir(dir, { recursive: true }).catch(() => [] as string[]);
+    await rm(dir, { recursive: true, force: true });
+    return files.filter((f) => !f.endsWith(".type")).length;
+  }
 }
 
 /** Production: any S3-compatible bucket (AWS S3, Cloudflare R2, Neon Object Storage). Private objects only. */
@@ -67,6 +81,20 @@ class S3Storage implements StorageDriver {
   async delete(key: string) {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: safeKey(key) }));
   }
+  async deletePrefix(prefix: string) {
+    let deleted = 0;
+    let token: string | undefined;
+    do {
+      const page = await this.client.send(new ListObjectsV2Command({ Bucket: this.bucket, Prefix: safePrefix(prefix), ContinuationToken: token }));
+      const keys = (page.Contents ?? []).flatMap((o) => (o.Key ? [{ Key: o.Key }] : []));
+      if (keys.length) {
+        await this.client.send(new DeleteObjectsCommand({ Bucket: this.bucket, Delete: { Objects: keys, Quiet: true } }));
+        deleted += keys.length;
+      }
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
+    return deleted;
+  }
 }
 
 let driver: StorageDriver | undefined;
@@ -76,4 +104,17 @@ export function storage(): StorageDriver {
     driver = env.STORAGE_DRIVER === "s3" ? new S3Storage() : new LocalStorage();
   }
   return driver;
+}
+
+/** Every storage area that holds per-user private files, keyed as `<area>/<userId>/…`. */
+export const USER_STORAGE_AREAS = ["resumes", "interviews", "prep-packs"] as const;
+
+/**
+ * Deletes all of a user's stored files (resume originals, interview audio, PDF packs).
+ * Idempotent: running it again, or for a user with no files, is a no-op.
+ */
+export async function deleteUserObjects(userId: string) {
+  let deleted = 0;
+  for (const area of USER_STORAGE_AREAS) deleted += await storage().deletePrefix(`${area}/${userId}/`);
+  return deleted;
 }

@@ -17,8 +17,23 @@ function prepQueue() {
 
 /** Top-100 generation and PDF packs are long-running AI work, so they run on the worker, never in the request. */
 export async function enqueuePrep(job: PrepJob) {
-  const id = job.kind === "plan" ? `plan-${job.planId}-${Date.now()}` : `pack-${job.packId}`;
+  // Unique per enqueue: BullMQ silently ignores an add whose jobId still exists (kept completed/failed
+  // jobs), which would make a re-queue after recovery a no-op.
+  const id = job.kind === "plan" ? `plan-${job.planId}-${Date.now()}` : `pack-${job.packId}-${Date.now()}`;
   await prepQueue().add(job.kind, job, { jobId: id });
+}
+
+/** Plan/pack ids that currently have a live job (waiting, active, delayed…). */
+export async function liveTargets() {
+  const jobs = await prepQueue().getJobs(["active", "waiting", "delayed", "prioritized", "waiting-children"]);
+  const plans = new Set<string>();
+  const packs = new Set<string>();
+  for (const j of jobs) {
+    if (!j?.data) continue;
+    if (j.data.kind === "plan") plans.add(j.data.planId);
+    else packs.add(j.data.packId);
+  }
+  return { plans, packs };
 }
 
 export async function closePrepQueue() {

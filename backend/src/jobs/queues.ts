@@ -1,6 +1,7 @@
 import { Queue, QueueEvents } from "bullmq";
 import { bullConnection } from "../lib/redis.js";
 import type { RunRequest, RunResult } from "../sandbox/types.js";
+import { AppError } from "../utils/errors.js";
 
 export const CODE_QUEUE = "code-execution";
 
@@ -20,10 +21,19 @@ function codeQueue() {
  * Sends code to the sandbox worker and waits for the result. Student code never
  * runs inside the API process.
  */
-export async function executeCode(req: RunRequest): Promise<RunResult> {
+export async function executeCode(req: RunRequest, waitMs = 20_000): Promise<RunResult> {
   const { queue: q, events: ev } = codeQueue();
   const job = await q.add("run", req);
-  return (await job.waitUntilFinished(ev, 20_000)) as RunResult;
+  try {
+    return (await job.waitUntilFinished(ev, waitMs)) as RunResult;
+  } catch (e) {
+    // Nobody is waiting any more: don't let the job run later for nothing.
+    await job.remove().catch(() => undefined);
+    if (e instanceof Error && /timed out|timeout/i.test(e.message)) {
+      throw new AppError(503, "SANDBOX_UNAVAILABLE", "The code runner is busy or offline right now. Please try again in a moment.");
+    }
+    throw e;
+  }
 }
 
 export async function closeQueues() {
