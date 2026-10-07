@@ -229,6 +229,12 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
         }
       />
 
+      {questions.data && all.length > 0 && all.length < 100 && (
+        <p role="status" className="rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">
+          Partial plan: {all.length} questions passed our quality checks for this resume and target. We don&apos;t pad the list with weaker questions — you can Regenerate later for a fresh set.
+        </p>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {PRIORITY_ORDER.map((p) => {
           const n = all.filter((q) => q.priority === p).length;

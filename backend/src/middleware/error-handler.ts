@@ -10,6 +10,14 @@ export function notFoundHandler(req: Request, res: Response) {
   });
 }
 
+/** Connection-level failures of Postgres (Prisma) or Redis (ioredis). */
+export function isDependencyOutage(err: unknown) {
+  if (err instanceof Prisma.PrismaClientInitializationError) return true;
+  if (err instanceof Prisma.PrismaClientKnownRequestError && ["P1001", "P1002", "P1008", "P1017", "P2024"].includes(err.code)) return true;
+  if (!(err instanceof Error)) return false;
+  return err.name === "MaxRetriesPerRequestError" || /ECONNREFUSED|ECONNRESET|ETIMEDOUT|Connection is closed|Stream isn't writeable/i.test(err.message);
+}
+
 /** Errors raised by body-parser (express.json) carry a `type` and a 4xx `status`. */
 function isBodyParserError(err: unknown): err is { type: string; status: number } {
   if (typeof err !== "object" || err === null) return false;
@@ -39,6 +47,11 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     status = 400;
     code = "INVALID_JSON";
     message = "Request body is not valid JSON.";
+  } else if (isDependencyOutage(err)) {
+    // Database or Redis unreachable: a temporary outage, not a bug — say so (and let clients retry).
+    status = 503;
+    code = "SERVICE_UNAVAILABLE";
+    message = "Prompters is having trouble reaching its database or cache. Please try again in a minute.";
   } else if (isBodyParserError(err)) {
     // express.json() reports these with their own HTTP status; never let them fall through as a 500.
     if (err.type === "entity.too.large") {
@@ -56,7 +69,8 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     }
   }
 
-  if (status >= 500) logger.error({ err, requestId: req.id, path: req.path }, "Unhandled error");
+  if (status === 503) res.setHeader("retry-after", "30");
+  if (status >= 500) logger.error({ err, requestId: req.id, path: req.path, code }, status === 503 ? "Dependency unavailable" : "Unhandled error");
   else logger.debug({ code, requestId: req.id, path: req.path }, message);
 
   res.status(status).json({ success: false, error: { code, message, details, requestId: req.id } });

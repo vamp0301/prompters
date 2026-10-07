@@ -8,9 +8,10 @@ const QUEUE = "maintenance";
 
 /** Housekeeping: daily purge of expired interview audio; every 5 minutes, re-queue stuck Top-100 work. */
 export async function startMaintenanceWorker() {
-  const queue = new Queue(QUEUE, { connection: bullConnection() });
-  await queue.upsertJobScheduler("purge-recordings", { pattern: "30 3 * * *", tz: "Asia/Kolkata" }, { name: "purge-recordings" });
-  await queue.upsertJobScheduler("recover-prep", { every: 5 * 60_000 }, { name: "recover-prep" });
+  // Schedulers add a job every run (the recovery sweep ~288/day): keep only a short history in Redis.
+  const queue = new Queue(QUEUE, { connection: bullConnection(), defaultJobOptions: { removeOnComplete: { count: 50 }, removeOnFail: { count: 200, age: 7 * 24 * 3600 } } });
+  await queue.upsertJobScheduler("purge-recordings", { pattern: "30 3 * * *", tz: "Asia/Kolkata" }, { name: "purge-recordings", opts: { removeOnComplete: { count: 50 }, removeOnFail: { count: 200 } } });
+  await queue.upsertJobScheduler("recover-prep", { every: 5 * 60_000 }, { name: "recover-prep", opts: { removeOnComplete: { count: 50 }, removeOnFail: { count: 200 } } });
   const worker = new Worker(
     QUEUE,
     async (job) => {

@@ -32,7 +32,9 @@ export async function ensureResumeIntelligence(resumeId: string): Promise<Resume
 
   const sections = sectionize(resume.text);
   const p = prepPrompts.intelligence(sections, parsed);
-  const ai = await aiJson("resume_intelligence", p.system, p.user, intelligenceSchema, 12000, { timeoutMs: AI_TIMEOUT });
+  // Generous budget: Gemini's "thinking" counts against it, and a long resume yields up to 40 chunks + 40
+  // claims. A smaller budget truncated the JSON on real 5k-character resumes.
+  const ai = await aiJson("resume_intelligence", p.system, p.user, intelligenceSchema, 24000, { timeoutMs: AI_TIMEOUT });
 
   // Achievements/certifications the first parse found but the chunker missed still become chunks.
   const titles = new Set(ai.chunks.map((c) => normalize(c.title)));

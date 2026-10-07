@@ -3,8 +3,14 @@ import { RedisStore, type RedisReply } from "rate-limit-redis";
 import { env } from "../config/env.js";
 import { redis } from "../lib/redis.js";
 
+/**
+ * If Redis is unreachable, most limiters fail open so a Redis blip doesn't take the whole API down
+ * (Redis-backed features report their own errors). The auth limiter fails closed: brute-force
+ * protection matters more than availability for login.
+ */
 function limiter(prefix: string, windowMs: number, limit: number, extra: Partial<Options> = {}) {
   return rateLimit({
+    passOnStoreError: true,
     windowMs,
     limit,
     standardHeaders: "draft-7",
@@ -28,7 +34,7 @@ function limiter(prefix: string, windowMs: number, limit: number, extra: Partial
 }
 
 export const globalLimiter = () => limiter("global", 60_000, 300);
-export const authLimiter = () => limiter("auth", 15 * 60_000, 20);
+export const authLimiter = () => limiter("auth", 15 * 60_000, 20, { passOnStoreError: false });
 export const codeRunLimiter = () => limiter("code", 60_000, 30);
 export const aiLimiter = () => limiter("ai", 60_000, 10);
 export const careerAnswerLimiter = () => limiter("career", 60_000, 40);

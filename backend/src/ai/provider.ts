@@ -1,5 +1,6 @@
 import { env } from "../config/env.js";
 import { AppError } from "../utils/errors.js";
+import { logger } from "../lib/logger.js";
 
 export interface CompleteOptions {
   maxTokens?: number;
@@ -106,7 +107,9 @@ export class Gemini implements AIProvider {
           { "x-goog-api-key": this.apiKey },
           opts.timeoutMs,
         );
-        const candidates = data.candidates as { content?: { parts?: { text?: string }[] } }[] | undefined;
+        const candidates = data.candidates as { content?: { parts?: { text?: string }[] }; finishReason?: string }[] | undefined;
+        // A cut-off answer is almost always invalid JSON; record why so it isn't mistaken for a bad prompt.
+        if (candidates?.[0]?.finishReason === "MAX_TOKENS") logger.warn({ model, maxTokens: opts.maxTokens }, "Gemini stopped at the output-token limit");
         return candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("").trim() ?? "";
       } catch (e) {
         last = e;

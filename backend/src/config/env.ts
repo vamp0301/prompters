@@ -58,7 +58,7 @@ function load(): Env {
     throw new Error(`Invalid environment configuration:\n${issues}`);
   }
   if (parsed.data.NODE_ENV === "production") {
-    const problems = productionProblems(parsed.data);
+    const problems = productionProblems(parsed.data, { redisUrlSet: !!process.env.REDIS_URL });
     if (problems.length) throw new Error(`Refusing to start in production:\n${problems.map((p) => `  - ${p}`).join("\n")}`);
   }
   return parsed.data;
@@ -71,13 +71,25 @@ const EXAMPLE_SECRETS = [/^dev-only/, /^change-me/i, /^YOUR_/, /^ci-secret/];
  * Settings that are fine in development but unsafe in production. Fatal, because the safe
  * alternative is always available. Exported for tests.
  */
-export function productionProblems(e: Pick<Env, "JWT_SECRET" | "SANDBOX_DRIVER" | "STORAGE_DRIVER" | "S3_BUCKET" | "COOKIE_SECURE">) {
+export function productionProblems(
+  e: Pick<Env, "JWT_SECRET" | "SANDBOX_DRIVER" | "STORAGE_DRIVER" | "S3_BUCKET" | "COOKIE_SECURE" | "AI_PROVIDER" | "AI_API_KEY" | "CORS_ORIGIN" | "APP_URL">,
+  raw: { redisUrlSet: boolean } = { redisUrlSet: true },
+) {
   const problems: string[] = [];
   if (EXAMPLE_SECRETS.some((re) => re.test(e.JWT_SECRET))) problems.push("JWT_SECRET is a development/example value — generate a real secret.");
   // The process driver is not a security boundary: untrusted code would run on the worker host.
   if (e.SANDBOX_DRIVER === "process") problems.push("SANDBOX_DRIVER=process is not allowed in production — use 'docker', or 'disabled' until the Docker sandbox is deployed.");
   if (e.STORAGE_DRIVER === "s3" && !e.S3_BUCKET) problems.push("STORAGE_DRIVER=s3 requires S3_BUCKET.");
   if (e.COOKIE_SECURE === false) problems.push("COOKIE_SECURE=false would send session cookies over plain HTTP.");
+  // A provider without a key silently turns every AI feature off — almost always a missing secret.
+  if (e.AI_PROVIDER !== "none" && e.AI_PROVIDER !== "ollama" && !e.AI_API_KEY) problems.push(`AI_PROVIDER=${e.AI_PROVIDER} requires AI_API_KEY (or set AI_PROVIDER=none deliberately).`);
+  // Without it the app would quietly use localhost Redis, which doesn't exist on a production host.
+  if (!raw.redisUrlSet) problems.push("REDIS_URL must be set explicitly in production.");
+  // Remote origins must be HTTPS; localhost is allowed (docker-compose runs the production image locally).
+  const origins = [...e.CORS_ORIGIN.split(","), e.APP_URL].map((o) => o.trim()).filter(Boolean);
+  for (const o of origins) {
+    if (/^http:\/\//.test(o) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o)) problems.push(`${o} must use https:// in production.`);
+  }
   return problems;
 }
 

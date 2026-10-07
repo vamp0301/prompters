@@ -211,7 +211,10 @@ describe("account deletion", () => {
 // ───────────────────────── configuration ─────────────────────────
 
 describe("production configuration guard", () => {
-  const good = { JWT_SECRET: "q8Zr1v-very-long-random-production-secret-value-0001", SANDBOX_DRIVER: "docker" as const, STORAGE_DRIVER: "local" as const, S3_BUCKET: undefined, COOKIE_SECURE: undefined };
+  const good = {
+    JWT_SECRET: "q8Zr1v-very-long-random-production-secret-value-0001", SANDBOX_DRIVER: "docker" as const, STORAGE_DRIVER: "local" as const, S3_BUCKET: undefined, COOKIE_SECURE: undefined,
+    AI_PROVIDER: "gemini" as const, AI_API_KEY: "key", CORS_ORIGIN: "https://app.example.com", APP_URL: "https://app.example.com",
+  };
   it("accepts a safe production config", () => {
     expect(productionProblems(good)).toEqual([]);
   });
@@ -225,6 +228,14 @@ describe("production configuration guard", () => {
     }
     expect(productionProblems({ ...good, COOKIE_SECURE: false })).toEqual([expect.stringMatching(/COOKIE_SECURE/)]);
     expect(productionProblems({ ...good, STORAGE_DRIVER: "s3" })).toEqual([expect.stringMatching(/S3_BUCKET/)]);
+  });
+  it("refuses a keyless AI provider, an implicit localhost Redis and plain-HTTP remote origins", () => {
+    expect(productionProblems({ ...good, AI_API_KEY: undefined })).toEqual([expect.stringMatching(/AI_API_KEY/)]);
+    expect(productionProblems({ ...good, AI_PROVIDER: "none", AI_API_KEY: undefined })).toEqual([]);
+    expect(productionProblems(good, { redisUrlSet: false })).toEqual([expect.stringMatching(/REDIS_URL/)]);
+    expect(productionProblems({ ...good, CORS_ORIGIN: "http://app.example.com" })).toEqual([expect.stringMatching(/https/)]);
+    // Local production image (docker-compose) stays allowed.
+    expect(productionProblems({ ...good, CORS_ORIGIN: "http://localhost:3000", APP_URL: "http://localhost:3000" })).toEqual([]);
   });
 });
 
@@ -299,6 +310,20 @@ describe("code execution disabled (SANDBOX_DRIVER=disabled)", () => {
     } finally {
       env.SANDBOX_DRIVER = "disabled";
     }
+  });
+});
+
+// ───────────────────────── dependency outages ─────────────────────────
+
+describe("dependency outages", () => {
+  it("classifies database and Redis connection failures as 503, not as bugs", async () => {
+    const { isDependencyOutage } = await import("../src/middleware/error-handler.js");
+    const { Prisma } = await import("@prisma/client");
+    expect(isDependencyOutage(new Prisma.PrismaClientKnownRequestError("Can't reach database server", { code: "P1001", clientVersion: "6" }))).toBe(true);
+    expect(isDependencyOutage(Object.assign(new Error("Reached the max retries per request limit"), { name: "MaxRetriesPerRequestError" }))).toBe(true);
+    expect(isDependencyOutage(new Error("connect ECONNREFUSED 127.0.0.1:6379"))).toBe(true);
+    expect(isDependencyOutage(new Prisma.PrismaClientKnownRequestError("Unique constraint", { code: "P2002", clientVersion: "6" }))).toBe(false);
+    expect(isDependencyOutage(new Error("Cannot read properties of undefined"))).toBe(false);
   });
 });
 

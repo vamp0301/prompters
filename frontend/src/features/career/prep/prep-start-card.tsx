@@ -187,7 +187,7 @@ export function PrepPlansCard() {
                     <div className="truncate text-sm font-medium group-hover:text-accent">{p.title}</div>
                     <div className="truncate text-xs text-subtle">
                       {p.resume.label} · {formatDate(p.createdAt)}
-                      {p.status === "READY" && ` · ${p._count.questions} questions`}
+                      {p.status === "READY" && ` · ${p._count.questions} questions${p._count.questions < 100 ? " (partial)" : ""}`}
                     </div>
                   </Link>
                   <Badge tone={s.tone}>{s.label}</Badge>
