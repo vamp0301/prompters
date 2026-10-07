@@ -8,7 +8,7 @@ export function Marquee({ items, reverse, seconds = 40, className }: { items: st
   const row = (hidden: boolean) => (
     <ul aria-hidden={hidden || undefined} className={cn("flex shrink-0 items-center gap-3 pr-3 motion-reduce:shrink motion-reduce:flex-wrap motion-reduce:gap-2", hidden && "motion-reduce:hidden")}>
       {items.map((t) => (
-        <li key={t} className="whitespace-nowrap rounded-sm border border-border bg-surface px-3 py-1.5 font-mono text-xs text-muted">
+        <li key={t} className="whitespace-nowrap rounded-full border border-border bg-surface/80 px-3.5 py-1.5 text-[13px] text-muted">
           {t}
         </li>
       ))}

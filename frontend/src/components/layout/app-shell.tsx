@@ -7,6 +7,7 @@ import {
   RefreshCw, Settings, Shield, Sparkles, Timer, User, X, Zap,
 } from "lucide-react";
 import { Logo } from "./logo";
+import { ThemeToggle } from "./theme-toggle";
 import { PendingResumeHandoff } from "@/features/marketing/pending-resume-handoff";
 import { atLeast, useLogout, useMe } from "@/features/auth/use-me";
 import { cn } from "@/lib/utils";
@@ -108,8 +109,11 @@ export function AppShell({ children, wide }: { children: ReactNode; wide?: boole
   return (
     <div className="flex min-h-screen">
       <PendingResumeHandoff />
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-surface/60 px-3 py-4 lg:flex">
-        <Logo href="/dashboard" className="mb-6 px-2" />
+      <aside className="glass sticky top-0 hidden h-screen w-60 shrink-0 flex-col rounded-none border-y-0 border-l-0 px-3 py-4 shadow-none lg:flex">
+        <div className="mb-6 flex items-center justify-between px-2">
+          <Logo href="/dashboard" />
+          <ThemeToggle />
+        </div>
         <div className="flex-1 overflow-y-auto">
           <NavLinks />
         </div>
@@ -119,9 +123,12 @@ export function AppShell({ children, wide }: { children: ReactNode; wide?: boole
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-bg/80 px-4 backdrop-blur lg:hidden">
           <Logo href="/dashboard" />
-          <button onClick={() => setOpen(true)} aria-label="Open menu" className="rounded-md p-2 text-muted hover:bg-surface-2">
-            <Menu className="size-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <button onClick={() => setOpen(true)} aria-label="Open menu" className="rounded-md p-2 text-muted hover:bg-surface-2">
+              <Menu className="size-5" />
+            </button>
+          </div>
         </header>
         {open && (
           <div className="fixed inset-0 z-40 bg-black/60 lg:hidden" onClick={() => setOpen(false)}>

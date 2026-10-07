@@ -7,6 +7,8 @@ export interface CompleteOptions {
   json?: boolean;
   /** Background jobs (e.g. batch question generation) allow longer calls than request handlers. */
   timeoutMs?: number;
+  /** Simple extraction/translation: prefer the fast model (Gemini: first fallback, e.g. Flash-Lite). */
+  fast?: boolean;
 }
 
 export interface AIProvider {
@@ -94,8 +96,11 @@ export class Gemini implements AIProvider {
   async complete(system: string, user: string, opts: CompleteOptions = {}) {
     let last: unknown;
     const now = Date.now();
-    const usable = this.models.filter((m) => (this.exhaustedUntil.get(m) ?? 0) < now);
-    for (const model of usable.length ? usable : this.models) {
+    // Fast tasks try the lighter model first (several times quicker for plain extraction); the
+    // primary model remains the fallback, so quality never depends on the lite model alone.
+    const ordered = opts.fast && this.models.length > 1 ? [this.models[1], this.models[0], ...this.models.slice(2)] : this.models;
+    const usable = ordered.filter((m) => (this.exhaustedUntil.get(m) ?? 0) < now);
+    for (const model of usable.length ? usable : ordered) {
       try {
         const data = await postJson(
           `${this.baseUrl}/models/${model}:generateContent`,

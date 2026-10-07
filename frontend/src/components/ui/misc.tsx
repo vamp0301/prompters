@@ -4,19 +4,24 @@ import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("animate-pulse rounded-lg bg-surface-2", className)} aria-hidden />;
+  return <div className={cn("shimmer rounded-lg", className)} aria-hidden />;
 }
 
 export function PageSkeleton() {
   return (
-    <div className="space-y-4" aria-busy="true" aria-label="Loading">
-      <Skeleton className="h-8 w-64" />
-      <div className="grid gap-4 md:grid-cols-3">
-        <Skeleton className="h-40" />
-        <Skeleton className="h-40" />
-        <Skeleton className="h-40" />
+    <div className="space-y-6" role="status" aria-busy="true" aria-label="Loading">
+      <div className="space-y-2">
+        <Skeleton className="h-3 w-28" />
+        <Skeleton className="h-8 w-72 max-w-full" />
+        <Skeleton className="h-4 w-96 max-w-full" />
       </div>
-      <Skeleton className="h-64" />
+      <div className="grid gap-4 md:grid-cols-3">
+        <Skeleton className="h-36 rounded-xl" />
+        <Skeleton className="h-36 rounded-xl" />
+        <Skeleton className="h-36 rounded-xl" />
+      </div>
+      <Skeleton className="h-64 rounded-xl" />
+      <span className="sr-only">Loading…</span>
     </div>
   );
 }
@@ -50,8 +55,8 @@ export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?:
   return (
     <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
-        {eyebrow && <div className="mb-1 font-mono text-[11px] uppercase tracking-wider text-accent">{eyebrow}</div>}
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        {eyebrow && <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-accent">{eyebrow}</div>}
+        <h1 className="font-display text-[1.75rem] font-semibold leading-tight sm:text-3xl">{title}</h1>
         {description && <p className="mt-1 max-w-2xl text-sm text-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>}

@@ -2,16 +2,12 @@ import Link from "next/link";
 import { ArrowRight, AudioLines, Check, FileDown, ShieldCheck } from "lucide-react";
 import { buttonClass } from "@/components/ui/button";
 import { ScoreRing } from "@/components/ui/progress";
-import { InkBackground } from "@/features/marketing/ink-background";
-import { InkWord } from "@/features/marketing/ink-word";
 import { Marquee } from "@/features/marketing/marquee";
-import { OrbitRing } from "@/features/marketing/orbit-ring";
 import { HandwrittenNote, PaperSection, SampleStamp, SectionHeading, paperCard } from "@/features/marketing/paper";
 import { PriorityTag, QuestionPreview } from "@/features/marketing/question-preview";
 import { VellumUpload } from "@/features/marketing/vellum-upload";
 import { cn } from "@/lib/utils";
-
-const HERO_POINTS = ["Resume analysis", "Top 100 questions", "Practice + feedback", "Interview readiness"];
+import { InkBackground } from "@/features/marketing/ink-background";
 
 const STEPS = [
   { n: "01", title: "Upload your resume", text: "PDF or text. Prompters reads your projects, skills, claims and achievements.", note: "Start here" },
@@ -62,34 +58,37 @@ export default function LandingPage() {
       <section id="start" aria-labelledby="hero-title" className="relative scroll-mt-16 overflow-hidden border-b border-border/70">
         <InkBackground />
         <div className="relative mx-auto grid max-w-6xl items-center gap-14 px-4 pb-20 pt-14 sm:px-6 md:pt-20 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:pb-28">
-          <div>
-            <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">For B.Tech · BCA · MCA students and early-career developers</p>
-            <h1 id="hero-title" className="font-display mt-5 text-[2.9rem] font-semibold leading-[1.02] sm:text-6xl lg:text-[4.4rem]">
-              Prepare for <InkWord>YOUR</InkWord>
+          <div className="fade-up">
+            <p className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1 text-xs text-muted backdrop-blur">
+              <span className="relative flex size-2">
+                <span className="absolute inline-flex size-full animate-ping rounded-full bg-accent opacity-60 motion-reduce:hidden" />
+                <span className="relative inline-flex size-2 rounded-full bg-accent" />
+              </span>
+              Interview prep built from your own resume
+            </p>
+            <h1 id="hero-title" className="font-display mt-6 text-[2.9rem] font-semibold leading-[1.02] sm:text-6xl lg:text-[4.3rem]">
+              Prepare for <span className="font-script px-1 text-[1.25em] font-normal leading-none text-accent">your</span>
               <br />
-              interview.
+              <span className="bg-gradient-to-r from-accent via-info to-accent bg-clip-text text-transparent">interview.</span>
             </h1>
-            <p className="mt-7 max-w-xl text-lg leading-relaxed text-muted">
+            <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted">
               Upload your resume once. Get the 100 technical questions you&apos;re most likely to face — ranked, explained, ready to practise.
             </p>
-            <ul className="mt-8 grid max-w-md grid-cols-2 gap-x-6 gap-y-3 text-sm">
-              {HERO_POINTS.map((p) => (
-                <li key={p} className="flex items-center gap-2">
-                  <Check className="size-4 shrink-0 text-accent" aria-hidden />
-                  {p}
+            <ol className="mt-9 grid max-w-xl gap-3 sm:grid-cols-3">
+              {["Upload your resume", "Get your Top 100", "Practise & interview"].map((step, i) => (
+                <li key={step} className="fade-up flex items-center gap-3 rounded-xl border border-border bg-surface/70 px-3 py-2.5 text-sm backdrop-blur" style={{ animationDelay: `${150 + i * 90}ms` }}>
+                  <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft font-mono text-xs font-semibold text-accent">{i + 1}</span>
+                  {step}
                 </li>
               ))}
-            </ul>
-            <p className="mt-10 max-w-md border-l-2 border-accent-2/60 pl-4 text-sm text-muted">
+            </ol>
+            <p className="mt-8 text-sm text-muted">
               Don&apos;t just learn to code. <span className="text-text">Prove you can build and explain it without AI.</span>
             </p>
           </div>
 
-          <div className="relative mx-auto w-full max-w-[26rem] lg:mr-0">
-            <HandwrittenNote className="absolute -top-11 left-1 -rotate-6 lg:-left-28 lg:top-24">Start here →</HandwrittenNote>
-            <OrbitRing>
-              <VellumUpload />
-            </OrbitRing>
+          <div className="fade-up relative mx-auto w-full max-w-[26rem] lg:mr-0" style={{ animationDelay: "120ms" }}>
+            <VellumUpload />
           </div>
         </div>
       </section>
@@ -99,7 +98,7 @@ export default function LandingPage() {
         <SectionHeading id="how-title" eyebrow="How it works" title={<>From resume<br />to interview confidence.</>} />
         <ol className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((s) => (
-            <li key={s.n} className={cn(paperCard, "paper-ruled relative p-6 pt-7")}>
+            <li key={s.n} className={cn(paperCard, "paper-lift relative p-6 pt-7")}>
               <div className="font-display text-4xl font-semibold text-accent/80">{s.n}</div>
               <h3 className="mt-4 font-semibold">{s.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-muted">{s.text}</p>
@@ -160,7 +159,7 @@ export default function LandingPage() {
             </div>
             <p className="font-display mt-3 text-xl font-semibold">How does JWT authentication work?</p>
             <div className="mt-6 font-mono text-[10px] uppercase tracking-[0.16em] text-subtle">Your answer</div>
-            <p className="paper-ruled mt-2 rounded-md border border-border bg-bg/50 p-4 text-sm leading-7 text-muted">
+            <p className="mt-2 rounded-lg border border-border bg-bg/50 p-4 text-sm leading-7 text-muted">
               &ldquo;I think first we… after login the server signs a token with a secret and sends it back. The client sends it in the header and the
               server checks the signature before allowing the request.&rdquo;
             </p>
@@ -209,9 +208,9 @@ export default function LandingPage() {
             </p>
             <HandwrittenNote className="mt-6 inline-block -rotate-2">Build without AI</HandwrittenNote>
           </div>
-          <ol className={cn(paperCard, "paper-margin divide-y divide-border")}>
+          <ol className={cn(paperCard, "divide-y divide-border")}>
             {LEARN.map((l, i) => (
-              <li key={l.title} className="flex gap-5 py-4 pl-14 pr-5">
+              <li key={l.title} className="flex gap-5 px-5 py-4">
                 <span className="w-5 shrink-0 font-mono text-xs text-subtle">{String(i + 1).padStart(2, "0")}</span>
                 <div>
                   <div className="font-semibold">{l.title}</div>
@@ -387,7 +386,7 @@ export default function LandingPage() {
 
       {/* ───────── Final CTA ───────── */}
       <section aria-labelledby="final-title" className="relative overflow-hidden">
-        <div aria-hidden className="graph-paper absolute inset-0 opacity-60" />
+        <InkBackground />
         <div className="relative mx-auto max-w-4xl px-4 py-24 text-center sm:px-6 sm:py-32">
           <h2 id="final-title" className="font-display text-[2.2rem] font-semibold leading-[1.12] sm:text-5xl">
             Your interview won&apos;t ask what you studied.

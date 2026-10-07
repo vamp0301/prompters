@@ -7,7 +7,6 @@ import { ArrowRight, ListChecks, Sparkles, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { Tape } from "@/components/ui/paper";
 import { Field, Select } from "@/components/ui/input";
 import { ErrorState, Skeleton, Tabs } from "@/components/ui/misc";
 import { api } from "@/lib/api/client";
@@ -56,7 +55,6 @@ export function PrepStartCard({ disabled }: { disabled: boolean }) {
 
   return (
     <Card id="top-100" className="relative scroll-mt-20 border-accent/40">
-      <Tape className="left-16" />
       <CardHeader
         title={
           <span className="flex items-center gap-2">

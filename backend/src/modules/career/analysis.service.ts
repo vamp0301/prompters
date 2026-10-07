@@ -52,7 +52,7 @@ export async function createResume(userId: string, input: { label?: string; file
   const { text, file } = await documentText(input);
   if (text.length < 150) throw badRequest("This resume looks too short to analyse.");
   const p = prompts.parseResume(text);
-  const parsed = await aiJson("parse_resume", p.system, p.user, resumeParsedSchema, 4000);
+  const parsed = await aiJson("parse_resume", p.system, p.user, resumeParsedSchema, 4000, { fast: true });
   let storageKey: string | null = null;
   if (file) {
     storageKey = `resumes/${userId}/${randomUUID()}.${input.mimeType === "application/pdf" ? "pdf" : "txt"}`;
@@ -74,7 +74,7 @@ export async function createJob(userId: string, input: { title?: string; company
   const { text } = await documentText(input);
   if (text.length < 80) throw badRequest("This job description looks too short to analyse.");
   const p = prompts.parseJob(text);
-  const parsed = await aiJson("parse_job", p.system, p.user, jobParsedSchema, 3000);
+  const parsed = await aiJson("parse_job", p.system, p.user, jobParsedSchema, 3000, { fast: true });
   return prisma.jobTarget.create({
     data: {
       userId,

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { ErrorState, PageHeader, PageSkeleton } from "@/components/ui/misc";
 import { Progress } from "@/components/ui/progress";
 import { useRoadmap } from "@/features/roadmap/use-roadmap";
+import { StudyLanguage } from "@/features/roadmap/study-language";
 import { cn } from "@/lib/utils";
 import { paperCard, StudyStamp } from "@/components/ui/paper";
 
@@ -20,8 +21,11 @@ export default function RoadmapPage() {
       <PageHeader
         eyebrow="Your roadmap"
         title="From first line of code to job-ready"
-        description={`Starting with ${data!.language === "PYTHON" ? "Python" : data!.language === "JAVASCRIPT" ? "JavaScript" : "your chosen language"}. Each stage unlocks when you pass the previous stage exam.`}
+        description={`Studying in ${data!.language === "PYTHON" ? "Python" : data!.language === "JAVASCRIPT" ? "JavaScript" : "your chosen language"} — switch any time below. Each stage unlocks when you pass the previous stage exam.`}
       />
+      <div className="glass -mt-2 mb-6 rounded-xl px-4 py-3">
+        <StudyLanguage />
+      </div>
       <ol className="relative space-y-4 before:absolute before:bottom-8 before:left-[19px] before:top-8 before:border-l before:border-dashed before:border-border-strong">
         {stages.map((s) => (
           <li key={s.id} className="relative">

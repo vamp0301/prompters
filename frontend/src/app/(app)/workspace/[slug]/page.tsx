@@ -147,7 +147,7 @@ function Workspace({ slug, task, preferred }: { slug: string; task: BuildTask; p
       </header>
 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(320px,420px)_1fr]">
-        <aside className="paper-ruled min-h-0 space-y-6 overflow-y-auto border-b border-border bg-surface/60 p-5 lg:border-b-0 lg:border-r">
+        <aside className="min-h-0 space-y-6 overflow-y-auto border-b border-border bg-surface/60 p-5 lg:border-b-0 lg:border-r">
           <section>
             <h2 className="mb-2 font-mono text-[11px] font-semibold tracking-[0.16em] text-accent-2">01 · YOUR TASK</h2>
             <Markdown className="text-sm">{task.description}</Markdown>

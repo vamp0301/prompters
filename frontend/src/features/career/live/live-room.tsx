@@ -412,7 +412,7 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
       <Progress value={(progress.answered / progress.target) * 100} className="rounded-none" label="Interview progress" />
 
       <main className={cn("mx-auto grid w-full flex-1 gap-5 p-4 sm:p-6", isCoding ? "max-w-[1500px] lg:grid-cols-[minmax(320px,440px)_1fr]" : "max-w-3xl")}>
-        <section className={cn(paperCard, "index-card h-fit p-5 pt-3")} aria-live="polite">
+        <section className={cn(paperCard, "glass h-fit p-5 pt-4")} aria-live="polite">
           <div className="mb-3 flex h-7 items-center justify-between font-mono text-[10px] font-semibold tracking-[0.2em] text-accent-2">
             <span>INTERVIEW SHEET</span>
             {current && <span className="text-subtle">QUESTION {String(progress.answered + 1).padStart(2, "0")}</span>}

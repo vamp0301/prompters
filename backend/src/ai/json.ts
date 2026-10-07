@@ -19,13 +19,13 @@ function extractJson(raw: string) {
  * Asks the model for JSON and validates it with zod. One retry with the
  * validation error fed back; then a friendly 502 — never a half-parsed result.
  */
-export async function aiJson<T>(task: string, system: string, user: string, schema: ZodType<T, ZodTypeDef, unknown>, maxTokens = 2500, opts: { timeoutMs?: number } = {}): Promise<T> {
+export async function aiJson<T>(task: string, system: string, user: string, schema: ZodType<T, ZodTypeDef, unknown>, maxTokens = 2500, opts: { timeoutMs?: number; fast?: boolean } = {}): Promise<T> {
   const ai = requireAI();
   const sys = `[task:${task}]\n${system}\nRespond with a single JSON value only. No prose, no markdown fences.`;
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     const prompt = attempt === 0 ? user : `${user}\n\nYour previous reply was invalid (${lastError.slice(0, 400)}). Return corrected JSON only.`;
-    const raw = await ai.complete(sys, prompt, { json: true, maxTokens, timeoutMs: opts.timeoutMs });
+    const raw = await ai.complete(sys, prompt, { json: true, maxTokens, timeoutMs: opts.timeoutMs, fast: opts.fast });
     try {
       const parsed = schema.safeParse(extractJson(raw));
       if (parsed.success) return parsed.data;

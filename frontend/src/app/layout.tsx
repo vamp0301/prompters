@@ -1,14 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Fraunces, Geist, JetBrains_Mono, Pinyon_Script, Tiro_Devanagari_Hindi } from "next/font/google";
+import { Geist, JetBrains_Mono, Pinyon_Script, Tiro_Devanagari_Hindi } from "next/font/google";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
 const geist = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const mono = JetBrains_Mono({ variable: "--font-jetbrains", subsets: ["latin"] });
-// Editorial display serif (the only font preloaded besides the body font — it carries the hero headline).
-const fraunces = Fraunces({ variable: "--font-fraunces", subsets: ["latin"], axes: ["opsz", "SOFT"], display: "swap" });
-// Handwritten annotation accent — small, decorative, never for UI labels.
-const pinyon = Pinyon_Script({ variable: "--font-pinyon", subsets: ["latin"], weight: "400", display: "swap", preload: false });
+// Calligraphy accent for one or two words (e.g. "YOUR") — never for UI text.
+const calligraphy = Pinyon_Script({ variable: "--font-calligraphy", subsets: ["latin"], weight: "400", display: "swap" });
 const tiroDeva = Tiro_Devanagari_Hindi({ variable: "--font-tiro-deva", subsets: ["devanagari"], weight: "400", display: "swap", preload: false });
 
 export const metadata: Metadata = {
@@ -34,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       data-theme="light"
       suppressHydrationWarning
-      className={`${geist.variable} ${mono.variable} ${fraunces.variable} ${pinyon.variable} ${tiroDeva.variable} h-full antialiased`}
+      className={`${geist.variable} ${mono.variable} ${calligraphy.variable} ${tiroDeva.variable} h-full antialiased`}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />

@@ -292,7 +292,7 @@ export function QuizRunner({ attempt, title, onFinished }: { attempt: Attempt; t
       </div>
 
       <div className="mt-6 grid flex-1 gap-6 lg:grid-cols-[1fr_200px]">
-        <section aria-live="polite" className={cn(paperCard, "paper-margin py-5 pl-12 pr-5 sm:py-6 sm:pr-6", secure && "select-none")}>
+        <section aria-live="polite" className={cn(paperCard, "p-5 sm:p-6", secure && "select-none")}>
           <div className="mb-4 flex items-center justify-between border-b border-border pb-3">
             <span className="font-mono text-xs font-semibold tracking-[0.16em] text-accent-2">
               QUESTION {String(index + 1).padStart(2, "0")} / {String(attempt.questions.length).padStart(2, "0")}

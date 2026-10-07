@@ -69,7 +69,7 @@ async function ensureTranslations(questions: PrepQuestion[], language: Exclude<P
   for (let i = 0; i < missing.length; i += TRANSLATE_BATCH) {
     const batch = missing.slice(i, i + TRANSLATE_BATCH);
     const p = prepPrompts.translate(language, batch.map((q) => ({ id: q.id, question: q.question, hint: q.hint, why: q.why, keyPoints: q.keyPoints, followUps: q.followUps })));
-    const out = await aiJson(`translate_${language}`, p.system, p.user, translationSchema, 8000, { timeoutMs: 120_000 });
+    const out = await aiJson(`translate_${language}`, p.system, p.user, translationSchema, 8000, { timeoutMs: 120_000, fast: true });
     const byId = new Map(out.items.map((t) => [t.id, t]));
     for (const q of batch) {
       const t = byId.get(q.id);
