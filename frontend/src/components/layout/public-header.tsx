@@ -11,6 +11,7 @@ import { InkAnnotation } from "@/components/ui/paper";
 /** Section anchors live on the landing page; from other public pages they link back to it. */
 const NAV = [
   { href: "/roadmap", label: "Learn" },
+  { href: "/syllabus", label: "Syllabus" },
   { href: "/#top-100", label: "Career" },
   { href: "/#practice", label: "Practice" },
   { href: "/#interview", label: "Interview" },
@@ -92,6 +93,7 @@ const FOOTER: { title: string; links: { href: string; label: string }[] }[] = [
     title: "Product",
     links: [
       { href: "/roadmap", label: "Learn" },
+      { href: "/syllabus", label: "Language syllabus" },
       { href: "/#practice", label: "Practice" },
       { href: "/#interview", label: "Interview" },
       { href: "/#readiness", label: "Readiness" },

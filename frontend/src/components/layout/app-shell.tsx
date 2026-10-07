@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import {
+  Languages,
   BookOpen, Briefcase, BriefcaseBusiness, Code2, Gauge, GraduationCap, History, LayoutDashboard, LogOut, Map, Menu, MessagesSquare,
   RefreshCw, Settings, Shield, Sparkles, Timer, User, X, Zap,
 } from "lucide-react";
@@ -18,6 +19,7 @@ const NAV: { group: string; items: { href: string; label: string; icon: typeof B
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
       { href: "/learn", label: "Roadmap", icon: Map },
+      { href: "/learn/syllabus", label: "Language syllabus", icon: Languages },
       { href: "/practice", label: "Practice 10", icon: Zap },
       { href: "/reviews", label: "Reviews", icon: RefreshCw },
     ],
@@ -54,7 +56,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
           <div className="mb-1.5 px-2 font-mono text-[10px] uppercase tracking-wider text-subtle">{g.group}</div>
           <ul className="space-y-0.5">
             {g.items.map(({ href, label, icon: Icon }) => {
-              const active = (pathname === href || pathname.startsWith(`${href}/`)) && !(href === "/career" && pathname.startsWith("/career/skills"));
+              const active = (pathname === href || pathname.startsWith(`${href}/`)) && !(href === "/career" && pathname.startsWith("/career/skills")) && !(href === "/learn" && pathname.startsWith("/learn/syllabus"));
               return (
                 <li key={href}>
                   <Link

@@ -25,6 +25,13 @@ export default function RoadmapPage() {
       />
       <div className="glass -mt-2 mb-6 rounded-xl px-4 py-3">
         <StudyLanguage />
+        <p className="mt-2 border-t border-border pt-2 text-xs text-muted">
+          Comparing languages?{" "}
+          <Link href="/learn/syllabus" className="text-text underline underline-offset-2">
+            See the Python · JavaScript · Java · C++ syllabus and which language developers use most
+          </Link>
+          .
+        </p>
       </div>
       <ol className="relative space-y-4 before:absolute before:bottom-8 before:left-[19px] before:top-8 before:border-l before:border-dashed before:border-border-strong">
         {stages.map((s) => (
