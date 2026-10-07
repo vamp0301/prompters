@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowRight, FileText, Upload, X } from "lucide-react";
 import { Button, buttonClass } from "@/components/ui/button";
+import { InkAnnotation, PaperClip } from "@/components/ui/paper";
 import { ApiError, api } from "@/lib/api/client";
 import type { Me } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -82,13 +83,16 @@ export function VellumUpload() {
   return (
     <form
       aria-labelledby={`${uid}-title`}
-      className="vellum relative rounded-xl p-5 sm:p-7"
+      className="vellum paper-tilt relative rounded-lg p-5 sm:p-7"
+      style={{ rotate: "0.5deg" }}
       onSubmit={(e) => {
         e.preventDefault();
         if (file && !busy) start.mutate();
       }}
     >
-      <h2 id={`${uid}-title`} className="font-display text-2xl font-semibold">
+      <PaperClip className="-top-5 right-8 rotate-6" />
+      <p className="font-mono text-[10px] font-semibold tracking-[0.24em] text-accent-2">RESUME</p>
+      <h2 id={`${uid}-title`} className="font-display mt-1 text-2xl font-semibold">
         Upload your resume
       </h2>
       <p className="mt-1 font-mono text-[11px] text-subtle">PDF or TXT · Max 5MB</p>
@@ -127,6 +131,7 @@ export function VellumUpload() {
           <>
             <Upload className="size-5 text-muted" aria-hidden />
             <p className="text-sm">Drop your resume here</p>
+            <InkAnnotation className="-rotate-2 text-xl">we&apos;ll do the boring part</InkAnnotation>
             <p className="text-xs text-subtle">or</p>
           </>
         )}

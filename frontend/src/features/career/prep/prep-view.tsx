@@ -2,11 +2,11 @@
 import Link from "next/link";
 import { useDeferredValue, useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, CircleDot, Download, Loader2, RefreshCw, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
+import { ArrowLeft, Check, Download, Loader2, RefreshCw, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
-import { EmptyState, ErrorState, PageHeader, PageSkeleton } from "@/components/ui/misc";
+import { EmptyState, ErrorState, PageHeader, PageSkeleton, Tabs } from "@/components/ui/misc";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
 import type { PrepCategory, PrepPlanDetail, PrepPracticeStatus, PrepPriority, PrepQuestion } from "@/lib/api/types";
@@ -15,7 +15,8 @@ import { useRouter } from "next/navigation";
 import { careerKeys, ConfirmButton, InlineError } from "../shared";
 import { usePrepUsage } from "./prep-start-card";
 import { PackDialog } from "./pack-dialog";
-import { PREP_CATEGORY, PREP_CATEGORY_ORDER, PRIORITY, PRIORITY_ORDER, QuestionBadges } from "./prep-shared";
+import { groupByTopic, PREP_CATEGORY, PREP_CATEGORY_ORDER, PRIORITY, PRIORITY_ORDER, QuestionBadges } from "./prep-shared";
+import { IndexCard, InkAnnotation, StudyStamp } from "@/components/ui/paper";
 import { QuestionDialog } from "./question-dialog";
 
 export function PrepView({ id }: { id: string }) {
@@ -109,6 +110,32 @@ function GeneratingView({ plan }: { plan: PrepPlanDetail }) {
 
 // ───────────────────────── ready ─────────────────────────
 
+/** A Top-100 question as a collectible index card: TOP 01, the question, topic, priority, practice state. */
+function QuestionCard({ q, onOpen }: { q: PrepQuestion; onOpen: () => void }) {
+  return (
+    <button type="button" onClick={onOpen} className="paper-lift group block h-full w-full rounded-lg text-left focus-visible:outline-offset-4">
+      <IndexCard
+        hole
+        className="h-full"
+        label={`TOP ${String(q.rank).padStart(2, "0")}`}
+        aside={
+          q.status === "CONFIDENT" ? (
+            <StudyStamp>✓ CONFIDENT</StudyStamp>
+          ) : q.status === "PRACTICED" ? (
+            <StudyStamp tone="muted">PRACTISED</StudyStamp>
+          ) : null
+        }
+      >
+        <p className="font-display text-[1.05rem] font-semibold leading-snug group-hover:text-accent">{q.question}</p>
+        <p className="mt-2 line-clamp-2 text-xs text-muted">{q.why}</p>
+        <div className="mt-3">
+          <QuestionBadges q={q} compact />
+        </div>
+      </IndexCard>
+    </button>
+  );
+}
+
 /** Regenerating is always an explicit, confirmed action: it costs one of the day's generations. */
 function RegenerateButton({ plan }: { plan: PrepPlanDetail }) {
   const router = useRouter();
@@ -162,6 +189,7 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
   const query = useDeferredValue(search.trim().toLowerCase());
   const [openId, setOpenId] = useState<string | null>(null);
   const [packOpen, setPackOpen] = useState(false);
+  const [view, setView] = useState<"ranked" | "topics">("ranked");
 
   const all = useMemo(() => questions.data ?? [], [questions.data]);
   const skills = useMemo(() => [...new Set(all.map((q) => q.skill))].sort((a, b) => a.localeCompare(b)), [all]);
@@ -201,7 +229,7 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {PRIORITY_ORDER.map((p) => {
           const n = all.filter((q) => q.priority === p).length;
           const on = priorities.includes(p);
@@ -221,7 +249,7 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
             </button>
           );
         })}
-        <div className="rounded-xl border border-border bg-surface p-3 sm:col-span-2 lg:col-span-1">
+        <div className="col-span-2 rounded-xl border border-border bg-surface p-3 lg:col-span-1">
           <div className="text-xs text-muted">Practice</div>
           <div className="font-mono text-2xl font-semibold tabular-nums">
             {confident}
@@ -308,23 +336,53 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
       ) : !filtered.length ? (
         <EmptyState icon={<Search className="size-4" />} title="No questions match these filters" description="Try removing a filter." />
       ) : (
-        <ol className="space-y-2">
-          {filtered.map((q) => (
-            <li key={q.id}>
-              <button type="button" onClick={() => setOpenId(q.id)} className="group flex w-full items-start gap-3 rounded-xl border border-border bg-surface p-3 text-left transition-colors hover:border-accent/50 hover:bg-surface-2/50">
-                <span className="w-8 shrink-0 pt-0.5 text-right font-mono text-sm font-semibold text-subtle tabular-nums">{q.rank}</span>
-                <span className="min-w-0 flex-1 space-y-1.5">
-                  <QuestionBadges q={q} compact />
-                  <span className="block text-sm font-medium group-hover:text-accent">{q.question}</span>
-                  <span className="line-clamp-1 block text-xs text-muted">{q.why}</span>
-                </span>
-                <span className="shrink-0 pt-0.5" title={STATUS_LABEL[q.status]}>
-                  {q.status === "CONFIDENT" ? <Check className="size-4 text-accent" aria-label="Confident" /> : q.status === "PRACTICED" ? <CircleDot className="size-4 text-warn" aria-label="Practised" /> : null}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ol>
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Tabs
+              value={view}
+              onChange={setView}
+              items={[
+                { value: "ranked", label: "Ranked" },
+                { value: "topics", label: "By topic" },
+              ]}
+            />
+            {view === "topics" && <InkAnnotation className="text-xl">one topic at a time →</InkAnnotation>}
+          </div>
+          {view === "ranked" ? (
+            <ol className="grid gap-3 md:grid-cols-2">
+              {filtered.map((q) => (
+                <li key={q.id}>
+                  <QuestionCard q={q} onOpen={() => setOpenId(q.id)} />
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <div className="space-y-8">
+              {groupByTopic(filtered).map((g) => {
+                const confidentHere = g.questions.filter((q) => q.status === "CONFIDENT").length;
+                const intenseHere = g.questions.filter((q) => q.priority === "INTENSE").length;
+                return (
+                  <section key={g.topic} aria-label={`${g.topic}: ${g.questions.length} questions`}>
+                    <div className="mb-3 flex flex-wrap items-end justify-between gap-2 border-b border-border pb-2">
+                      <h3 className="font-display text-xl font-semibold">{g.topic}</h3>
+                      <p className="font-mono text-xs text-muted">
+                        {g.questions.length} question{g.questions.length === 1 ? "" : "s"}
+                        {intenseHere ? ` · ${intenseHere} intense` : ""} · {confidentHere}/{g.questions.length} confident
+                      </p>
+                    </div>
+                    <ol className="grid gap-3 md:grid-cols-2">
+                      {g.questions.map((q) => (
+                        <li key={q.id}>
+                          <QuestionCard q={q} onOpen={() => setOpenId(q.id)} />
+                        </li>
+                      ))}
+                    </ol>
+                  </section>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {v && (

@@ -12,6 +12,7 @@ import { Markdown } from "@/components/ui/markdown";
 import { EmptyState, ErrorState, PageSkeleton, Tabs } from "@/components/ui/misc";
 import { ScoreRing } from "@/components/ui/progress";
 import { CODE_EXECUTION_OFF, useCodeExecution, useMe } from "@/features/auth/use-me";
+import { InkAnnotation } from "@/components/ui/paper";
 import { api, ApiError } from "@/lib/api/client";
 import type { BuildTask, TestView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -132,9 +133,10 @@ function Workspace({ slug, task, preferred }: { slug: string; task: BuildTask; p
         <div className="flex min-w-0 items-center gap-3">
           <Link href={task.topic ? `/learn/topic/${task.topic.slug}` : "/build"} aria-label="Back" className="rounded-md p-1.5 text-muted hover:bg-surface-2 hover:text-text"><ArrowLeft className="size-4" /></Link>
           <div className="min-w-0">
-            <div className="font-mono text-[10px] uppercase tracking-wider text-accent">Build without AI</div>
-            <h1 className="truncate text-sm font-semibold">{task.title}</h1>
+            <div className="font-mono text-[10px] font-semibold tracking-[0.2em] text-accent-2">BUILD WITHOUT AI · WORKSHEET</div>
+            <h1 className="font-display truncate text-base font-semibold">{task.title}</h1>
           </div>
+          <InkAnnotation className="hidden -rotate-2 text-xl md:inline">Close the AI tab.</InkAnnotation>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <Badge tone="danger"><Bot className="size-3" /> AI chat: OFF</Badge>
@@ -145,14 +147,15 @@ function Workspace({ slug, task, preferred }: { slug: string; task: BuildTask; p
       </header>
 
       <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(320px,420px)_1fr]">
-        <aside className="min-h-0 space-y-6 overflow-y-auto border-b border-border p-5 lg:border-b-0 lg:border-r">
+        <aside className="paper-ruled min-h-0 space-y-6 overflow-y-auto border-b border-border bg-surface/60 p-5 lg:border-b-0 lg:border-r">
           <section>
+            <h2 className="mb-2 font-mono text-[11px] font-semibold tracking-[0.16em] text-accent-2">01 · YOUR TASK</h2>
             <Markdown className="text-sm">{task.description}</Markdown>
             <p className="mt-3 text-xs text-muted">Implement <code className="rounded bg-surface-2 px-1 font-mono">{task.functionName}</code>. {task.publicTests.length} visible tests, {task.hiddenTestCount} hidden.</p>
           </section>
 
           <section>
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">Examples</h2>
+            <h2 className="mb-2 font-mono text-[11px] font-semibold tracking-[0.16em] text-accent-2">02 · EXPECTED BEHAVIOUR</h2>
             <ul className="space-y-1.5 font-mono text-[11px]">
               {task.publicTests.map((t) => (
                 <li key={t.name} className="rounded-md border border-border bg-surface-2 p-2">
@@ -164,7 +167,7 @@ function Workspace({ slug, task, preferred }: { slug: string; task: BuildTask; p
           </section>
 
           <section>
-            <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted"><Lightbulb className="size-3.5" /> Hints ({hintsUsed}/{task.hints.total})</h2>
+            <h2 className="mb-2 flex items-center gap-2 font-mono text-[11px] font-semibold tracking-[0.16em] text-accent-2"><Lightbulb className="size-3.5" /> 03 · HINTS ({hintsUsed}/{task.hints.total})</h2>
             <ol className="space-y-2">
               {task.hints.revealed.map((h, i) => (
                 <li key={i} className="rounded-md border border-warn/30 bg-warn-soft p-3 text-sm">

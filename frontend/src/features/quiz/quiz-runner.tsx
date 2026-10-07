@@ -10,6 +10,7 @@ import { Dialog } from "@/components/ui/misc";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
 import type { AnswerValue, Attempt, AttemptResult, QuizQuestion } from "@/lib/api/types";
+import { paperCard } from "@/components/ui/paper";
 import { cn } from "@/lib/utils";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -45,7 +46,7 @@ function QuestionBody({ q, value, onChange, secure }: { q: QuizQuestion; value: 
         <Badge tone="info">{TYPE_LABEL[q.type]}</Badge>
         <Badge>{"●".repeat(q.difficulty)}<span className="sr-only">difficulty {q.difficulty}</span></Badge>
       </div>
-      <h2 className="text-lg font-medium leading-relaxed">{q.prompt}</h2>
+      <h2 className="font-display text-xl font-semibold leading-relaxed">{q.prompt}</h2>
       {q.code && <div className="mt-4"><CodeBlock code={q.code} language={q.codeLanguage} /></div>}
 
       <div className="mt-5">
@@ -291,9 +292,11 @@ export function QuizRunner({ attempt, title, onFinished }: { attempt: Attempt; t
       </div>
 
       <div className="mt-6 grid flex-1 gap-6 lg:grid-cols-[1fr_200px]">
-        <section aria-live="polite" className={cn("rounded-xl border border-border bg-surface p-5 sm:p-6", secure && "select-none")}>
-          <div className="mb-4 flex items-center justify-between">
-            <span className="font-mono text-xs text-muted">Question {index + 1} of {attempt.questions.length}</span>
+        <section aria-live="polite" className={cn(paperCard, "paper-margin py-5 pl-12 pr-5 sm:py-6 sm:pr-6", secure && "select-none")}>
+          <div className="mb-4 flex items-center justify-between border-b border-border pb-3">
+            <span className="font-mono text-xs font-semibold tracking-[0.16em] text-accent-2">
+              QUESTION {String(index + 1).padStart(2, "0")} / {String(attempt.questions.length).padStart(2, "0")}
+            </span>
             <button
               onClick={() => setFlagged((f) => { const n = new Set(f); if (n.has(q.id)) n.delete(q.id); else n.add(q.id); return n; })}
               className="inline-flex items-center gap-1 text-xs text-muted hover:text-text"

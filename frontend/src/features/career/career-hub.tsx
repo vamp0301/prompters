@@ -18,7 +18,15 @@ import { DocumentForm } from "./document-form";
 import { PrepPlansCard, PrepStartCard } from "./prep/prep-start-card";
 import { AI_UNAVAILABLE_COPY, careerKeys, ConfirmButton, InlineError, ResultBadge, scoreTone } from "./shared";
 
-const LOOP = ["Upload resume", "JD or target role", "Your Top 100 questions", "Practise", "Download your pack", "Interview with Manisha", "Readiness report", "Retake"];
+/** Index tabs across the dossier; each jumps to its section (Readiness is its own page). */
+const DOSSIER = [
+  { label: "RESUME", href: "#resumes" },
+  { label: "JOB MATCH", href: "#job-match" },
+  { label: "TOP 100", href: "#top-100" },
+  { label: "PRACTICE", href: "#plans" },
+  { label: "INTERVIEW", href: "#interviews" },
+  { label: "READINESS", href: "/readiness" },
+];
 
 export function useCareerStatus() {
   return useQuery({ queryKey: careerKeys.status, queryFn: () => api.get<CareerStatus>("/career/status") });
@@ -47,17 +55,21 @@ export function CareerHub() {
         description="Upload your resume once. Get the 100 technical questions you're most likely to face — built from your projects, skills, claims and achievements — then practise them and download your personal interview pack."
       />
 
-      <ol aria-label="How it works" className="flex flex-wrap items-center gap-1.5 text-xs">
-        {LOOP.map((step, i) => (
-          <li key={step} className="flex items-center gap-1.5">
-            <span className="rounded-md border border-border bg-surface px-2 py-1">
-              <span className="mr-1 font-mono text-subtle">{i + 1}</span>
-              {step}
-            </span>
-            {i < LOOP.length - 1 && <ChevronRight className="size-3 text-subtle" aria-hidden />}
-          </li>
-        ))}
-      </ol>
+      <nav aria-label="Career dossier" className="relative">
+        <div className="font-mono text-[10px] font-semibold tracking-[0.2em] text-subtle">CAREER DOSSIER</div>
+        <ul className="mt-2 flex gap-1 overflow-x-auto border-b border-border-strong">
+          {DOSSIER.map((t) => (
+            <li key={t.label} className="shrink-0">
+              <Link
+                href={t.href}
+                className="block rounded-t-md border border-b-0 border-border bg-surface px-3 py-1.5 font-mono text-[11px] font-semibold tracking-[0.12em] text-muted transition-colors hover:-translate-y-px hover:text-text"
+              >
+                {t.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </nav>
 
       {status.isLoading ? <Skeleton className="h-12" /> : status.error ? <ErrorState error={status.error} retry={() => status.refetch()} /> : disabled && <AiUnavailableNotice reason={status.data?.reason} />}
 
@@ -94,7 +106,7 @@ function ResumesCard({ disabled }: { disabled: boolean }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["career"] }),
   });
   return (
-    <Card>
+    <Card id="resumes" className="scroll-mt-20">
       <CardHeader title="1 · Resumes" description="Upload a PDF/TXT or paste your resume. AI extracts your skills, projects and claims." />
       <CardBody className="space-y-4">
         <DocumentForm kind="resume" disabled={disabled} />
@@ -245,7 +257,7 @@ function AnalyseCard({ disabled }: { disabled: boolean }) {
 
   const none = !resumes.data?.length || !jobs.data?.length;
   return (
-    <Card>
+    <Card id="job-match" className="scroll-mt-20">
       <CardHeader title="3 · Analyse a match" description="Pick a resume and a job. You'll get a weighted match score, resume risks and a question bank built from your own claims." />
       <CardBody className="space-y-3">
         {none && !resumes.isLoading && !jobs.isLoading ? (
@@ -335,7 +347,7 @@ function SessionsCard() {
   const points = completed.map((s) => ({ score: s.readinessScore!, createdAt: s.endedAt ?? s.startedAt }));
 
   return (
-    <Card>
+    <Card id="interviews" className="scroll-mt-20">
       <CardHeader title="5 · My interviews" description="Every AI technical interview you've taken, with its readiness score." />
       <CardBody className="space-y-4">
         {isLoading ? (

@@ -82,7 +82,7 @@ Nothing in this repository has been deployed to production yet. See [Deployment]
 | Career | Resume intelligence: semantic chunks and evidence-checked claims | Implemented (new) |
 | Career | Personalised Top-100 interview questions from resume + JD, or resume + target role (no JD needed) | Implemented (new) |
 | Career | Practice mode for Top-100 questions | Implemented (new) |
-| Career | Downloadable PDF interview pack (3 variants, English / Hinglish / Hindi) | Implemented (new) |
+| Career | Downloadable PDF interview pack (4 editions incl. topic-wise preparation guide; English / Hinglish / Hindi) and a Ranked / By-topic view of the Top 100 | Implemented (new) |
 | Career | Adaptive interview depth, revision mode, rich reports, skill-based learning recommendations | Planned (Phase 2) |
 | Career | Fluency practice, admin controls for the interviewer, provider-independent STT/TTS | Planned (Phase 3) |
 | Admin | Content CMS, users, feature flags, scoring rules, audit logs, integrity review | Implemented |
@@ -175,7 +175,7 @@ Code lives in `backend/src/modules/prep`.
 5. **Visibility.** `GET /:id/questions` returns an empty list until the plan is `READY`.
 6. **Each question** stores why, evidence, hint, key points, follow-ups, difficulty (1–5), probability (0–1), follow-up depth (1–7), skill, source type/label and practice status.
 7. **Practice mode.** An answer of at least 10 characters is evaluated with the same evaluator as the interview. The status becomes CONFIDENT once the best score reaches 70, otherwise PRACTICED. The status can also be set manually (NEW / PRACTICED / CONFIDENT).
-8. **PDF pack** (`pack.service.ts`, `pdf.ts`, pdfkit with bundled Noto fonts in `backend/assets/fonts`, including Devanagari). Variants: `QUESTIONS`, `HINTS`, `GUIDE`. The GUIDE variant adds why, resume evidence, key points, follow-ups, skills to revise and a 7-day plan. Languages: `en`, `hinglish`, `hi`. Non-English packs are AI-translated, with translations cached per question. Packs are rendered by the worker and stored through the storage driver. A pack is reused until the next practice attempt.
+8. **PDF pack** (`pack.service.ts`, `pdf.ts`, pdfkit with bundled Noto fonts in `backend/assets/fonts`, including Devanagari). Variants: `QUESTIONS`, `HINTS`, `GUIDE`, `TOPICS`. The GUIDE variant adds why, resume evidence, key points, follow-ups, skills to revise and a 7-day plan. The TOPICS variant groups the questions by topic (single-question topics are gathered into "More topics"); each topic opens with a personal plan computed from the candidate's own data — where to start (highest-priority ranks), the most repeated key points to revise, their resume lines, and their practice so far — followed by the 7-day plan. No extra AI calls. Languages: `en`, `hinglish`, `hi`. Non-English packs are AI-translated, with translations cached per question. Packs are rendered by the worker and stored through the storage driver. A pack is reused until the next practice attempt.
 
 Existing V1 job-match analyses keep their original 18–25 question banks. They are not converted to 100 questions.
 
@@ -221,7 +221,7 @@ More detail: [docs/architecture.md](docs/architecture.md), [docs/code-sandbox.md
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 16.3 (App Router), React 19.2, TypeScript, Tailwind CSS v4, TanStack Query, React Hook Form + zod, Monaco editor, motion, sonner |
+| Frontend | Next.js 16.3 (App Router), React 19.2, TypeScript, Tailwind CSS v4, TanStack Query, React Hook Form + zod, Monaco editor, motion, sonner. "Ink on paper" design system: tokens in `src/app/globals.css`, scrapbook primitives (`IndexCard`, `StickyNote`, `PaperClip`, `Tape`, `InkAnnotation`, `Highlight`, `StudyStamp`, `NotebookSection`) in `src/components/ui/paper.tsx`; fonts Fraunces / Geist / JetBrains Mono / Pinyon Script / Tiro Devanagari Hindi via `next/font`. Light "paper" theme is the default. |
 | Backend | Node.js (engines `>=20`; Dockerfiles use Node 22), Express 5, TypeScript, zod |
 | Database | PostgreSQL via Prisma 6 (Neon in the current environment) |
 | Queue / cache | Redis via ioredis + BullMQ 6, `express-rate-limit` with `rate-limit-redis` |
@@ -553,7 +553,7 @@ The JSON body limit for `/api/career` is 8 MB (other routes: 1 MB). Uploads are 
 | GET | `/:id/questions/:qid` | One question with its source chunk/claim and the last 10 attempts | — | question + `source: { chunk, claim }`, `attempts[]` | 404 |
 | POST | `/:id/questions/:qid/attempts` | Practice answer, AI-evaluated (career limiter, flag) | `{ answer }` (≤6000, min 10 chars) | `{ attempt, status, keyPoints, followUps }` (201) | 400 too short; 404; 502/503 AI |
 | PATCH | `/:id/questions/:qid` | Set practice status manually | `{ status: "NEW" \| "PRACTICED" \| "CONFIDENT" }` | `{ id, status }` | 404 |
-| POST | `/:id/packs` | Request a PDF pack (ai limiter; flag only for non-English) | `{ variant: "QUESTIONS" \| "HINTS" \| "GUIDE", language?: "en" \| "hinglish" \| "hi" }` | `PrepPack` row (reused if still current) (201) | 404; 409 plan not ready |
+| POST | `/:id/packs` | Request a PDF pack (ai limiter; flag only for non-English) | `{ variant: "QUESTIONS" \| "HINTS" \| "GUIDE" \| "TOPICS", language?: "en" \| "hinglish" \| "hi" }` | `PrepPack` row (reused if still current) (201) | 404; 409 plan not ready |
 | GET | `/:id/packs/:packId` | Pack status | — | `{ id, variant, language, status, error, createdAt, completedAt }` | 404 |
 | GET | `/:id/packs/:packId/download` | Download the PDF (`content-disposition: attachment`) | — | PDF bytes | 404; 409 not ready |
 

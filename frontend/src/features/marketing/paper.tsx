@@ -1,17 +1,9 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { InkAnnotation, StudyStamp } from "@/components/ui/paper";
 
-/** A physical-feeling paper card: warm surface, hairline border, soft contact shadow. */
-export const paperCard = "rounded-lg border border-border bg-surface shadow-[0_1px_2px_rgba(30,27,22,0.06),0_12px_32px_-24px_rgba(30,27,22,0.35)]";
-
-/** Small handwritten margin note. Decorative by default (the same meaning is always in nearby text). */
-export function HandwrittenNote({ children, className, decorative = true }: { children: ReactNode; className?: string; decorative?: boolean }) {
-  return (
-    <span aria-hidden={decorative || undefined} className={cn("font-script text-[1.65rem] leading-none text-accent-2", className)}>
-      {children}
-    </span>
-  );
-}
+// Shared scrapbook primitives live in components/ui/paper; these names are kept for the landing page.
+export { paperCard, InkAnnotation as HandwrittenNote } from "@/components/ui/paper";
 
 export function SectionHeading({ eyebrow, title, note, children, align = "left", id }: { eyebrow: string; title: ReactNode; note?: string; children?: ReactNode; align?: "left" | "center"; id?: string }) {
   return (
@@ -20,7 +12,7 @@ export function SectionHeading({ eyebrow, title, note, children, align = "left",
       <h2 id={id} className="font-display mt-3 text-3xl font-semibold leading-[1.1] sm:text-[2.6rem]">
         {title}
       </h2>
-      {note && <HandwrittenNote className="mt-2 inline-block -rotate-2">{note}</HandwrittenNote>}
+      {note && <InkAnnotation className="mt-2 inline-block -rotate-2">{note}</InkAnnotation>}
       {children && <div className="mt-4 text-base leading-relaxed text-muted sm:text-lg">{children}</div>}
     </div>
   );
@@ -37,8 +29,8 @@ export function PaperSection({ id, children, className, tinted }: { id?: string;
 /** "SAMPLE" stamp for any illustrative content, so nothing reads as real user data. */
 export function SampleStamp({ className }: { className?: string }) {
   return (
-    <span className={cn("inline-flex -rotate-3 items-center rounded-sm border border-accent-2/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-[0.2em] text-accent-2", className)}>
+    <StudyStamp tone="red" className={className}>
       SAMPLE
-    </span>
+    </StudyStamp>
   );
 }

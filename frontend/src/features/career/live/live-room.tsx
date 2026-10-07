@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { CodeEditor } from "@/components/ui/code-editor";
 import { Textarea } from "@/components/ui/input";
 import { Markdown } from "@/components/ui/markdown";
+import { paperCard } from "@/components/ui/paper";
 import { Dialog, Tabs } from "@/components/ui/misc";
 import { Progress } from "@/components/ui/progress";
 import { useMe } from "@/features/auth/use-me";
@@ -411,7 +412,11 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
       <Progress value={(progress.answered / progress.target) * 100} className="rounded-none" label="Interview progress" />
 
       <main className={cn("mx-auto grid w-full flex-1 gap-5 p-4 sm:p-6", isCoding ? "max-w-[1500px] lg:grid-cols-[minmax(320px,440px)_1fr]" : "max-w-3xl")}>
-        <section className="h-fit rounded-2xl border border-border bg-surface p-5" aria-live="polite">
+        <section className={cn(paperCard, "index-card h-fit p-5 pt-3")} aria-live="polite">
+          <div className="mb-3 flex h-7 items-center justify-between font-mono text-[10px] font-semibold tracking-[0.2em] text-accent-2">
+            <span>INTERVIEW SHEET</span>
+            {current && <span className="text-subtle">QUESTION {String(progress.answered + 1).padStart(2, "0")}</span>}
+          </div>
           <div className="flex items-start gap-4">
             <ManishaAvatar speaking={voice.speaking} />
             <div className="min-w-0 flex-1">
@@ -428,7 +433,7 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
               )}
             </div>
           </div>
-          {current && <div className="mt-4 text-base leading-relaxed"><Markdown>{current.question}</Markdown></div>}
+          {current && <div className="font-display mt-4 text-lg leading-relaxed"><Markdown>{current.question}</Markdown></div>}
           {isCoding && current?.coding && (
             <ul className="mt-4 space-y-1.5 font-mono text-[11px]">
               {current.coding.publicTests.map((t) => (

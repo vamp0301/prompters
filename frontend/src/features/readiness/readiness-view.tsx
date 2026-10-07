@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Minus, ShieldCheck } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { ErrorState, PageHeader, PageSkeleton } from "@/components/ui/misc";
-import { Progress, ScoreRing } from "@/components/ui/progress";
+import { Progress } from "@/components/ui/progress";
+import { InkAnnotation, NotebookSection } from "@/components/ui/paper";
 import { api } from "@/lib/api/client";
 import type { Readiness } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
@@ -22,7 +23,7 @@ const FACTORS: Record<string, { label: string; explain: string }> = {
 function Delta({ label, past, now }: { label: string; past: number | null; now: number }) {
   if (past === null)
     return (
-      <div className="rounded-lg border border-border p-3">
+      <div className="rounded-lg border border-border bg-surface p-3">
         <div className="text-xs text-muted">{label}</div>
         <div className="mt-0.5 text-sm text-subtle">Not enough history yet</div>
       </div>
@@ -30,7 +31,7 @@ function Delta({ label, past, now }: { label: string; past: number | null; now: 
   const d = now - past;
   const Icon = d > 0 ? ArrowUpRight : d < 0 ? ArrowDownRight : Minus;
   return (
-    <div className="rounded-lg border border-border p-3">
+    <div className="rounded-lg border border-border bg-surface p-3">
       <div className="text-xs text-muted">{label}</div>
       <div className="mt-0.5 flex items-center gap-1.5">
         <Icon className={cn("size-4", d > 0 ? "text-accent" : d < 0 ? "text-danger" : "text-muted")} aria-hidden />
@@ -54,19 +55,25 @@ export function ReadinessView() {
       <PageHeader eyebrow="Readiness" title="How interview-ready are you?" description={`One honest number for your target role: ${r.role === "SDE" ? "SDE" : r.role === "DEVOPS" ? "DevOps" : roleLabel}.`} />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-        <Card>
-          <CardBody className="flex flex-col items-center gap-4 text-center">
-            <ScoreRing value={r.score} size={180} stroke={12} label="Readiness score" />
+        <NotebookSection className="flex flex-col gap-4">
+            <div className="font-mono text-[11px] font-semibold tracking-[0.2em] text-accent-2">INTERVIEW READINESS</div>
+            <div className="flex items-end gap-3">
+              <span className="font-display text-6xl font-semibold leading-none tabular-nums">{r.score}</span>
+              <span className="pb-1 font-mono text-lg text-subtle">/ 100</span>
+              <InkAnnotation className="mb-1 ml-auto -rotate-3 text-2xl">{r.score >= 80 ? "Keep it warm." : r.score >= 60 ? "Almost there." : "Focus here next ↓"}</InkAnnotation>
+            </div>
+            <div className="h-2.5 overflow-hidden rounded-sm border border-border bg-surface-2" role="img" aria-label={`Readiness ${r.score} out of 100`}>
+              <div className="h-full bg-text/85" style={{ width: `${r.score}%` }} />
+            </div>
             <div>
               <div className="text-lg font-semibold">{r.status}</div>
-              <p className="mt-1 flex items-center justify-center gap-1.5 text-xs text-muted"><ShieldCheck className="size-3.5" aria-hidden /> Computed only from your real activity — nothing self-reported.</p>
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-muted"><ShieldCheck className="size-3.5" aria-hidden /> Computed only from your real activity — nothing self-reported.</p>
             </div>
             <div className="grid w-full grid-cols-2 gap-2 text-left">
               <Delta label="Last 7 days" past={r.sevenDaysAgo} now={r.score} />
               <Delta label="Last 30 days" past={r.thirtyDaysAgo} now={r.score} />
             </div>
-          </CardBody>
-        </Card>
+        </NotebookSection>
 
         <Card>
           <CardHeader title="Score over time" description="Last 90 days. Hover or use ← → to inspect points." />

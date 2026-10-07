@@ -31,7 +31,7 @@ test("register → onboard → roadmap → topic → quiz → result", async ({ 
 });
 
 test("locked stage explains why", async ({ page }) => {
-  const email = `e2e-lock-${Date.now()}@test.dev`;
+  const email = `e2e-lock-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@test.dev`;
   await page.request.post("/api/auth/register", { data: { name: "Lock", email, password: "Passw0rd!" } });
   await page.request.post("/api/profile/onboarding", { data: { startLanguage: "PYTHON", explanationLocale: "en", goalRole: "BACKEND", codingLevel: "ZERO", weeklyHours: 5 } });
   await page.goto("/learn/backend");

@@ -1163,7 +1163,7 @@ export type PrepCategory = "GENERAL" | "SKILL" | "PROJECT" | "CLAIM" | "ACHIEVEM
 export type PrepPriority = "INTENSE" | "IMPORTANT" | "GOOD" | "MAY_BE_ASKED";
 export type PrepStatus = "QUEUED" | "RUNNING" | "READY" | "FAILED";
 export type PrepPracticeStatus = "NEW" | "PRACTICED" | "CONFIDENT";
-export type PrepPackVariant = "QUESTIONS" | "HINTS" | "GUIDE";
+export type PrepPackVariant = "QUESTIONS" | "HINTS" | "GUIDE" | "TOPICS";
 export type PrepPackLanguage = "en" | "hinglish" | "hi";
 type StepState = "pending" | "running" | "done" | "failed";
 

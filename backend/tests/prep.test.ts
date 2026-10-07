@@ -5,7 +5,7 @@ import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
 import { prisma } from "../src/lib/prisma.js";
 import { allocateQuestions, calibratePriorities, DEFAULT_ALLOCATION, priorityFor, rankQuestions, TOTAL_QUESTIONS } from "../src/modules/prep/allocation.js";
-import { sevenDayPlan, skillFocus } from "../src/modules/prep/pack.service.js";
+import { sevenDayPlan, skillFocus, topicGroups, topRevisionPoints } from "../src/modules/prep/pack.service.js";
 import { fontRuns } from "../src/modules/prep/pdf.js";
 import { canonicalSkill, evidenceInResume, sectionize, skillMatcher, verbatimEvidence } from "../src/modules/prep/text.js";
 import { validateBatch, type Source, type ValidationContext } from "../src/modules/prep/validator.js";
@@ -197,6 +197,26 @@ describe("question validator", () => {
   });
 });
 
+describe("topic-wise grouping", () => {
+  const base = { id: "", planId: "", question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", followUps: [], translations: {}, status: "NEW", createdAt: new Date(), category: "SKILL" as const };
+  it("groups by topic, most important first, gathers single-question topics, keeps rank order inside", () => {
+    const qs = [
+      { ...base, rank: 3, skill: "JWT", priority: "INTENSE" as const, keyPoints: ["Expiry", "Signature"], bestScore: 40 },
+      { ...base, rank: 1, skill: "jwt", priority: "INTENSE" as const, keyPoints: ["signature", "Storage"], bestScore: null },
+      { ...base, rank: 2, skill: "MongoDB", priority: "GOOD" as const, keyPoints: ["Indexes"], bestScore: null },
+      { ...base, rank: 4, skill: "MongoDB", priority: "GOOD" as const, keyPoints: ["Indexes"], bestScore: null },
+      { ...base, rank: 5, skill: "Docker", priority: "GOOD" as const, keyPoints: [], bestScore: null },
+    ];
+    const groups = topicGroups(qs, "More topics");
+    expect(groups.map((g) => g.topic)).toEqual(["JWT", "MongoDB", "More topics"]);
+    expect(groups[0].questions.map((q) => q.rank)).toEqual([1, 3]);
+    expect(groups[0]).toMatchObject({ intense: 2, practiced: 1, avg: 40 });
+    expect(groups.flatMap((g) => g.questions).length).toBe(qs.length);
+    // Most repeated points first, case-insensitive.
+    expect(topRevisionPoints(groups[0].questions)[0].toLowerCase()).toBe("signature");
+  });
+});
+
 describe("pack planning helpers", () => {
   it("orders skills by importance and splits the bank across a 7-day plan", () => {
     const base = { id: "", planId: "", question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", keyPoints: [], followUps: [], translations: {}, status: "NEW", createdAt: new Date() };
@@ -291,8 +311,8 @@ describe("Top-100 preparation plan", () => {
     expect(attempt.body.data.keyPoints.length).toBeGreaterThan(0);
     expect((await agent.patch(`/api/career/prep/${plan.id}/questions/${qs[1].id}`).send({ status: "CONFIDENT" })).body.data.status).toBe("CONFIDENT");
 
-    for (const language of ["en", "hi"] as const) {
-      const req = await agent.post(`/api/career/prep/${plan.id}/packs`).send({ variant: "GUIDE", language });
+    for (const [variant, language] of [["GUIDE", "en"], ["TOPICS", "en"], ["GUIDE", "hi"]] as const) {
+      const req = await agent.post(`/api/career/prep/${plan.id}/packs`).send({ variant, language });
       expect(req.status).toBe(201);
       const pack = await waitFor(() => agent.get(`/api/career/prep/${plan.id}/packs/${req.body.data.id}`).then((r) => r.body.data), (p) => p.status === "READY" || p.status === "FAILED");
       expect(pack.status).toBe("READY");

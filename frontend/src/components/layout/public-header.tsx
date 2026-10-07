@@ -6,14 +6,15 @@ import { Menu, X } from "lucide-react";
 import { Logo } from "./logo";
 import { ThemeToggle } from "./theme-toggle";
 import { buttonClass } from "@/components/ui/button";
+import { InkAnnotation } from "@/components/ui/paper";
 
 /** Section anchors live on the landing page; from other public pages they link back to it. */
 const NAV = [
   { href: "/roadmap", label: "Learn" },
+  { href: "/#top-100", label: "Career" },
   { href: "/#practice", label: "Practice" },
   { href: "/#interview", label: "Interview" },
-  { href: "/#readiness", label: "Readiness" },
-  { href: "/pricing", label: "Pricing" },
+  { href: "/#readiness", label: "Progress" },
 ];
 
 export function PublicHeader() {
@@ -30,7 +31,10 @@ export function PublicHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border/70 bg-bg/75 backdrop-blur-md supports-[backdrop-filter]:bg-bg/65">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-        <Logo />
+        <span className="flex items-baseline gap-3">
+          <Logo />
+          <InkAnnotation className="hidden text-lg xl:inline">build. explain. prove.</InkAnnotation>
+        </span>
         <nav aria-label="Site" className="hidden items-center gap-7 text-sm text-muted md:flex">
           {NAV.map((n) => (
             <Link key={n.href} href={n.href} aria-current={pathname === n.href ? "page" : undefined} className="transition-colors hover:text-text aria-[current=page]:text-text">

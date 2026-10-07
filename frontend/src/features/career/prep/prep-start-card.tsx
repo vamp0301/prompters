@@ -7,6 +7,7 @@ import { ArrowRight, ListChecks, Sparkles, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { Tape } from "@/components/ui/paper";
 import { Field, Select } from "@/components/ui/input";
 import { ErrorState, Skeleton, Tabs } from "@/components/ui/misc";
 import { api } from "@/lib/api/client";
@@ -54,7 +55,8 @@ export function PrepStartCard({ disabled }: { disabled: boolean }) {
   const ready = !!rId && (mode === "role" ? !!role : !!jId);
 
   return (
-    <Card className="border-accent/40">
+    <Card id="top-100" className="relative scroll-mt-20 border-accent/40">
+      <Tape className="left-16" />
       <CardHeader
         title={
           <span className="flex items-center gap-2">
@@ -167,7 +169,7 @@ export function PrepPlansCard() {
   });
   if (!isLoading && !error && !data?.length) return null;
   return (
-    <Card>
+    <Card id="plans" className="scroll-mt-20">
       <CardHeader title="Your preparation plans" description="Each plan is a ranked Top 100 for one resume and one target." />
       <CardBody>
         {isLoading ? (
