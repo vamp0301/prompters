@@ -5,12 +5,13 @@ import { contentRoutes } from "./content.routes.js";
 import { curriculumRoutes } from "./curriculum.routes.js";
 import { insightsRoutes } from "./insights.routes.js";
 import { platformRoutes } from "./platform.routes.js";
+import { adminSiteRoutes } from "../site/site.routes.js";
 
 /**
  * Admin API. Role tiers:
  *  AUTHOR      — write drafts: topics, sections, questions, build tasks, prompts, interviews
  *  ADMIN       — publish content, manage stages/modules/projects/assessments, users, integrity
- *  SUPER_ADMIN — roles, feature flags, scoring rules, audit logs, publish overrides
+ *  SUPER_ADMIN — roles, feature flags, scoring rules, audit logs, publish overrides, website copy
  */
 export function adminRoutes() {
   const r = Router();
@@ -24,5 +25,6 @@ export function adminRoutes() {
   r.use(curriculumRoutes());
   r.use(contentRoutes());
   r.use(platformRoutes());
+  r.use(adminSiteRoutes());
   return r;
 }

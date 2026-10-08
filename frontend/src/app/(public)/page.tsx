@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, BookOpen, ChevronRight, Code2, NotebookPen, ShieldCheck } from "lucide-react";
 import { buttonClass } from "@/components/ui/button";
@@ -5,6 +6,14 @@ import { VellumUpload } from "@/features/marketing/vellum-upload";
 import { loadLanding } from "@/features/marketing/load-landing";
 
 const LOOP_ICONS = [BookOpen, Code2, NotebookPen, ShieldCheck];
+
+export async function generateMetadata(): Promise<Metadata> {
+  const { seo } = await loadLanding();
+  return {
+    ...(seo.title ? { title: { absolute: seo.title } } : {}),
+    ...(seo.description ? { description: seo.description } : {}),
+  };
+}
 
 export default async function LandingPage() {
   const c = await loadLanding();

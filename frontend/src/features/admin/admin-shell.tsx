@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import {
   Activity, ArrowLeft, BookText, ClipboardCheck, FileQuestion, Flag, FolderKanban, Gauge, Hammer, HeartPulse, Languages,
-  LayoutDashboard, Map, Menu, MessagesSquare, PlaySquare, ScrollText, ShieldAlert, Sparkles, Users, X,
+  Globe, LayoutDashboard, Map, Menu, MessagesSquare, PlaySquare, ScrollText, ShieldAlert, Sparkles, Users, X,
 } from "lucide-react";
 import { Logo } from "@/components/layout/logo";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +47,7 @@ const NAV: { group: string; items: Item[] }[] = [
   {
     group: "Platform",
     items: [
+      { href: "/admin/website", label: "Website", icon: Globe, min: "SUPER_ADMIN" },
       { href: "/admin/feature-flags", label: "Feature flags", icon: Flag, min: "ADMIN" },
       { href: "/admin/scoring", label: "Scoring", icon: Gauge, min: "ADMIN" },
       { href: "/admin/audit-logs", label: "Audit logs", icon: ScrollText, min: "SUPER_ADMIN" },

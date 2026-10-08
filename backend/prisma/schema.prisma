@@ -674,6 +674,16 @@ model ScoringConfig {
   createdAt   DateTime @default(now())
 }
 
+/// Editable public-website copy (e.g. key "landing"), managed by Super Admins. Defaults live in the
+/// frontend; this row only stores overrides. `version` guards against two admins overwriting each other.
+model SiteContent {
+  key         String   @id
+  content     Json
+  version     Int      @default(1)
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
+
 model AdminAuditLog {
   id         String   @id @default(cuid())
   actorId    String

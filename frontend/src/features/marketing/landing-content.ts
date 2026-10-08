@@ -46,6 +46,8 @@ export interface LandingContent {
   };
   footer: { tagline: string };
   announcement: { enabled: boolean; text: string; linkLabel: string; linkHref: string };
+  /** Search/social title and description for the landing page; empty = the site defaults. */
+  seo: { title: string; description: string };
 }
 
 export const DEFAULT_LANDING: LandingContent = {
@@ -102,6 +104,7 @@ export const DEFAULT_LANDING: LandingContent = {
   },
   footer: { tagline: "Prepare for your interview — learn it, build it, explain it." },
   announcement: { enabled: false, text: "", linkLabel: "", linkHref: "" },
+  seo: { title: "", description: "" },
 };
 
 /** Deep-merges saved overrides onto the defaults, ignoring anything with the wrong shape. */

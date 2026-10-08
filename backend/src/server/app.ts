@@ -24,6 +24,7 @@ import { interviewRoutes } from "../modules/interview/interview.routes.js";
 import { journeyRoutes } from "../modules/journey/journey.routes.js";
 import { learningRoutes } from "../modules/learning/learning.routes.js";
 import { publicRoutes } from "../modules/learning/public.routes.js";
+import { publicSiteRoutes } from "../modules/site/site.routes.js";
 import { profileRoutes } from "../modules/profile/profile.routes.js";
 import { projectRoutes } from "../modules/projects/projects.routes.js";
 import { promptRoutes } from "../modules/prompts/prompts.routes.js";
@@ -77,6 +78,7 @@ export function createApp() {
   api.use(csrfGuard);
 
   api.use("/auth", authRoutes());
+  api.use("/public/site", publicSiteRoutes());
   api.use("/public", publicRoutes());
   api.use("/profile", requireAuth, profileRoutes());
   api.use("/dashboard", requireAuth, dashboardRoutes());

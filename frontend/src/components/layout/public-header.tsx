@@ -104,13 +104,13 @@ const FOOTER: { title: string; links: { href: string; label: string }[] }[] = [
   },
 ];
 
-export function PublicFooter() {
+export function PublicFooter({ tagline = "Prepare for your interview — learn it, build it, explain it." }: { tagline?: string }) {
   return (
     <footer className="border-t border-border">
       <div className="grid gap-8 px-5 py-14 sm:px-[clamp(20px,7vw,100px)] md:grid-cols-[2fr_1fr_1fr]">
         <div className="space-y-3">
           <Logo />
-          <p className="max-w-[16rem] text-[13px] leading-relaxed text-muted">Prepare for your interview — learn it, build it, explain it.</p>
+          <p className="max-w-[16rem] text-[13px] leading-relaxed text-muted">{tagline}</p>
         </div>
         {FOOTER.map((col) => (
           <nav key={col.title} aria-label={col.title}>
