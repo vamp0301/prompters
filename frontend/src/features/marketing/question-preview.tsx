@@ -91,7 +91,7 @@ export function QuestionPreview() {
       <div aria-hidden className="absolute inset-x-3 -bottom-1.5 top-3 -rotate-[1.5deg] rounded-lg border border-border bg-surface" />
 
       <section aria-roledescription="carousel" aria-label="Sample interview questions" className="relative rounded-lg border border-border bg-surface shadow-[0_18px_40px_-26px_rgba(30,27,22,0.45)]">
-        <div className="min-h-[21rem] overflow-hidden rounded-xl p-5 sm:p-6">
+        <div className="min-h-84 overflow-hidden rounded-xl p-5 sm:p-6">
           <AnimatePresence mode="wait" initial={false}>
             <motion.article
               key={i}

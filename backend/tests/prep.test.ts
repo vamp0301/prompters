@@ -336,6 +336,23 @@ describe("Top-100 preparation plan", () => {
     expect((await other.agent.get(`/api/career/prep/${plan.id}/questions/${qs[0].id}`)).status).toBe(404);
   });
 
+  it("translation survives a model that drops an item and returns numeric ids", async () => {
+    const { agent } = await login();
+    const resumeId = await resumeFor(agent);
+    const plan = await planStatus(agent, (await agent.post("/api/career/prep").send({ resumeId, targetRole: "backend" })).body.data.id);
+    const before = fake.calls.filter((c) => c.task === "translate_hinglish").length;
+    fake.flakyTranslate = true;
+    try {
+      const req = await agent.post(`/api/career/prep/${plan.id}/packs`).send({ variant: "TOPICS", language: "hinglish" });
+      const pack = await waitFor(() => agent.get(`/api/career/prep/${plan.id}/packs/${req.body.data.id}`).then((r) => r.body.data), (p) => p.status === "READY" || p.status === "FAILED");
+      expect(pack.status).toBe("READY");
+    } finally {
+      fake.flakyTranslate = false;
+    }
+    // 10 batches, each with one dropped item retried on its own.
+    expect(fake.calls.filter((c) => c.task === "translate_hinglish").length - before).toBe(20);
+  });
+
   it("dashboard overview: resume decoded and the Top 100 split by priority and category — own data only", async () => {
     const { agent } = await login();
     const other = await login();

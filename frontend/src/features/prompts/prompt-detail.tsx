@@ -144,7 +144,7 @@ function PromptBody({ prompt: p }: { prompt: PromptDetail }) {
             action={<Button size="sm" onClick={copy}><Copy className="size-4" aria-hidden /> Copy</Button>}
           />
           <CardBody>
-            <pre aria-label="Prompt preview" className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-code p-4 font-mono text-[13px] leading-6">
+            <pre aria-label="Prompt preview" className="max-h-128 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-code p-4 font-mono text-[13px] leading-6">
               {segments.map((s, i) =>
                 s.key === null ? (
                   <span key={i}>{s.text}</span>

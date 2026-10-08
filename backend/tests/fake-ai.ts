@@ -4,6 +4,8 @@ import type { AIProvider } from "../src/ai/provider.js";
 export class FakeAI implements AIProvider {
   readonly name = "fake";
   calls: { task: string; user: string; system: string }[] = [];
+  /** When set, multi-item translation batches drop their last item and send numeric ids (as real models sometimes do). */
+  flakyTranslate = false;
   private jobCalls = 0;
   private prepCounter = 0;
   /** When set, prep batches return only invalid questions (exercises the "too few passed" failure). */
@@ -153,7 +155,9 @@ export class FakeAI implements AIProvider {
       case "translate_hinglish": {
         const items = JSON.parse(user) as { id: string; question: string; hint: string; why: string; keyPoints: string[]; followUps: string[] }[];
         const tag = task === "translate_hi" ? "प्रश्न" : "Sawaal";
-        return JSON.stringify({ items: items.map((i) => ({ ...i, question: `${tag}: ${i.question}` })) });
+        const out = items.map((i) => ({ ...i, question: `${tag}: ${i.question}` }));
+        if (this.flakyTranslate && out.length > 1) return JSON.stringify({ items: out.slice(0, -1).map((i) => ({ ...i, id: Number(i.id) })) });
+        return JSON.stringify({ items: out });
       }
       case "review_code":
         return JSON.stringify({ understanding: 8, practical: 7, communication: 6, timeComplexity: "O(n)", spaceComplexity: "O(1)", edgeCases: ["zero"], codeQuality: ["clear names"], lead: "Thanks." });

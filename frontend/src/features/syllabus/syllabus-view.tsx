@@ -150,7 +150,7 @@ function LanguageModules({ lang }: { lang: SyllabusLang }) {
 function CompareTable() {
   return (
     <div className={cn(paperCard, "overflow-x-auto")}>
-      <table className="w-full min-w-[56rem] text-left text-sm">
+      <table className="w-full min-w-224 text-left text-sm">
         <caption className="sr-only">Same modules across Python, JavaScript, Java and C++</caption>
         <thead>
           <tr className="border-b border-border">

@@ -87,7 +87,7 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="fade-up relative mx-auto w-full max-w-[26rem] lg:mr-0" style={{ animationDelay: "120ms" }}>
+          <div className="fade-up relative mx-auto w-full max-w-104 lg:mr-0" style={{ animationDelay: "120ms" }}>
             <VellumUpload />
           </div>
         </div>
@@ -331,12 +331,12 @@ export default function LandingPage() {
       {/* ───────── PDF pack ───────── */}
       <PaperSection id="interview-pack">
         <div className="grid items-center gap-14 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="relative mx-auto h-[22rem] w-full max-w-md" aria-hidden>
+          <div className="relative mx-auto h-88 w-full max-w-md" aria-hidden>
             {PACKS.map((p, i) => (
               <div
                 key={p.title}
                 // Right inset leaves room for the 22px-per-sheet offset so the stack never overflows the page.
-                className={cn(paperCard, "absolute left-0 right-12 top-0 h-[19rem] p-6")}
+                className={cn(paperCard, "absolute left-0 right-12 top-0 h-76 p-6")}
                 style={{ transform: `translate(${i * 22}px, ${i * 18}px) rotate(${(i - 1) * 2.5}deg)`, zIndex: i }}
               >
                 <div className="flex items-center justify-between border-b border-border pb-3">

@@ -63,17 +63,42 @@ function localized(q: PrepQuestion, language: PackLanguage): Localized | null {
   return t?.question ? t : null;
 }
 
+type TranslatedItem = Localized & { id: string };
+
+/**
+ * One AI call for a batch. Items use short positional ids ("1", "2"…) rather than database ids,
+ * which models sometimes mangle; anything still missing is retried on its own before giving up.
+ */
+async function translateBatch(batch: PrepQuestion[], language: Exclude<PackLanguage, "en">, retryMissing = true): Promise<Map<string, TranslatedItem>> {
+  const p = prepPrompts.translate(language, batch.map((q, k) => ({ id: String(k + 1), question: q.question, hint: q.hint, why: q.why, keyPoints: q.keyPoints, followUps: q.followUps })));
+  const out = await aiJson(`translate_${language}`, p.system, p.user, translationSchema, 8000, { timeoutMs: 120_000, fast: true });
+  const byLocal = new Map(out.items.map((t) => [String(t.id).trim(), t]));
+  const result = new Map<string, TranslatedItem>();
+  const missing: PrepQuestion[] = [];
+  batch.forEach((q, k) => {
+    const t = byLocal.get(String(k + 1));
+    if (t?.question?.trim()) result.set(q.id, t);
+    else missing.push(q);
+  });
+  if (missing.length && retryMissing) {
+    for (const q of missing) {
+      const one = await translateBatch([q], language, false);
+      const t = one.get(q.id);
+      if (t) result.set(q.id, t);
+    }
+  }
+  return result;
+}
+
 /** Translates whatever isn't cached yet, in small batches, and stores it on each question. */
 async function ensureTranslations(questions: PrepQuestion[], language: Exclude<PackLanguage, "en">) {
   const missing = questions.filter((q) => !localized(q, language));
   for (let i = 0; i < missing.length; i += TRANSLATE_BATCH) {
     const batch = missing.slice(i, i + TRANSLATE_BATCH);
-    const p = prepPrompts.translate(language, batch.map((q) => ({ id: q.id, question: q.question, hint: q.hint, why: q.why, keyPoints: q.keyPoints, followUps: q.followUps })));
-    const out = await aiJson(`translate_${language}`, p.system, p.user, translationSchema, 8000, { timeoutMs: 120_000, fast: true });
-    const byId = new Map(out.items.map((t) => [t.id, t]));
+    const byId = await translateBatch(batch, language);
     for (const q of batch) {
       const t = byId.get(q.id);
-      if (!t?.question) throw new AppError(502, "AI_BAD_OUTPUT", "Translation came back incomplete. Please try again.");
+      if (!t) throw new AppError(502, "AI_BAD_OUTPUT", "Translation came back incomplete. Please try again.");
       const translations = { ...((q.translations as object) ?? {}), [language]: { question: t.question, hint: t.hint, why: t.why, keyPoints: t.keyPoints, followUps: t.followUps } };
       await prisma.prepQuestion.update({ where: { id: q.id }, data: { translations: translations as Prisma.InputJsonValue } });
       q.translations = translations as Prisma.JsonValue;

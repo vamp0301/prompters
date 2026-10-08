@@ -67,16 +67,20 @@ export const questionBatchSchema = z.object({ questions: z.array(z.unknown()).ma
 /** Groups of question ids that ask the same thing (only groups of two or more). */
 export const dedupeSchema = z.object({ groups: z.array(z.array(str(10)).max(20)).max(60).default([]) });
 
+/** Translations run longer than the English source, so over-long text is trimmed rather than rejected. */
+const clip = (max: number) => z.coerce.string().trim().transform((s) => s.slice(0, max));
+const clipList = (max: number, item: number) => z.array(clip(item)).default([]).transform((a) => a.slice(0, max));
+
 export const translationSchema = z.object({
   items: z
     .array(
       z.object({
-        id: str(40),
-        question: str(800),
-        hint: str(700).default(""),
-        why: str(600).default(""),
-        keyPoints: list(8, 320),
-        followUps: list(4, 400),
+        id: clip(40),
+        question: clip(1200),
+        hint: clip(1000).default(""),
+        why: clip(900).default(""),
+        keyPoints: clipList(8, 480),
+        followUps: clipList(4, 600),
       }),
     )
     .max(30),
