@@ -4,7 +4,7 @@ import { generateCandidates, type Candidate } from "./candidates.js";
 import { careerContext, conceptStates, loadStudentData, skillRelevance, studentDifficulty, studentFeatures, type StudentData } from "./data.js";
 import { actionLabel, explain, REASON_LABEL } from "./explain.js";
 import { DIFFICULTY_MODEL, LEVELS, priorityOf, SKILL_STATE_MODEL } from "./model.js";
-import { outcomeOf } from "./outcomes.js";
+import { completedOutcome, LABEL, progressOf, type OutcomeDetail } from "./outcomes.js";
 import { rank, type EngineStatus } from "./ranker.js";
 
 /**
@@ -66,10 +66,10 @@ export async function refresh(userId: string, now = new Date()) {
     }),
   );
 
-  await resolveOutcomes(userId, d, now);
+  await resolveOutcomes(userId, d, now, new Map(states.map((x) => [x.conceptId, x.mastery])));
 
   const candidates = generateCandidates(d, career, states, difficulty);
-  const { ranked, engine } = await rank(candidates, student);
+  const { ranked, engine } = await rank(candidates, student, userId);
   const top = ranked.slice(0, TOP_N);
 
   const open = await prisma.recommendation.findMany({ where: { userId, status: "ACTIVE" } });
@@ -88,6 +88,7 @@ export async function refresh(userId: string, now = new Date()) {
         features: { features: c.features, ml: c.mlFeatures, baselineScore: c.baselineScore, facts: c.facts, subject: c.subject, conceptId: c.conceptId, itemType: c.itemType } as unknown as Prisma.InputJsonValue,
         modelName: engine.modelName,
         modelVersion: engine.modelVersion,
+        arm: engine.arm,
       };
       const existing = byKey.get(`${c.action}:${c.itemId}`);
       return existing
@@ -110,7 +111,7 @@ export async function refresh(userId: string, now = new Date()) {
         prediction: r.score,
         // The baseline has no calibrated confidence and none is invented; a trained model's score is itself a probability.
         confidence: null,
-        meta: { mode: engine.mode, modelStatus: engine.modelStatus, baselineScore: top[i].baselineScore } as Prisma.InputJsonValue,
+        meta: { mode: engine.mode, modelStatus: engine.modelStatus, arm: engine.arm, baselineScore: top[i].baselineScore } as Prisma.InputJsonValue,
       })),
       {
         userId,
@@ -126,27 +127,41 @@ export async function refresh(userId: string, now = new Date()) {
   return { engine, difficulty, student, career, evidence: states.reduce((a, s) => a + s.attempts, 0) };
 }
 
-/** Labels earlier recommendations from what the student did next, and expires stale ones. */
-export async function resolveOutcomes(userId: string, d: StudentData, now: Date) {
-  const open = await prisma.recommendation.findMany({ where: { userId, outcome: null, status: { in: ["ACTIVE", "SUPERSEDED", "DISMISSED"] } } });
+/**
+ * Moves earlier recommendations along SHOWN → STARTED → SUCCESS | NO_IMPROVEMENT, or ABANDONED /
+ * NOT_ACTED_ON when they expire, from what the student actually did. Improvement is measured with
+ * the skill state just computed, against the mastery stored when the recommendation was made.
+ */
+export async function resolveOutcomes(userId: string, d: StudentData, now: Date, masteryNow: Map<string, number>) {
+  const open = await prisma.recommendation.findMany({
+    // Not yet judged: no outcome, or started. (Explicit: in SQL, NULL never matches NOT IN.)
+    where: { userId, OR: [{ outcomeDetail: null }, { outcomeDetail: "STARTED" }], status: { in: ["ACTIVE", "SUPERSEDED", "DISMISSED"] } },
+    include: { feedback: { where: { source: "USER", action: { in: ["ACCEPTED", "STARTED"] } }, select: { action: true } } },
+  });
   for (const r of open) {
-    const outcome = outcomeOf(r, d);
-    if (outcome) {
+    const p = progressOf(r, d);
+    const started = p.started || r.feedback.length > 0 || !!r.startedAt;
+    const f = (r.features ?? {}) as { conceptId?: string | null; features?: { mastery?: number } };
+    const before = f.features?.mastery;
+    const after = f.conceptId ? masteryNow.get(f.conceptId) : undefined;
+    const improvement = typeof before === "number" && typeof after === "number" ? Math.round((after - before) * 1000) / 1000 : null;
+    const system = (actions: string[]) => prisma.recommendationFeedback.createMany({ data: actions.map((action) => ({ recommendationId: r.id, userId, action, source: "SYSTEM" })) });
+
+    if (p.completed && p.good !== null) {
+      const detail = completedOutcome(r.action, p.good, improvement);
       await prisma.$transaction([
-        prisma.recommendation.update({ where: { id: r.id }, data: { status: "DONE", outcome, resolvedAt: now } }),
-        prisma.recommendationFeedback.createMany({
-          data: [
-            { recommendationId: r.id, userId, action: "COMPLETED", source: "SYSTEM" },
-            { recommendationId: r.id, userId, action: outcome === "SUCCESS" ? "SUCCESSFUL" : "UNSUCCESSFUL", source: "SYSTEM" },
-          ],
-        }),
+        prisma.recommendation.update({ where: { id: r.id }, data: { status: "DONE", outcome: LABEL[detail], outcomeDetail: detail, improvement, startedAt: r.startedAt ?? now, resolvedAt: now } }),
+        system(["COMPLETED", detail === "SUCCESS" ? "SUCCESSFUL" : "UNSUCCESSFUL"]),
       ]);
     } else if (r.expiresAt.getTime() <= now.getTime()) {
-      // Shown and never acted on → a negative example ("didn't help / didn't happen"). Never shown → no label.
+      // Began and never finished → ABANDONED (a negative). Shown and never started → NOT_ACTED_ON (no label).
+      const detail: OutcomeDetail | null = started ? "ABANDONED" : r.shownAt ? "NOT_ACTED_ON" : null;
       await prisma.$transaction([
-        prisma.recommendation.update({ where: { id: r.id }, data: { status: "EXPIRED", outcome: r.shownAt ? "FAILURE" : null, resolvedAt: now } }),
-        ...(r.shownAt ? [prisma.recommendationFeedback.create({ data: { recommendationId: r.id, userId, action: "IGNORED", source: "SYSTEM" } })] : []),
+        prisma.recommendation.update({ where: { id: r.id }, data: { status: "EXPIRED", outcome: detail ? (LABEL[detail] ?? null) : null, outcomeDetail: detail, resolvedAt: now } }),
+        ...(detail === "ABANDONED" ? [system(["ABANDONED"])] : detail === "NOT_ACTED_ON" ? [system(["IGNORED"])] : []),
       ]);
+    } else if (started && !r.startedAt) {
+      await prisma.$transaction([prisma.recommendation.update({ where: { id: r.id }, data: { outcomeDetail: "STARTED", startedAt: now } }), system(["STARTED"])]);
     }
   }
 }
@@ -181,6 +196,6 @@ export function recView(r: Recommendation) {
 export async function lastEngine(userId: string): Promise<EngineStatus | null> {
   const p = await prisma.mLPrediction.findFirst({ where: { userId, target: "RECOMMENDATION_SCORE" }, orderBy: { createdAt: "desc" } });
   if (!p) return null;
-  const meta = (p.meta ?? {}) as { mode?: "ml" | "baseline"; modelStatus?: string };
-  return { mode: meta.mode ?? "baseline", modelStatus: meta.modelStatus ?? "unknown", modelName: p.modelName, modelVersion: p.modelVersion };
+  const meta = (p.meta ?? {}) as { mode?: "ml" | "baseline"; modelStatus?: string; arm?: "ml" | "baseline" };
+  return { mode: meta.mode ?? "baseline", modelStatus: meta.modelStatus ?? "unknown", arm: meta.arm ?? "baseline", modelName: p.modelName, modelVersion: p.modelVersion };
 }

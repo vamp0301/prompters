@@ -21,7 +21,8 @@ export const STUDENT_EVENTS = [
   "REVISION_COMPLETED",
   "INTERVIEW_STARTED",
   "INTERVIEW_COMPLETED",
-  "INTERVIEW_ANSWERED",
+  "INTERVIEW_ANSWER_EVALUATED",
+  "INTERVIEW_FOLLOWUP",
   "PROMPT_USED",
   "RESUME_UPLOADED",
   "JOB_VIEWED",
@@ -29,7 +30,7 @@ export const STUDENT_EVENTS = [
 ] as const;
 export type StudentEventType = (typeof STUDENT_EVENTS)[number];
 
-export const ENTITY_TYPES = ["TOPIC", "QUIZ_ATTEMPT", "BUILD_TASK", "PREP_QUESTION", "PREP_PLAN", "INTERVIEW_SESSION", "INTERVIEW_QUESTION", "RESUME", "JOB", "PROMPT", "CONCEPT", "RECOMMENDATION"] as const;
+export const ENTITY_TYPES = ["TOPIC", "QUIZ_ATTEMPT", "BUILD_TASK", "PREP_QUESTION", "PREP_PLAN", "INTERVIEW_SESSION", "INTERVIEW_QUESTION", "INTERVIEW_ANSWER", "RESUME", "JOB", "PROMPT", "CONCEPT", "RECOMMENDATION"] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 /** Server-logged event type → normalized name and the meta key holding the entity id. */
@@ -51,6 +52,8 @@ const MAP: Record<string, { event: StudentEventType; entity: EntityType; idKey?:
   prep_practice: { event: "QUESTION_ANSWERED", entity: "PREP_QUESTION", idKey: "questionId" },
   interview_started: { event: "INTERVIEW_STARTED", entity: "INTERVIEW_SESSION", idKey: "sessionId" },
   interview_completed: { event: "INTERVIEW_COMPLETED", entity: "INTERVIEW_SESSION", idKey: "sessionId" },
+  interview_answer_evaluated: { event: "INTERVIEW_ANSWER_EVALUATED", entity: "INTERVIEW_ANSWER", idKey: "turnId" },
+  interview_followup: { event: "INTERVIEW_FOLLOWUP", entity: "INTERVIEW_ANSWER", idKey: "turnId" },
   application_added: { event: "JOB_APPLIED", entity: "JOB", idKey: "applicationId" },
   resume_uploaded: { event: "RESUME_UPLOADED", entity: "RESUME", idKey: "resumeId" },
 };

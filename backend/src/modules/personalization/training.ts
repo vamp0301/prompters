@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -20,39 +21,74 @@ export const MODEL_NAME = "recommendation-success";
 const MIN_SHOWN_FOR_RATES = 50;
 const MIN_ROWS_FOR_IMPROVEMENT = 30;
 
+/** Anonymous, stable per-student group id: lets the trainer hold out whole students without exporting who they are. */
+export const studentGroup = (userId: string) => createHash("sha256").update(`group:${userId}`).digest("hex").slice(0, 12);
+
+/**
+ * Training rows: recommendations that were shown and resolved with a label (SUCCESS / NO_IMPROVEMENT /
+ * ABANDONED). NOT_ACTED_ON rows have no label and are left out. Each row carries the baseline's score
+ * (not a feature) so the trainer can compare the model against it on unseen students.
+ */
 export async function exportDataset() {
   const rows = await prisma.recommendation.findMany({
     where: { outcome: { in: ["SUCCESS", "FAILURE"] }, shownAt: { not: null } },
-    select: { id: true, createdAt: true, outcome: true, action: true, features: true },
+    select: { id: true, userId: true, createdAt: true, outcome: true, outcomeDetail: true, action: true, arm: true, features: true },
     orderBy: { createdAt: "asc" },
   });
   return rows
     .map((r) => {
-      const ml = (r.features as { ml?: Record<string, number> } | null)?.ml;
-      if (!ml) return null;
-      return { id: r.id, createdAt: r.createdAt.toISOString(), action: r.action, label: r.outcome === "SUCCESS" ? 1 : 0, features: Object.fromEntries(ML_FEATURES.map((k) => [k, ml[k] ?? -1])) };
+      const f = r.features as { ml?: Record<string, number>; baselineScore?: number } | null;
+      if (!f?.ml) return null;
+      return {
+        id: r.id,
+        group: studentGroup(r.userId),
+        createdAt: r.createdAt.toISOString(),
+        action: r.action,
+        arm: r.arm,
+        outcomeDetail: r.outcomeDetail,
+        label: r.outcome === "SUCCESS" ? 1 : 0,
+        baseline: typeof f.baselineScore === "number" ? f.baselineScore : null,
+        features: Object.fromEntries(ML_FEATURES.map((k) => [k, f.ml![k] ?? -1])),
+      };
     })
     .filter((r): r is NonNullable<typeof r> => !!r);
 }
 
-/** Acceptance, completion and learning improvement from real feedback — or INSUFFICIENT_DATA. */
+/**
+ * Acceptance, completion, success and learning improvement — overall and per rollout arm — from
+ * real recommendations. Each figure is reported only with enough rows; otherwise INSUFFICIENT_DATA.
+ */
 export async function productMetrics() {
-  const shown = await prisma.recommendation.count({ where: { shownAt: { not: null } } });
-  const count = (action: string) => prisma.recommendationFeedback.groupBy({ by: ["recommendationId"], where: { action, recommendation: { shownAt: { not: null } } } }).then((g) => g.length);
-  const [accepted, completed, successful] = await Promise.all([count("ACCEPTED"), count("COMPLETED"), count("SUCCESSFUL")]);
-  const rates =
-    shown >= MIN_SHOWN_FOR_RATES
-      ? { acceptanceRate: round(accepted / shown), completionRate: round(completed / shown), successRate: round(successful / shown) }
-      : "INSUFFICIENT_DATA";
-
-  // Learning improvement: for completed skill/topic recommendations, mastery now minus mastery when recommended.
-  const done = await prisma.recommendation.findMany({ where: { status: "DONE", outcome: { not: null } }, select: { userId: true, features: true } });
-  const pairs = done.map((r) => ({ userId: r.userId, f: r.features as { conceptId?: string | null; features?: { mastery?: number } } })).filter((r) => r.f.conceptId && typeof r.f.features?.mastery === "number");
-  const states = pairs.length ? await prisma.studentSkillState.findMany({ where: { OR: pairs.map((p) => ({ userId: p.userId, conceptId: p.f.conceptId! })) }, select: { userId: true, conceptId: true, mastery: true } }) : [];
-  const now = new Map(states.map((s) => [`${s.userId}|${s.conceptId}`, s.mastery]));
-  const deltas = pairs.map((p) => (now.has(`${p.userId}|${p.f.conceptId}`) ? now.get(`${p.userId}|${p.f.conceptId}`)! - p.f.features!.mastery! : null)).filter((x): x is number => x !== null);
-  const learningImprovement = deltas.length >= MIN_ROWS_FOR_IMPROVEMENT ? { meanMasteryDelta: round(deltas.reduce((a, b) => a + b, 0) / deltas.length), n: deltas.length } : "INSUFFICIENT_DATA";
-  return { shown, accepted, completed, successful, rates, learningImprovement };
+  const shownRecs = await prisma.recommendation.findMany({
+    where: { shownAt: { not: null } },
+    select: { arm: true, outcomeDetail: true, improvement: true, feedback: { where: { source: "USER", action: "ACCEPTED" }, select: { id: true } } },
+  });
+  const summarize = (recs: typeof shownRecs) => {
+    const n = recs.length;
+    const count = (pred: (r: (typeof recs)[number]) => boolean) => recs.filter(pred).length;
+    const completed = count((r) => r.outcomeDetail === "SUCCESS" || r.outcomeDetail === "NO_IMPROVEMENT");
+    const improvements = recs.map((r) => r.improvement).filter((x): x is number => typeof x === "number");
+    return {
+      shown: n,
+      outcomes: {
+        success: count((r) => r.outcomeDetail === "SUCCESS"),
+        noImprovement: count((r) => r.outcomeDetail === "NO_IMPROVEMENT"),
+        abandoned: count((r) => r.outcomeDetail === "ABANDONED"),
+        notActedOn: count((r) => r.outcomeDetail === "NOT_ACTED_ON"),
+        inProgress: count((r) => r.outcomeDetail === "STARTED"),
+      },
+      rates:
+        n >= MIN_SHOWN_FOR_RATES
+          ? { acceptanceRate: round(count((r) => r.feedback.length > 0) / n), completionRate: round(completed / n), successRate: round(count((r) => r.outcomeDetail === "SUCCESS") / n) }
+          : "INSUFFICIENT_DATA",
+      learningImprovement:
+        improvements.length >= MIN_ROWS_FOR_IMPROVEMENT ? { meanMasteryDelta: round(improvements.reduce((a, b) => a + b, 0) / improvements.length), n: improvements.length } : "INSUFFICIENT_DATA",
+    };
+  };
+  return {
+    ...summarize(shownRecs),
+    byArm: { ml: summarize(shownRecs.filter((r) => r.arm === "ml")), baseline: summarize(shownRecs.filter((r) => r.arm !== "ml")) },
+  };
 }
 
 const round = (x: number) => Math.round(x * 10000) / 10000;
@@ -79,7 +115,7 @@ export async function trainRecommendationModel(opts: { mlDir: string; python?: s
   writeFileSync(data, rows.map((r) => JSON.stringify(r)).join("\n"));
   const python = opts.python ?? path.join(opts.mlDir, ".venv", "bin", "python");
   const res = await run(python, ["train.py", "--data", data, "--out", path.join(opts.mlDir, "models"), "--report", report], opts.mlDir);
-  type Report = { status?: string; model_version?: string; library?: string; metrics?: unknown; reason?: string; required?: unknown };
+  type Report = { status?: string; model_version?: string; library?: string; metrics?: unknown; reason?: string; required?: unknown; gate?: unknown; comparison?: unknown };
   let parsed: Report;
   try {
     parsed = JSON.parse(readFileSync(report, "utf8")) as Report;
@@ -91,15 +127,29 @@ export async function trainRecommendationModel(opts: { mlDir: string; python?: s
   const runRow = await prisma.mLTrainingRun.create({
     data: {
       modelName: MODEL_NAME,
-      modelVersion: status === "TRAINED" ? (parsed.model_version ?? null) : null,
+      // A trained-but-not-promoted candidate keeps its version for traceability; only TRAINED is served.
+      modelVersion: status === "TRAINED" || status === "TRAINED_NOT_PROMOTED" ? (parsed.model_version ?? null) : null,
       status,
       datasetSize: rows.length,
       positives,
       negatives: rows.length - positives,
       features: [...ML_FEATURES],
-      metrics: { model: status === "TRAINED" ? parsed.metrics : "INSUFFICIENT_DATA", product } as unknown as Prisma.InputJsonValue,
+      metrics: {
+        model: parsed.metrics ?? "INSUFFICIENT_DATA",
+        // ML vs baseline on students the model never saw; promotion requires the model to win.
+        comparison: parsed.comparison ?? null,
+        gate: parsed.gate ?? null,
+        product,
+      } as unknown as Prisma.InputJsonValue,
       library: parsed.library ?? null,
-      notes: status === "FAILED" ? res.out.slice(-1500) : status === "INSUFFICIENT_DATA" ? `Not trained: ${parsed.reason ?? `needs ${JSON.stringify(parsed.required)}`}` : null,
+      notes:
+        status === "FAILED"
+          ? res.out.slice(-1500)
+          : status === "INSUFFICIENT_DATA"
+            ? `Not trained: ${parsed.reason ?? `needs ${JSON.stringify(parsed.required)}`}`
+            : status === "TRAINED_NOT_PROMOTED"
+              ? "Trained but not promoted: it did not beat the baseline on unseen students. The live ranker is unchanged."
+              : null,
       startedAt: started,
       finishedAt: new Date(),
     },

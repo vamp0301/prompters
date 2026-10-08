@@ -38,12 +38,13 @@ export async function loadStudentData(userId: string, now = new Date()) {
     }),
     prisma.prepAttempt.findMany({ where: { userId }, select: { questionId: true, score: true, createdAt: true, question: { select: { skill: true, difficulty: true } } }, orderBy: { createdAt: "asc" } }),
     prisma.interviewTurn.findMany({
-      where: { session: { userId, status: "COMPLETED" }, answeredAt: { not: null }, excluded: false },
-      select: { skill: true, kind: true, level: true, skipped: true, evaluation: true, codeResult: true, durationSec: true, answeredAt: true },
+      // Every evaluated answer counts as soon as Manisha scores it — also in interviews still running or ended early.
+      where: { session: { userId }, answeredAt: { not: null }, excluded: false },
+      select: { id: true, skill: true, kind: true, level: true, skipped: true, evaluation: true, codeResult: true, durationSec: true, answeredAt: true },
       orderBy: { answeredAt: "asc" },
     }),
     prisma.conceptProgress.findMany({ where: { userId } }),
-    prisma.learningEvent.findMany({ where: { userId, createdAt: { gte: since90 } }, select: { createdAt: true, eventType: true }, orderBy: { createdAt: "asc" } }),
+    prisma.learningEvent.findMany({ where: { userId, createdAt: { gte: since90 } }, select: { createdAt: true, eventType: true, entityId: true }, orderBy: { createdAt: "asc" } }),
     prisma.skillMap.findMany({ select: { key: true } }),
     prisma.topicPrerequisite.findMany({ select: { topicId: true, prerequisite: { select: { slug: true, title: true } } } }),
   ]);

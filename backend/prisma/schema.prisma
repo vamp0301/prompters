@@ -1178,8 +1178,15 @@ model Recommendation {
   modelVersion String
   /// ACTIVE | DONE | SUPERSEDED | EXPIRED | DISMISSED
   status       String                   @default("ACTIVE")
-  /// SUCCESS | FAILURE, resolved from later activity (the training label).
-  outcome      String?
+  /// Training label, resolved from later activity: SUCCESS (1) | FAILURE (0) | null (no label, e.g. never acted on).
+  outcome       String?
+  /// What actually happened: STARTED → SUCCESS | NO_IMPROVEMENT | ABANDONED, or NOT_ACTED_ON (shown, never started).
+  outcomeDetail String?
+  /// Change in the concept's mastery from when it was recommended to when it was resolved.
+  improvement   Float?
+  startedAt     DateTime?
+  /// Rollout arm the student was in when this was ranked: ml | baseline.
+  arm           String?
   shownAt      DateTime?
   createdAt    DateTime                 @default(now())
   updatedAt    DateTime                 @updatedAt
@@ -1191,6 +1198,7 @@ model Recommendation {
   @@index([userId, status, rank])
   @@index([itemType, itemId])
   @@index([status, expiresAt])
+  @@index([arm, outcomeDetail])
 }
 
 model RecommendationFeedback {

@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import type { Candidate } from "./candidates.js";
 import { ACTIONS } from "./candidates.js";
 import type { StudentFeatures } from "./data.js";
-import { mlRank } from "./ml-client.js";
+import { mlConfigured, mlRank } from "./ml-client.js";
 import { BASELINE_RANKER, baselineScore } from "./model.js";
 
 /**
@@ -36,11 +37,28 @@ export function mlVector(c: Pick<Candidate, "action" | "features">, s: StudentFe
   return Object.fromEntries(ML_FEATURES.map((k) => [k, v[k] ?? 0]));
 }
 
+/**
+ * Controlled rollout: each student is assigned once (by a stable hash of their id) to the ML arm or
+ * the baseline arm. Only ML-arm students are ranked by the model, so the two arms can be compared
+ * on completion, improvement and acceptance before the model gets more traffic.
+ */
+export const ROLLOUT_SALT = "ml-rollout-v1";
+export function mlTrafficPercent() {
+  const v = Number(process.env.ML_TRAFFIC_PERCENT ?? 10);
+  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 10;
+}
+export function rolloutBucket(userId: string) {
+  return createHash("sha256").update(`${userId}:${ROLLOUT_SALT}`).digest().readUInt32BE(0) % 100;
+}
+export const armOf = (userId: string): "ml" | "baseline" => (rolloutBucket(userId) < mlTrafficPercent() ? "ml" : "baseline");
+
 export interface EngineStatus {
   /** ml = a trained model ranked these; baseline = the transparent weighted formula. */
   mode: "ml" | "baseline";
-  /** trained | cold_start | not_configured | timeout | unavailable | error */
+  /** trained | cold_start | not_configured | timeout | unavailable | error | baseline_arm */
   modelStatus: string;
+  /** Rollout arm the student is in (a baseline-arm student is never ranked by the model). */
+  arm: "ml" | "baseline";
   modelName: string;
   modelVersion: string;
 }
@@ -51,16 +69,23 @@ export interface Ranked extends Candidate {
   mlFeatures: Record<string, number>;
 }
 
-export async function rank(candidates: Candidate[], student: StudentFeatures): Promise<{ ranked: Ranked[]; engine: EngineStatus }> {
+export async function rank(candidates: Candidate[], student: StudentFeatures, userId: string): Promise<{ ranked: Ranked[]; engine: EngineStatus }> {
+  const arm = armOf(userId);
   const rows = candidates.map((c, i) => ({ c, id: String(i), base: baselineScore(c.features), vec: mlVector(c, student) }));
-  const ml = rows.length ? await mlRank(rows.map((r) => ({ id: r.id, features: r.vec }))) : { ok: false as const, reason: "no_candidates" };
+  const ml = !mlConfigured()
+    ? { ok: false as const, reason: "not_configured" }
+    : arm === "baseline"
+      ? { ok: false as const, reason: "baseline_arm" }
+      : rows.length
+        ? await mlRank(rows.map((r) => ({ id: r.id, features: r.vec })))
+        : { ok: false as const, reason: "no_candidates" };
   const useMl = ml.ok && rows.every((r) => typeof ml.scores[r.id] === "number");
   const ranked = rows
     .map((r) => ({ ...r.c, baselineScore: r.base, score: useMl && ml.ok ? Math.round(ml.scores[r.id] * 10000) / 10000 : r.base, mlFeatures: r.vec }))
     .sort((a, b) => b.score - a.score || b.baselineScore - a.baselineScore || a.itemId.localeCompare(b.itemId));
   const engine: EngineStatus =
     useMl && ml.ok
-      ? { mode: "ml", modelStatus: "trained", modelName: ml.modelName, modelVersion: ml.modelVersion }
-      : { mode: "baseline", modelStatus: ml.ok ? "error" : ml.reason, modelName: BASELINE_RANKER.name, modelVersion: BASELINE_RANKER.version };
+      ? { mode: "ml", modelStatus: "trained", arm, modelName: ml.modelName, modelVersion: ml.modelVersion }
+      : { mode: "baseline", modelStatus: ml.ok ? "error" : ml.reason, arm, modelName: BASELINE_RANKER.name, modelVersion: BASELINE_RANKER.version };
   return { ranked, engine };
 }

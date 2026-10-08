@@ -8,6 +8,7 @@ import { buildHarness, parseHarnessResult, type TestCase } from "../../sandbox/h
 import { AppError, badRequest, conflict, notFound } from "../../utils/errors.js";
 import { sample } from "../../utils/random.js";
 import { logEvent } from "../platform/events.js";
+import { recordAnswerEvaluated, recordFollowUp } from "../personalization/interview-signals.js";
 import { computeReadiness } from "../readiness/readiness.service.js";
 import { TARGET_ROLES, type TargetRoleKey } from "../prep/roles.js";
 import {
@@ -594,6 +595,8 @@ export async function submitAnswer(userId: string, sessionId: string, input: Ans
       answeredAt: new Date(),
     },
   });
+  // Structured signal for personalization (scores only; never blocks the interview).
+  recordAnswerEvaluated(userId, turn, { evaluation, codeResult: codeResult ?? null, skipped, excluded: unclear }, session.turns);
 
   // ── Decide what Manisha asks next ──
   const turns = await prisma.interviewTurn.findMany({ where: { sessionId: session.id }, orderBy: { order: "asc" } });
@@ -647,7 +650,8 @@ export async function submitAnswer(userId: string, sessionId: string, input: Ans
   }
 
   try {
-    await prisma.interviewTurn.create({ data: next });
+    const created = await prisma.interviewTurn.create({ data: next });
+    if (created.kind === "FOLLOW_UP") recordFollowUp(userId, created);
   } catch (e) {
     // Another request already created the next turn (unique session+order): just return it.
     if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;

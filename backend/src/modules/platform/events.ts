@@ -38,7 +38,9 @@ export type EventType =
   | "prep_pack_requested"
   | "interview_started"
   | "interview_completed"
-  | "resume_uploaded";
+  | "resume_uploaded"
+  | "interview_answer_evaluated"
+  | "interview_followup";
 
 export async function logEvent(
   userId: string,

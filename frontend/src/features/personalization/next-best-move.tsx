@@ -21,7 +21,14 @@ function engineLine(d: PersonalNext) {
   const e = d.engine;
   if (!e) return null;
   if (e.mode === "ml") return `Ranked by ${e.modelName} v${e.modelVersion}, trained on real outcomes.`;
-  const why = e.modelStatus === "cold_start" ? "the learning model isn't trained yet" : e.modelStatus === "not_configured" ? "the learning model isn't switched on" : "the learning model is unavailable right now";
+  const why =
+    e.modelStatus === "baseline_arm"
+      ? "it's being compared with the learning model before the model is used more widely"
+      : e.modelStatus === "cold_start"
+        ? "the learning model isn't trained yet"
+        : e.modelStatus === "not_configured"
+          ? "the learning model isn't switched on"
+          : "the learning model is unavailable right now";
   return `Ranked by a transparent scoring formula — ${why}.`;
 }
 

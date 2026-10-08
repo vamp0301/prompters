@@ -1559,6 +1559,8 @@ export interface PersonalSkillState {
 export interface PersonalEngine {
   mode: "ml" | "baseline";
   modelStatus: string;
+  /** Rollout arm: baseline-arm students are never ranked by the model (comparison group). */
+  arm: "ml" | "baseline";
   modelName: string;
   modelVersion: string;
 }

@@ -74,6 +74,25 @@ describe("Manisha: session setup", () => {
     expect(final.mode).toBe("ROLE");
     // Several areas were covered — one technology didn't take over the interview.
     expect(new Set(final.turns.map((t: { area: string }) => t.area)).size).toBeGreaterThanOrEqual(3);
+
+    // Personalization signal: one structured event per evaluated answer and per follow-up — scores only.
+    const sessionId = start.body.data.id as string;
+    const answered = await prisma.interviewTurn.count({ where: { sessionId, answeredAt: { not: null } } });
+    const followUps = await prisma.interviewTurn.count({ where: { sessionId, kind: "FOLLOW_UP" } });
+    expect(answered).toBeGreaterThan(0);
+    await expect.poll(() => prisma.learningEvent.count({ where: { eventType: "INTERVIEW_ANSWER_EVALUATED", meta: { path: ["sessionId"], equals: sessionId } } })).toBe(answered);
+    await expect.poll(() => prisma.learningEvent.count({ where: { eventType: "INTERVIEW_FOLLOWUP", meta: { path: ["sessionId"], equals: sessionId } } })).toBe(followUps);
+    const events = await prisma.learningEvent.findMany({ where: { eventType: "INTERVIEW_ANSWER_EVALUATED", meta: { path: ["sessionId"], equals: sessionId } } });
+    const meta = events[0].meta as Record<string, unknown>;
+    expect(events[0]).toMatchObject({ entityType: "INTERVIEW_ANSWER" });
+    expect(meta).toMatchObject({ sessionId, excluded: false, skipped: false });
+    expect(typeof meta.answerScore).toBe("number");
+    expect(String(meta.conceptId)).toMatch(/^skill:/);
+    for (const k of ["correctness", "completeness", "depth", "reasoning"]) expect((meta[k] as number) >= 0 && (meta[k] as number) <= 1).toBe(true);
+    // Never the transcript, code or audio.
+    const all = JSON.stringify(events.map((e) => e.meta));
+    expect(all).not.toContain(GOOD);
+    for (const k of ["answerText", "answerCode", "audioKey", "transcript"]) expect(all).not.toContain(`"${k}"`);
   });
 
   it("validates the setup: unknown role, someone else's resume, bad duration", async () => {
@@ -137,6 +156,10 @@ describe("Manisha: one question at a time, no teaching", () => {
     const final = (await agent.get(`/api/career/sessions/${sessionId}`)).body.data;
     expect(final.turns[0].excluded).toBe(true);
     expect(final.report.counts.unclear).toBe(1);
+    // The unclear answer is logged as not scored, not as a failure.
+    await expect.poll(() => prisma.learningEvent.findFirst({ where: { eventType: "INTERVIEW_ANSWER_EVALUATED", entityId: first.id } }).then((e) => (e?.meta as { excluded?: boolean } | null)?.excluded)).toBe(true);
+    const unclearEvent = await prisma.learningEvent.findFirstOrThrow({ where: { eventType: "INTERVIEW_ANSWER_EVALUATED", entityId: first.id } });
+    expect((unclearEvent.meta as { answerScore: number | null }).answerScore).toBeNull();
     expect(final.report.counts.total).toBe(final.turns.length - 1);
   });
 });

@@ -19,6 +19,7 @@ export interface MlUnavailable {
 }
 
 const url = () => process.env.ML_SERVICE_URL?.replace(/\/$/, "") || null;
+export const mlConfigured = () => !!url();
 export const ML_TIMEOUT_MS = () => Number(process.env.ML_TIMEOUT_MS ?? 800);
 
 async function call<T>(path: string, body?: unknown): Promise<T> {

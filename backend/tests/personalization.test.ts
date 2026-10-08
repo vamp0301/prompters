@@ -13,7 +13,7 @@ import { explain } from "../src/modules/personalization/explain.js";
 import { careerContext, conceptStates, loadStudentData, studentFeatures } from "../src/modules/personalization/data.js";
 import { refresh } from "../src/modules/personalization/engine.js";
 import { exportDataset, trainRecommendationModel } from "../src/modules/personalization/training.js";
-import { ML_FEATURES } from "../src/modules/personalization/ranker.js";
+import { armOf, ML_FEATURES } from "../src/modules/personalization/ranker.js";
 
 const fake = new FakeAI();
 const DAY = 86_400_000;
@@ -246,33 +246,68 @@ describe("personalization API", () => {
     expect((await supertest(createApp()).get("/api/personalization/next")).status).toBe(401);
   });
 
-  it("feedback loop: outcomes are resolved from real activity and become training rows", async () => {
+  it("outcomes: success needs measurable improvement; ignored, abandoned and unimproved are kept apart", async () => {
     const s = await studentWithHistory();
     const t0 = new Date();
     await refresh(s.id, t0);
-    const cachingQ = await prisma.recommendation.findFirstOrThrow({ where: { userId: s.id, action: "PRACTICE_QUESTION", status: "ACTIVE" } });
+    const question = await prisma.recommendation.findFirstOrThrow({ where: { userId: s.id, action: "PRACTICE_QUESTION", status: "ACTIVE" } });
+    const topic = await prisma.recommendation.findFirstOrThrow({ where: { userId: s.id, action: "LEARN_TOPIC", status: "ACTIVE" } });
     const skill = await prisma.recommendation.findFirstOrThrow({ where: { userId: s.id, action: "PRACTICE_SKILL", itemId: "caching" } });
-    await prisma.recommendation.updateMany({ where: { id: { in: [cachingQ.id, skill.id] } }, data: { shownAt: t0 } });
-    // The student answers the suggested question well…
-    await prisma.prepAttempt.create({ data: { questionId: cachingQ.itemId, userId: s.id, answer: "a", score: 85, evaluation: {}, createdAt: new Date(t0.getTime() + 60_000) } });
+    const untouched = await prisma.recommendation.findFirstOrThrow({ where: { userId: s.id, status: "ACTIVE", action: "PRACTICE_SKILL", itemId: { notIn: ["caching", "nodejs"] } } });
+    await prisma.recommendation.updateMany({ where: { id: { in: [question.id, topic.id, skill.id, untouched.id] } }, data: { shownAt: t0 } });
+    // The student accepts the roadmap topic (started) but never takes its quiz.
+    await s.agent.post("/api/personalization/feedback").send({ recommendationId: topic.id, action: "ACCEPTED" });
+
+    // They answer the suggested Caching question well: done, and Caching mastery measurably rose → SUCCESS.
+    await prisma.prepAttempt.create({ data: { questionId: question.itemId, userId: s.id, answer: "a", score: 85, evaluation: {}, createdAt: new Date(t0.getTime() + 60_000) } });
     await refresh(s.id, new Date(t0.getTime() + 120_000));
-    const done = await prisma.recommendation.findUniqueOrThrow({ where: { id: cachingQ.id }, include: { feedback: true } });
-    expect(done).toMatchObject({ status: "DONE", outcome: "SUCCESS" });
-    expect(done.feedback.map((f) => [f.action, f.source]).sort()).toEqual([["COMPLETED", "SYSTEM"], ["SUCCESSFUL", "SYSTEM"]]);
+    const done = await prisma.recommendation.findUniqueOrThrow({ where: { id: question.id }, include: { feedback: true } });
+    expect(done).toMatchObject({ status: "DONE", outcomeDetail: "SUCCESS", outcome: "SUCCESS" });
+    expect(done.improvement!).toBeGreaterThanOrEqual(0.05);
+    expect(done.feedback.filter((f) => f.source === "SYSTEM").map((f) => f.action).sort()).toEqual(["COMPLETED", "SUCCESSFUL"]);
+    // That answer is also Caching practice, so the skill recommendation succeeded with it.
+    expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: skill.id } })).toMatchObject({ outcomeDetail: "SUCCESS", outcome: "SUCCESS" });
+    // The accepted topic is in progress, not yet judged.
+    expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: topic.id } })).toMatchObject({ outcomeDetail: "STARTED", outcome: null });
 
-    // …and a shown recommendation nobody acted on expires as a negative example after a week.
-    const open = await prisma.recommendation.findFirstOrThrow({ where: { userId: s.id, status: "ACTIVE", shownAt: null, action: "LEARN_TOPIC" } });
-    await prisma.recommendation.update({ where: { id: open.id }, data: { shownAt: t0 } });
+    // A week later: accepted-but-unfinished → ABANDONED (0); shown-but-never-started → NOT_ACTED_ON (no label).
     await refresh(s.id, new Date(t0.getTime() + 8 * DAY));
-    expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: open.id } })).toMatchObject({ status: "EXPIRED", outcome: "FAILURE" });
+    expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: topic.id } })).toMatchObject({ status: "EXPIRED", outcomeDetail: "ABANDONED", outcome: "FAILURE" });
+    expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: untouched.id } })).toMatchObject({ status: "EXPIRED", outcomeDetail: "NOT_ACTED_ON", outcome: null });
 
+    // Completed with a poor answer → NO_IMPROVEMENT (0), not the same as ignoring it.
+    const other = await studentWithHistory();
+    await refresh(other.id, t0);
+    const q2 = await prisma.recommendation.findFirstOrThrow({ where: { userId: other.id, action: "PRACTICE_QUESTION", status: "ACTIVE" } });
+    await prisma.recommendation.update({ where: { id: q2.id }, data: { shownAt: t0 } });
+    await prisma.prepAttempt.create({ data: { questionId: q2.itemId, userId: other.id, answer: "a", score: 30, evaluation: {}, createdAt: new Date(t0.getTime() + 60_000) } });
+    await refresh(other.id, new Date(t0.getTime() + 120_000));
+    expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: q2.id } })).toMatchObject({ status: "DONE", outcomeDetail: "NO_IMPROVEMENT", outcome: "FAILURE" });
+
+    // Training rows: labelled outcomes only, with an anonymous student group and the baseline's score.
     const rows = await exportDataset();
-    const mine = rows.filter((r) => r.id === cachingQ.id || r.id === open.id);
-    expect(mine.map((r) => r.label).sort()).toEqual([0, 1]);
-    expect(Object.keys(mine[0].features)).toEqual([...ML_FEATURES]);
-    // Never-shown recommendations are never training rows.
-    const unshown = await prisma.recommendation.findMany({ where: { userId: s.id, shownAt: null }, select: { id: true } });
-    expect(rows.some((r) => unshown.some((u) => u.id === r.id))).toBe(false);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(question.id)).toMatchObject({ label: 1, outcomeDetail: "SUCCESS" });
+    expect(byId.get(topic.id)).toMatchObject({ label: 0, outcomeDetail: "ABANDONED" });
+    expect(byId.get(q2.id)).toMatchObject({ label: 0, outcomeDetail: "NO_IMPROVEMENT" });
+    expect(byId.has(untouched.id)).toBe(false);
+    const row = byId.get(question.id)!;
+    expect(row.group).toMatch(/^[0-9a-f]{12}$/);
+    expect(row.group).not.toContain(s.id);
+    expect(byId.get(q2.id)!.group).not.toBe(row.group);
+    expect(typeof row.baseline).toBe("number");
+    expect(Object.keys(row.features)).toEqual([...ML_FEATURES]);
+  });
+
+  it("Manisha answers count as soon as they're evaluated — even mid-interview", async () => {
+    const s = await studentWithHistory();
+    await prisma.interviewSession.create({
+      data: { userId: s.id, consent: {}, status: "IN_PROGRESS", turns: { create: [{ order: 0, kind: "QUESTION", question: "How would Redis speed up your API?", skill: "Redis", category: "SKILL", evaluation: ev(3), answeredAt: new Date() }] } },
+    });
+    await refresh(s.id);
+    const redis = await prisma.studentSkillState.findUniqueOrThrow({ where: { userId_conceptId: { userId: s.id, conceptId: "skill:redis" } } });
+    expect(redis.signals).toMatchObject({ interview: 1, interviewAverage: 0.3 });
+    expect(redis.mastery).toBeLessThan(0.4);
   });
 
   const mlDir = path.resolve(import.meta.dirname, "../../ml-service");
@@ -283,17 +318,20 @@ describe("personalization API", () => {
     expect(run.datasetSize).toBeGreaterThanOrEqual(2);
     expect(run.features).toEqual([...ML_FEATURES]);
     expect(run.metrics).toMatchObject({ model: "INSUFFICIENT_DATA", product: { rates: "INSUFFICIENT_DATA", learningImprovement: "INSUFFICIENT_DATA" } });
-    expect(run.notes).toMatch(/Not trained/);
-  }, 60_000);
+    expect(run.notes).toMatch(/Not trained: gate failed: rows.*students/);
+    expect(run.metrics).toMatchObject({ gate: { ok: false, checks: { students: { required: 20, ok: false } } }, product: { byArm: { ml: { shown: expect.any(Number) }, baseline: { shown: expect.any(Number) } } } });
+  }, 300_000);
 });
 
 describe("ML service integration and fallback", () => {
   let server: Server;
   let mode: "trained" | "cold" | "slow" | "error" = "trained";
   let seenToken = "";
+  let calls = 0;
   beforeAll(async () => {
     server = createServer((req, res) => {
       seenToken = String(req.headers["x-ml-token"] ?? "");
+      calls++;
       let body = "";
       req.on("data", (c) => (body += c));
       req.on("end", () => {
@@ -312,10 +350,13 @@ describe("ML service integration and fallback", () => {
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     process.env.ML_SERVICE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     process.env.ML_SERVICE_TOKEN = "internal-test-token";
+    // These tests exercise the ML path, so every student is in the ML arm.
+    process.env.ML_TRAFFIC_PERCENT = "100";
   });
   afterAll(async () => {
     delete process.env.ML_SERVICE_URL;
     delete process.env.ML_TIMEOUT_MS;
+    delete process.env.ML_TRAFFIC_PERCENT;
     await new Promise((r) => server.close(r));
   });
 
@@ -323,11 +364,11 @@ describe("ML service integration and fallback", () => {
     mode = "trained";
     const s = await studentWithHistory();
     const run = await refresh(s.id);
-    expect(run.engine).toMatchObject({ mode: "ml", modelStatus: "trained", modelName: "recommendation-success", modelVersion: "test-v1" });
+    expect(run.engine).toMatchObject({ mode: "ml", modelStatus: "trained", arm: "ml", modelName: "recommendation-success", modelVersion: "test-v1" });
     expect(seenToken).toBe("internal-test-token");
     const recs = await prisma.recommendation.findMany({ where: { userId: s.id, status: "ACTIVE" }, orderBy: { rank: "asc" } });
     expect(recs[0].action).toBe("LEARN_TOPIC"); // the model's order, not the baseline's
-    expect(recs.every((r) => r.modelName === "recommendation-success" && r.modelVersion === "test-v1")).toBe(true);
+    expect(recs.every((r) => r.modelName === "recommendation-success" && r.modelVersion === "test-v1" && r.arm === "ml")).toBe(true);
     const preds = await prisma.mLPrediction.findMany({ where: { userId: s.id, target: "RECOMMENDATION_SCORE" } });
     expect(preds.every((p) => p.modelVersion === "test-v1")).toBe(true);
     // The baseline score is kept alongside for audit.
@@ -346,6 +387,29 @@ describe("ML service integration and fallback", () => {
     expect(run.engine).toMatchObject({ mode: "baseline", modelStatus: status, modelName: "baseline-weighted" });
     expect(await prisma.recommendation.count({ where: { userId: s.id, status: "ACTIVE" } })).toBeGreaterThan(0);
     delete process.env.ML_TIMEOUT_MS;
+  });
+
+  it("controlled rollout: a stable per-student split; baseline-arm students never reach the model", async () => {
+    // Deterministic and roughly the configured share.
+    process.env.ML_TRAFFIC_PERCENT = "10";
+    const ids = Array.from({ length: 2000 }, (_, i) => `student-${i}`);
+    const inMl = ids.filter((id) => armOf(id) === "ml").length;
+    expect(inMl / ids.length).toBeGreaterThan(0.07);
+    expect(inMl / ids.length).toBeLessThan(0.13);
+    expect(ids.slice(0, 50).map(armOf)).toEqual(ids.slice(0, 50).map(armOf));
+
+    mode = "trained";
+    process.env.ML_TRAFFIC_PERCENT = "0";
+    try {
+      const s = await studentWithHistory();
+      const before = calls;
+      const run = await refresh(s.id);
+      expect(calls).toBe(before); // the model was never asked
+      expect(run.engine).toMatchObject({ mode: "baseline", modelStatus: "baseline_arm", arm: "baseline", modelName: "baseline-weighted" });
+      expect((await prisma.recommendation.findMany({ where: { userId: s.id } })).every((r) => r.arm === "baseline")).toBe(true);
+    } finally {
+      process.env.ML_TRAFFIC_PERCENT = "100";
+    }
   });
 
   it("falls back when the service is down", async () => {
