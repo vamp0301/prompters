@@ -702,9 +702,9 @@ model AdminAuditLog {
 // ───────────────────────── Interview & Career Intelligence ─────────────────────────
 
 model CareerResume {
-  id         String        @id @default(cuid())
+  id         String             @id @default(cuid())
   userId     String
-  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   label      String
   fileName   String?
   /// Original upload in object storage (deleted with the resume).
@@ -712,13 +712,14 @@ model CareerResume {
   text       String
   /// Structured extraction: skills, projects, experience, education, claims…
   parsed     Json
-  createdAt  DateTime      @default(now())
+  createdAt  DateTime           @default(now())
   /// Set once semantic chunks + claims have been extracted (older resumes get them lazily).
   analyzedAt DateTime?
   matches    JobMatch[]
   chunks     ResumeChunk[]
   claims     ResumeClaim[]
   prepPlans  PrepPlan[]
+  interviews InterviewSession[]
 
   @@index([userId, createdAt])
 }
@@ -764,6 +765,7 @@ model JobMatch {
 
 enum InterviewStatus {
   IN_PROGRESS
+  PAUSED
   COMPLETED
   ENDED_INTEGRITY
   ABANDONED
@@ -773,8 +775,24 @@ model InterviewSession {
   id                  String                    @id @default(cuid())
   userId              String
   user                User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  matchId             String
-  match               JobMatch                  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  /// Set when the interview is based on a job-description analysis; otherwise resume + target role.
+  matchId             String?
+  match               JobMatch?                 @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  resumeId            String?
+  resume              CareerResume?             @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  targetRole          String?
+  /// STANDARD | HARD
+  difficulty          String                    @default("STANDARD")
+  /// Question bank for role-only interviews (match-based ones read the analysis bank).
+  bank                Json?
+  /// Planned share of the interview per area: [{ area, target }].
+  blueprint           Json?
+  /// Weak skills carried over from earlier interviews on the same resume.
+  focusAreas          String[]                  @default([])
+  pausedAt            DateTime?
+  pausedMs            Int                       @default(0)
+  /// AI calls made for this session (bounded to keep cost predictable).
+  aiCalls             Int                       @default(0)
   status              InterviewStatus           @default(IN_PROGRESS)
   language            String                    @default("hinglish")
   durationMinutes     Int                       @default(30)
@@ -791,6 +809,7 @@ model InterviewSession {
   integrityEvents     InterviewIntegrityEvent[]
 
   @@index([userId, startedAt])
+  @@index([resumeId])
 }
 
 model InterviewTurn {
@@ -819,6 +838,14 @@ model InterviewTurn {
   durationSec   Int?
   skipped       Boolean          @default(false)
   evaluation    Json?
+  /// Blueprint area this question covers (RESUME, PROJECTS, FUNDAMENTALS, ROLE, PRACTICAL, PROBLEM_SOLVING, SYSTEM_DESIGN).
+  area          String?
+  /// Resume claim this question probes, when there is one.
+  claimId       String?
+  /// Set while an answer is being evaluated, so a duplicate submit can't double-process it.
+  submittedAt   DateTime?
+  /// Not scored (e.g. the transcript was unclear and the question was asked again).
+  excluded      Boolean          @default(false)
   askedAt       DateTime         @default(now())
   answeredAt    DateTime?
 

@@ -104,7 +104,11 @@ export const evaluationSchema = z.object({
   understanding: score10,
   practical: score10,
   communication: score10,
-  verdict: z.enum(["CORRECT", "PARTIAL", "INCORRECT", "NO_ANSWER"]),
+  /** Added later; older evaluations don't have them. */
+  depth: score10.optional(),
+  reasoning: score10.optional(),
+  /** UNCLEAR = the transcript is garbled or cut off, not a weak answer — the question is asked again. */
+  verdict: z.enum(["CORRECT", "PARTIAL", "INCORRECT", "NO_ANSWER", "UNCLEAR"]),
   conceptsMentioned: list(20, 80),
   missingConcepts: list(20, 80),
   unsupportedClaims: list(10, 200),
@@ -112,6 +116,24 @@ export const evaluationSchema = z.object({
   lead: str(140).default("Okay."),
 });
 export type Evaluation = z.infer<typeof evaluationSchema>;
+
+/** Question bank for a role-only interview (no job description), grounded in the resume. */
+export const roleBankSchema = z.object({
+  questions: z
+    .array(
+      z.object({
+        id: str(40),
+        question: str(600),
+        area: z.preprocess((v) => (typeof v === "string" ? v.toUpperCase() : v), z.enum(["RESUME", "PROJECTS", "FUNDAMENTALS", "ROLE", "PRACTICAL", "SYSTEM_DESIGN"])).catch("ROLE"),
+        level: z.coerce.number().int().min(1).max(5),
+        skill: str(80),
+        claimId: str(40).nullable().optional(),
+        why: str(300).default(""),
+      }),
+    )
+    .min(5)
+    .max(40),
+});
 
 export const codeReviewSchema = z.object({
   understanding: score10,

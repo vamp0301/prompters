@@ -65,6 +65,7 @@ export function careerRoutes() {
     const me = currentUser(req);
     const matches = await prisma.jobMatch.findMany({ where: { resumeId: param(req, "id"), userId: me.id }, select: { id: true } });
     await interview.deleteAudioForMatches(matches.map((m) => m.id));
+    if (await prisma.careerResume.count({ where: { id: param(req, "id"), userId: me.id } })) await interview.deleteAudioForResume(param(req, "id"));
     const plans = await prisma.prepPlan.findMany({ where: { resumeId: param(req, "id"), userId: me.id }, select: { id: true } });
     await deletePackFiles(plans.map((p) => p.id));
     await deleteResume(me.id, param(req, "id"));
@@ -129,29 +130,29 @@ export function careerRoutes() {
   }));
 
   // ───── Interviews ─────
-  r.get("/sessions", handler(async (req) =>
-    prisma.interviewSession.findMany({
-      where: { userId: currentUser(req).id },
-      orderBy: { startedAt: "desc" },
-      select: { id: true, status: true, readinessScore: true, result: true, startedAt: true, endedAt: true, matchId: true, match: { select: { job: { select: { title: true, company: true } } } } },
-    })));
+  r.get("/sessions", handler(async (req) => interview.interviewHistory(currentUser(req).id)));
 
   r.post("/sessions", ai, handler(async (req, res) => {
     const me = currentUser(req);
     await ensureAiInterviewEnabled(me.id);
     const body = parse(
-      z.object({
-        matchId: z.string(),
-        // Ignored: interviews are English-only. Still accepted so older clients don't get a 400.
-        language: z.enum(["hinglish", "en", "hi"]).optional(),
-        durationMinutes: z.number().int().min(10).max(90).default(30),
-        questionTarget: z.number().int().min(5).max(25).default(15),
-        consent: z.object({ recording: z.boolean(), integrity: z.boolean(), preparationOnly: z.boolean(), storeAudio: z.boolean().default(true) }),
-      }),
+      z
+        .object({
+          matchId: z.string().max(40).optional(),
+          resumeId: z.string().max(40).optional(),
+          targetRole: z.string().max(40).optional(),
+          difficulty: z.enum(["STANDARD", "HARD"]).default("STANDARD"),
+          // Ignored: interviews are English-only. Still accepted so older clients don't get a 400.
+          language: z.enum(["hinglish", "en", "hi"]).optional(),
+          durationMinutes: z.union([z.literal(15), z.literal(20), z.literal(30), z.literal(45)]).default(30),
+          questionTarget: z.number().int().min(5).max(25).optional(),
+          consent: z.object({ recording: z.boolean(), integrity: z.boolean(), preparationOnly: z.boolean(), storeAudio: z.boolean().default(true) }),
+        })
+        .refine((b) => !!b.matchId || (!!b.resumeId && !!b.targetRole), { message: "Choose a resume and a target role, or a job-match analysis.", path: ["targetRole"] }),
       req.body,
     );
     res.status(201);
-    return interview.startSession(me.id, { matchId: body.matchId, durationMinutes: body.durationMinutes, questionTarget: body.questionTarget, consent: body.consent });
+    return interview.startSession(me.id, body);
   }));
 
   r.get("/sessions/:id", handler(async (req) => interview.getSession(currentUser(req).id, param(req, "id"))));
@@ -184,6 +185,8 @@ export function careerRoutes() {
   }));
 
   r.post("/sessions/:id/end", handler(async (req) => interview.endSession(currentUser(req).id, param(req, "id"))));
+  r.post("/sessions/:id/pause", handler(async (req) => interview.pauseSession(currentUser(req).id, param(req, "id"))));
+  r.post("/sessions/:id/resume", handler(async (req) => interview.resumeSession(currentUser(req).id, param(req, "id"))));
 
   r.get("/sessions/:id/turns/:turnId/audio", async (req, res, next) => {
     try {

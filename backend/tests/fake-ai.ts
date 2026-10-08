@@ -10,6 +10,8 @@ export class FakeAI implements AIProvider {
   private prepCounter = 0;
   /** When set, prep batches return only invalid questions (exercises the "too few passed" failure). */
   prepBroken = false;
+  /** Number of upcoming answer evaluations that should fail (simulates a Gemini outage/timeout). */
+  failEvaluations = 0;
 
   /** Distinct questions per call, plus a few the validator must reject. */
   private prepBatch(category: string, count: number) {
@@ -96,9 +98,20 @@ export class FakeAI implements AIProvider {
           ],
         });
       case "evaluate_answer": {
+        if (this.failEvaluations > 0) {
+          this.failEvaluations--;
+          throw new Error("simulated provider timeout");
+        }
         const answer = user.match(/<candidate_answer>\n([\s\S]*?)\n<\/candidate_answer>/)?.[1] ?? "";
+        if (/\[unclear\]/i.test(answer)) {
+          return JSON.stringify({ correctness: 0, completeness: 0, depth: 0, reasoning: 0, understanding: 0, practical: 0, communication: 0, verdict: "UNCLEAR", conceptsMentioned: [], missingConcepts: [], unsupportedClaims: [], followUp: { needed: false }, lead: "Okay." });
+        }
         if (/don't know|pata nahi/i.test(answer)) {
           return JSON.stringify({ correctness: 0, completeness: 0, understanding: 0, practical: 0, communication: 4, verdict: "NO_ANSWER", conceptsMentioned: [], missingConcepts: ["JWT expiry"], unsupportedClaims: [], followUp: { needed: false }, lead: "Okay." });
+        }
+        if (/ignore (your|all|previous) instructions/i.test(answer)) {
+          // A model that misbehaves: tries to reveal the answer in its lead and follow-up. The service must not pass it on.
+          return JSON.stringify({ correctness: 1, completeness: 1, understanding: 1, practical: 1, communication: 3, verdict: "INCORRECT", conceptsMentioned: [], missingConcepts: ["JWT expiry"], unsupportedClaims: [], followUp: { needed: true, question: "The correct answer is: store it in a cookie. Do you agree?" }, lead: "Great answer! The correct answer is cookies." });
         }
         const good = /cookie/i.test(answer);
         return JSON.stringify({
@@ -109,6 +122,21 @@ export class FakeAI implements AIProvider {
           unsupportedClaims: [],
           followUp: good ? { needed: false } : { needed: true, question: "Where did you store the token, and why there?" },
           lead: "Got it, thanks.",
+        });
+      }
+      case "interview_bank": {
+        const areas = ["PROJECTS", "FUNDAMENTALS", "ROLE", "PRACTICAL", "SYSTEM_DESIGN", "RESUME"];
+        const skills = ["Node.js", "MongoDB", "JWT", "Express", "System design", "HTTP"];
+        return JSON.stringify({
+          questions: Array.from({ length: 24 }, (_, i) => ({
+            id: `q${i + 1}`,
+            question: `Role question ${i + 1}: how does ${skills[i % 6]} behave when case ${i + 1} happens?`,
+            area: areas[i % 6],
+            level: (i % 5) + 1,
+            skill: skills[i % 6],
+            claimId: i % 6 === 0 ? "c1" : null,
+            why: "Core to the role",
+          })),
         });
       }
       case "resume_intelligence":

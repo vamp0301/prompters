@@ -275,7 +275,7 @@ describe("code execution disabled (SANDBOX_DRIVER=disabled)", () => {
     const kinds: string[] = [];
     for (let i = 0; i < 12 && current; i++) {
       kinds.push(current.kind);
-      if (current.kind === "CODING") break;
+      if (current.kind === "CODING" || current.kind === "PROBLEM") break;
       const r = await agent.post(`/api/career/sessions/${sessionId}/answer`).send({ turnId: current.id, answerText: "I store it in an HTTP-only cookie." });
       expect(r.status).toBe(200);
       current = r.body.data.done ? null : r.body.data.current;
@@ -297,10 +297,11 @@ describe("code execution disabled (SANDBOX_DRIVER=disabled)", () => {
     });
   });
 
-  it("Manisha interviews continue with spoken questions only", async () => {
+  it("Manisha asks an explain-your-approach problem instead of a coding question (no Run button)", async () => {
     const kinds = await interviewKinds();
-    expect(kinds.length).toBeGreaterThan(3);
+    expect(kinds.length).toBeGreaterThan(2);
     expect(kinds).not.toContain("CODING");
+    expect(kinds).toContain("PROBLEM");
   });
 
   it("control: with execution enabled the same interview does include a coding turn", async () => {

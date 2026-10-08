@@ -1,4 +1,4 @@
-import type { BuildTask, InterviewSession, InterviewTurn, Prisma } from "@prisma/client";
+import { Prisma, type BuildTask, type InterviewSession, type InterviewTurn } from "@prisma/client";
 import { aiJson, requireAI } from "../../ai/json.js";
 import { codeExecutionEnabled, env } from "../../config/env.js";
 import { executeCode } from "../../jobs/queues.js";
@@ -8,8 +8,17 @@ import { buildHarness, parseHarnessResult, type TestCase } from "../../sandbox/h
 import { AppError, badRequest, conflict, notFound } from "../../utils/errors.js";
 import { sample } from "../../utils/random.js";
 import { logEvent } from "../platform/events.js";
+import { computeReadiness } from "../readiness/readiness.service.js";
+import { TARGET_ROLES, type TargetRoleKey } from "../prep/roles.js";
+import {
+  buildBlueprint, fromMatchBank, fromPrepPlan, isTargetRole, nextArea, normalizeQuestion, pickQuestion, QUESTIONS_FOR_DURATION,
+  type Area, type BankItem, type Blueprint, type Difficulty,
+} from "./interview.blueprint.js";
+import { buildReport, turnScore } from "./interview.report.js";
 import { prompts } from "./prompts.js";
-import { codeReviewSchema, evaluationSchema, QUESTION_CATEGORIES, type BankQuestion, type CodeReview, type Evaluation } from "./schemas.js";
+import { codeReviewSchema, evaluationSchema, roleBankSchema, type BankQuestion, type CodeReview, type Evaluation } from "./schemas.js";
+
+export { resultFor, turnScore } from "./interview.report.js";
 
 export const INTERVIEWER = {
   name: "Manisha",
@@ -18,6 +27,7 @@ export const INTERVIEWER = {
   tone: "Professional, calm, neutral, technical",
   thinkingSeconds: 30,
   answerSeconds: 120,
+  problemSeconds: 300,
   codingSeconds: 900,
 };
 
@@ -25,6 +35,10 @@ const MAX_FOLLOW_UPS = 2;
 const SCREEN_SHARE_LIMIT = 3;
 const MAX_AUDIO_BYTES = 4 * 1024 * 1024;
 const AUDIO_TYPES = ["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav"];
+/** A paused interview can be resumed for a day; after that it closes with the answers given. */
+const PAUSE_LIMIT_MS = 24 * 60 * 60 * 1000;
+/** An answer stuck "being evaluated" this long (crash, timeout) can be submitted again. */
+const STALE_SUBMIT_MS = 120_000;
 
 export const INTERVIEW_INTEGRITY_EVENTS = [
   "TAB_HIDDEN",
@@ -40,196 +54,188 @@ export const INTERVIEW_INTEGRITY_EVENTS = [
   "CUT",
 ] as const;
 export type InterviewIntegrityType = (typeof INTERVIEW_INTEGRITY_EVENTS)[number];
+/** Server-detected signal: the answer tried to steer the interviewer instead of answering. */
+const PROMPT_MANIPULATION = "PROMPT_MANIPULATION";
+const MANIPULATION_RE = /(ignore|disregard|forget)\s+(all\s+|your\s+|the\s+|previous\s+|prior\s+)*(instructions|rules|prompt)|system prompt|reveal (your|the) (instructions|prompt|rubric|scoring)|give me (the )?(correct )?answer|tell me the (correct )?answer|(give|award) (me )?(full|maximum|10\/10) marks|you are now|act as (an?|the) /i;
 
 /** recording = consent to recording + AI analysis (required); storeAudio = keep answer audio afterwards (optional). */
 type Consent = { recording: boolean; integrity: boolean; preparationOnly: boolean; storeAudio?: boolean; at: string };
 type CodeResult = { passed: number; total: number; review?: CodeReview; tests?: { name: string; passed: boolean; hidden: boolean }[] };
 
+/** Interviews are conducted strictly in English (questions, Manisha's voice, expected answers). */
+export const INTERVIEW_LANGUAGE = "en";
+
+// Manisha's spoken acknowledgements are fixed and neutral: the model's own wording is never used, so
+// nothing said during the interview can coach the candidate or reveal how an answer was judged.
+const NEUTRAL_NEXT = ["Okay.", "Understood.", "Thank you.", "Okay, let's move to the next topic.", "Got it.", "Alright."];
+const NEUTRAL_FOLLOW = ["Let's go one level deeper.", "Can you explain that further?", "Okay. Let's go a little deeper on that."];
+const REPEAT_LEAD = "I didn't catch that clearly. Could you repeat your answer?";
+const lead = (list: string[], n: number) => list[n % list.length];
+
 // ───────────────────────── helpers ─────────────────────────
 
-async function ownedSession(userId: string, sessionId: string) {
-  const session = await prisma.interviewSession.findFirst({ where: { id: sessionId, userId }, include: { turns: { orderBy: { order: "asc" } }, match: { include: { job: true, resume: true } } } });
+const sessionInclude = { turns: { orderBy: { order: "asc" } }, match: { include: { job: true, resume: true } } } satisfies Prisma.InterviewSessionInclude;
+type FullSession = Prisma.InterviewSessionGetPayload<{ include: typeof sessionInclude }>;
+
+async function ownedSession(userId: string, sessionId: string): Promise<FullSession> {
+  const session = await prisma.interviewSession.findFirst({ where: { id: sessionId, userId }, include: sessionInclude });
   if (!session) throw notFound("Interview");
   return session;
 }
 
-/** Interviews are conducted strictly in English (questions, Manisha's voice, expected answers). */
-export const INTERVIEW_LANGUAGE = "en";
+/** The interview's question bank: its own snapshot, or (older sessions) the analysis bank. */
+function bankOf(session: Pick<InterviewSession, "bank"> & { match: { questions: unknown; claims: unknown } | null }): BankItem[] {
+  if (session.bank) return session.bank as unknown as BankItem[];
+  if (session.match) return fromMatchBank(session.match.questions as BankQuestion[], session.match.claims as { id: string; claim: string }[]);
+  return [];
+}
 
-function intro(name: string, jobTitle: string, questions: number, minutes: number) {
+const roleLabel = (s: Pick<InterviewSession, "targetRole">) => (s.targetRole && isTargetRole(s.targetRole) ? TARGET_ROLES[s.targetRole].label : "Software Engineer");
+const titleOf = (s: Pick<InterviewSession, "targetRole"> & { match: { job: { title: string; company: string | null } } | null }) => ({
+  title: s.match?.job.title ?? roleLabel(s),
+  company: s.match?.job.company ?? null,
+});
+const endsAtOf = (s: Pick<InterviewSession, "startedAt" | "durationMinutes" | "pausedMs">) => new Date(s.startedAt.getTime() + s.durationMinutes * 60_000 + s.pausedMs);
+const aiBudget = (s: Pick<InterviewSession, "questionTarget">) => s.questionTarget * 2 + 8;
+
+function intro(name: string, title: string, questions: number, minutes: number, withJob: boolean) {
   const first = name.split(" ")[0];
-  return `Hi ${first}, I'm ${INTERVIEWER.name}. I'll be conducting your technical interview today for the ${jobTitle} role. I'll ask about ${questions} questions based on your resume and the job description you've provided, over about ${minutes} minutes. Please answer in English. Take your time — I'll give you sufficient time to answer each question.`;
+  return `Hi ${first}, I'm ${INTERVIEWER.name}. I'll be conducting your technical interview today for the ${title} role. I'll ask about ${questions} questions based on your resume${withJob ? " and the job description you've provided" : ""}, over about ${minutes} minutes. Please answer in English. Take your time — I'll give you enough time for each question.`;
 }
 
-function claimContext(questions: BankQuestion[], bankId: string | null, claims: { id: string; claim: string }[]) {
-  const q = questions.find((x) => x.id === bankId);
-  const c = q?.claimId ? claims.find((x) => x.id === q.claimId) : undefined;
-  return c ? c.claim : "";
+function closingLine() {
+  return "Thank you, that's the end of the interview. Your Technical Readiness Report is being prepared.";
 }
 
-/** Adaptive pick: priority category first, then the level closest to how the candidate is doing, avoiding repeat skills. */
-function pickNextQuestion(bank: BankQuestion[], turns: InterviewTurn[]) {
-  const asked = new Set(turns.map((t) => t.bankId).filter(Boolean));
-  const remaining = bank.filter((q) => !asked.has(q.id));
-  if (!remaining.length) return null;
-  const answered = turns.filter((t) => t.evaluation && t.kind !== "CODING");
-  const recent = answered.slice(-3).map((t) => turnScore(t));
-  const avg = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : 60;
-  const lastRoot = [...turns].reverse().find((t) => t.kind === "QUESTION");
-  const currentLevel = lastRoot?.level ?? 1;
-  const targetLevel = Math.max(1, Math.min(5, avg >= 70 ? currentLevel + 1 : avg <= 40 ? currentLevel - 1 : currentLevel));
-  const lastSkill = lastRoot?.skill.toLowerCase();
-  const askedCount = turns.filter((t) => t.kind === "QUESTION").length;
-  // Open with IMPORTANT fundamentals; later widen to every category.
-  const allowed = askedCount < 3 ? ["IMPORTANT", "GOOD"] : [...QUESTION_CATEGORIES];
-  const pool = remaining.filter((q) => allowed.includes(q.category));
-  const candidates = (pool.length ? pool : remaining)
-    .map((q) => ({
-      q,
-      cost: QUESTION_CATEGORIES.indexOf(q.category) * 1.5 + Math.abs(q.level - targetLevel) * 2 + (q.skill.toLowerCase() === lastSkill ? 3 : 0),
-    }))
-    .sort((a, b) => a.cost - b.cost);
-  return candidates[0].q;
-}
-
-async function pickCodingTask(userId: string, used: string[]) {
-  // With code execution disabled the interview simply continues with spoken questions.
-  if (!codeExecutionEnabled()) return null;
-  const tasks = await prisma.buildTask.findMany({
+async function dsaTasks(used: string[]) {
+  return prisma.buildTask.findMany({
     where: { status: "PUBLISHED", slug: { notIn: used }, topic: { module: { slug: { in: ["dsa", "js-fundamentals", "js-intermediate", "python-fundamentals", "server-development"] } } } },
   });
+}
+
+/** A coding task when code can run; otherwise the same problem as an explain-your-approach question. */
+async function pickProblem(userId: string, used: string[]): Promise<{ task: BuildTask; kind: "CODING" | "PROBLEM" } | null> {
+  const tasks = await dsaTasks(used);
   if (!tasks.length) return null;
   const done = new Set((await prisma.submission.findMany({ where: { userId, status: "COMPLETED" }, select: { buildTaskId: true } })).map((s) => s.buildTaskId));
   const fresh = tasks.filter((t) => !done.has(t.id));
-  return sample(fresh.length ? fresh : tasks, 1)[0];
+  const task = sample(fresh.length ? fresh : tasks, 1)[0];
+  return { task, kind: codeExecutionEnabled() ? "CODING" : "PROBLEM" };
 }
 
-function codingQuestionText(task: BuildTask) {
-  return `Here's a coding problem: **${task.title}**.\n\n${task.description}\n\nImplement \`${task.functionName}\`. Run the visible tests while you work; when you submit, hidden tests run too. Add one or two lines explaining your approach and its time complexity.`;
+function problemText(task: BuildTask, kind: "CODING" | "PROBLEM") {
+  return kind === "CODING"
+    ? `Here's a coding problem: **${task.title}**.\n\n${task.description}\n\nImplement \`${task.functionName}\`. Run the visible tests while you work; when you submit, hidden tests run too. Add one or two lines explaining your approach and its time complexity.`
+    : `Here's a problem: **${task.title}**.\n\n${task.description}\n\nYou don't need to run any code. Walk me through how you would solve it: your approach step by step (pseudocode is welcome), its time and space complexity, and the edge cases you'd handle.`;
 }
 
-// ───────────────────────── scoring ─────────────────────────
+async function hasProblems() {
+  return (await prisma.buildTask.count({ where: { status: "PUBLISHED", topic: { module: { slug: { in: ["dsa", "js-fundamentals", "js-intermediate", "python-fundamentals", "server-development"] } } } } })) > 0;
+}
 
-export function turnScore(t: Pick<InterviewTurn, "kind" | "skipped" | "evaluation" | "codeResult">) {
-  if (t.skipped) return 0;
-  if (t.kind === "CODING") {
-    const r = t.codeResult as CodeResult | null;
-    if (!r || !r.total) return 0;
-    const tests = (r.passed / r.total) * 100;
-    const quality = r.review ? ((r.review.understanding + r.review.practical) / 2) * 10 : tests;
-    return Math.round(tests * 0.6 + quality * 0.4);
+// ───────────────────────── question bank for role-only interviews ─────────────────────────
+
+async function roleBank(userId: string, resumeId: string, role: TargetRoleKey, focus: string[]): Promise<{ bank: BankItem[]; aiCalls: number }> {
+  const claims = await prisma.resumeClaim.findMany({ where: { resumeId }, select: { id: true, claim: true } });
+  const claimMap = new Map(claims.map((c) => [c.id, c.claim]));
+  // Reuse the candidate's own Top 100 for this resume and role when it exists — no AI call needed.
+  const plan = await prisma.prepPlan.findFirst({ where: { userId, resumeId, status: "READY", jobId: null, targetRole: role }, orderBy: { createdAt: "desc" }, select: { id: true } })
+    ?? (await prisma.prepPlan.findFirst({ where: { userId, resumeId, status: "READY" }, orderBy: { createdAt: "desc" }, select: { id: true } }));
+  if (plan) {
+    const qs = await prisma.prepQuestion.findMany({ where: { planId: plan.id }, orderBy: { rank: "asc" }, take: 100, select: { id: true, question: true, skill: true, category: true, difficulty: true, claimId: true, why: true } });
+    if (qs.length >= 10) return { bank: fromPrepPlan(qs, claimMap), aiCalls: 0 };
   }
-  const e = t.evaluation as Evaluation | null;
-  if (!e) return 0;
-  return Math.round((e.correctness * 0.4 + e.completeness * 0.2 + e.understanding * 0.25 + e.practical * 0.15) * 10);
+  const resume = await prisma.careerResume.findUniqueOrThrow({ where: { id: resumeId }, select: { parsed: true } });
+  const short = claims.slice(0, 20).map((c, i) => ({ id: `c${i + 1}`, claim: c.claim, dbId: c.id }));
+  const r = TARGET_ROLES[role];
+  const p = prompts.roleBank({ role: r.label, skills: r.skills, concepts: r.concepts, resume: resume.parsed, claims: short, focus });
+  const out = await aiJson("interview_bank", p.system, p.user, roleBankSchema, 6000, { timeoutMs: 90_000 });
+  const seen = new Set<string>();
+  const bank = out.questions
+    .filter((q) => {
+      const k = normalizeQuestion(q.question);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .map((q, i): BankItem => {
+      const c = q.claimId ? short.find((x) => x.id === q.claimId) : undefined;
+      return { id: `g${i + 1}`, question: q.question, skill: q.skill, level: q.level, area: q.area as Area, claimId: c?.dbId ?? null, claim: c?.claim ?? null, why: q.why };
+    });
+  return { bank, aiCalls: 1 };
 }
 
-const turnWeight = (t: InterviewTurn) => (t.kind === "CODING" ? 1.5 : t.kind === "FOLLOW_UP" ? 0.6 : 1 + (t.level - 1) * 0.15);
-
-export function resultFor(score: number) {
-  if (score >= 75) return { key: "INTERVIEW_READY", label: "Interview Ready" };
-  if (score >= 55) return { key: "NEEDS_IMPROVEMENT", label: "Needs Improvement" };
-  return { key: "NOT_YET_READY", label: "Not Yet Ready" };
-}
-
-async function buildReport(session: InterviewSession & { turns: InterviewTurn[] }) {
-  const answered = session.turns.filter((t) => t.answeredAt);
-  const wSum = answered.reduce((a, t) => a + turnWeight(t), 0);
-  const readiness = wSum ? Math.round(answered.reduce((a, t) => a + turnScore(t) * turnWeight(t), 0) / wSum) : 0;
-  const verdicts = answered.map((t) => {
-    if (t.skipped) return "SKIPPED";
-    if (t.kind === "CODING") {
-      const r = t.codeResult as CodeResult | null;
-      return !r?.total ? "INCORRECT" : r.passed === r.total ? "CORRECT" : r.passed > 0 ? "PARTIAL" : "INCORRECT";
-    }
-    const v = (t.evaluation as Evaluation | null)?.verdict;
-    return v === "NO_ANSWER" ? "INCORRECT" : v ?? "INCORRECT";
+/** What the candidate's earlier interviews on this resume tell us: weak skills to revisit, questions not to repeat. */
+async function history(userId: string, resumeId: string | null) {
+  const previous = await prisma.interviewSession.findMany({
+    where: { userId, ...(resumeId ? { resumeId } : {}), status: { in: ["COMPLETED", "ENDED_INTEGRITY", "ABANDONED"] } },
+    orderBy: { startedAt: "desc" },
+    take: 5,
+    select: { report: true, turns: { select: { question: true } } },
   });
-
-  const bySkill = new Map<string, { label: string; scores: number[] }>();
-  for (const t of answered) {
-    const key = t.skill.trim().toLowerCase();
-    const entry = bySkill.get(key) ?? { label: t.skill.trim(), scores: [] };
-    entry.scores.push(turnScore(t));
-    bySkill.set(key, entry);
-  }
-  const areas = [...bySkill.values()]
-    .map((a) => ({ skill: a.label, score: Math.round(a.scores.reduce((x, y) => x + y, 0) / a.scores.length), questions: a.scores.length }))
-    .sort((a, b) => b.score - a.score);
-
-  const missing = new Map<string, number>();
-  for (const t of answered) for (const c of (t.evaluation as Evaluation | null)?.missingConcepts ?? []) missing.set(c, (missing.get(c) ?? 0) + 1);
-  const topMissing = [...missing.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([c]) => c);
-  const answeredWell = areas.filter((a) => a.score >= 70).map((a) => a.skill);
-  const struggled = [...new Set([...areas.filter((a) => a.score < 55).map((a) => a.skill), ...topMissing])].slice(0, 8);
-
-  // Close the loop: map gaps to Prompters topics the learner can study next.
-  const keywords = struggled.flatMap((s) => s.split(/[\s/,()-]+/)).filter((w) => w.length > 2).slice(0, 12);
-  const topics = keywords.length
-    ? await prisma.topic.findMany({
-        where: { status: "PUBLISHED", publishedVersion: { gt: 0 }, OR: keywords.map((k) => ({ title: { contains: k, mode: "insensitive" as const } })) },
-        select: { slug: true, title: true },
-        take: 5,
-      })
-    : [];
-
-  const events = await prisma.interviewIntegrityEvent.groupBy({ by: ["type"], where: { sessionId: session.id }, _count: true });
-  const integrity = Object.fromEntries(events.map((e) => [e.type, e._count]));
-  const signalCount = events.filter((e) => e.type !== "SCREEN_SHARE_RESUMED").reduce((a, e) => a + e._count, 0);
-  const comm = answered.filter((t) => t.evaluation && !t.skipped).map((t) => (t.evaluation as Evaluation).communication);
-
-  const result = resultFor(readiness);
-  return {
-    readiness,
-    result,
-    insufficientEvidence: answered.length < 5,
-    counts: {
-      total: answered.length,
-      correct: verdicts.filter((v) => v === "CORRECT").length,
-      partial: verdicts.filter((v) => v === "PARTIAL").length,
-      incorrect: verdicts.filter((v) => v === "INCORRECT").length,
-      skipped: verdicts.filter((v) => v === "SKIPPED").length,
-    },
-    communication: comm.length ? Math.round((comm.reduce((a, b) => a + b, 0) / comm.length) * 10) : null,
-    areas,
-    answeredWell,
-    struggled,
-    nextSteps: [
-      ...topics.map((t) => ({ label: `Revise ${t.title}`, href: `/learn/topic/${t.slug}` })),
-      ...struggled.filter((s) => !topics.some((t) => t.title.toLowerCase().includes(s.toLowerCase()))).slice(0, 3).map((s) => ({ label: `Practise interview questions on ${s}`, href: `/interviews?q=${encodeURIComponent(s)}` })),
-      { label: "Retake this technical interview", href: `/career/analysis/${session.matchId}` },
-    ],
-    integrity: {
-      signals: integrity,
-      total: signalCount,
-      screenShareWarnings: session.screenShareWarnings,
-      status: signalCount === 0 ? "No signals" : session.screenShareWarnings > 0 || signalCount >= 3 ? "Review recommended" : "Minor signals",
-    },
-    disclaimer: "This Technical Readiness Report is a preparation assessment generated from your answers. It is not an automated hiring decision.",
-  };
+  const focus = [...new Set(previous.flatMap((s) => ((s.report as { struggled?: string[] } | null)?.struggled ?? []).slice(0, 4)))].slice(0, 6);
+  const asked = new Set(previous.flatMap((s) => s.turns.map((t) => normalizeQuestion(t.question))));
+  return { focus, asked };
 }
+
+// ───────────────────────── lifecycle ─────────────────────────
 
 async function finalize(sessionId: string, status: "COMPLETED" | "ENDED_INTEGRITY" | "ABANDONED") {
-  const claimed = await prisma.interviewSession.updateMany({ where: { id: sessionId, status: "IN_PROGRESS" }, data: { status, endedAt: new Date() } });
-  const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: sessionId }, include: { turns: { orderBy: { order: "asc" } } } });
+  const claimed = await prisma.interviewSession.updateMany({ where: { id: sessionId, status: { in: ["IN_PROGRESS", "PAUSED"] } }, data: { status, endedAt: new Date(), pausedAt: null } });
+  const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: sessionId }, include: sessionInclude });
   if (!claimed.count) return session;
   // Drop the trailing question that was asked but never answered.
   const open = session.turns.filter((t) => !t.answeredAt);
   if (open.length) await prisma.interviewTurn.deleteMany({ where: { id: { in: open.map((t) => t.id) } } });
   const turns = session.turns.filter((t) => t.answeredAt);
-  const report = await buildReport({ ...session, turns });
+  const report = await buildReport({ ...session, turns }, bankOf(session));
+
+  // Readiness before vs after, and why it moved compared with the previous interview.
+  const blueprint = session.blueprint as Blueprint | null;
+  const after = await computeReadiness(session.userId).then((r) => r.score).catch(() => null);
+  const previous = await prisma.interviewSession.findFirst({
+    where: { userId: session.userId, id: { not: sessionId }, status: { in: ["COMPLETED", "ENDED_INTEGRITY"] }, readinessScore: { not: null }, startedAt: { lt: session.startedAt } },
+    orderBy: { startedAt: "desc" },
+    select: { report: true },
+  });
+  const prevDims = (previous?.report as { dimensions?: Record<string, number | null> } | null)?.dimensions ?? null;
+  const DIM_LABEL: Record<string, string> = { technical: "Technical depth", projectUnderstanding: "Project explanation", problemSolving: "Problem solving", practicalEngineering: "Practical engineering", communication: "Communication" };
+  const changes = prevDims
+    ? Object.entries(DIM_LABEL).map(([k, label]) => ({ label, before: prevDims[k] ?? null, now: (report.dimensions as Record<string, number | null>)[k] ?? null })).filter((d) => d.before !== null && d.now !== null)
+    : [];
+  const readinessChange = {
+    before: blueprint?.readinessBefore ?? null,
+    after,
+    improved: changes.filter((d) => d.now! - d.before! >= 5).map((d) => d.label),
+    declined: changes.filter((d) => d.before! - d.now! >= 5).map((d) => d.label),
+  };
+
   const updated = await prisma.interviewSession.update({
     where: { id: sessionId },
-    data: { report: report as unknown as Prisma.InputJsonValue, readinessScore: report.readiness, result: report.result.key },
-    include: { turns: { orderBy: { order: "asc" } } },
+    data: { report: { ...report, readinessChange } as unknown as Prisma.InputJsonValue, readinessScore: report.readiness, result: report.result.key },
+    include: sessionInclude,
   });
   await logEvent(session.userId, "interview_completed", { meta: { sessionId, readiness: report.readiness, status } });
   return updated;
 }
 
+/** Closes sessions that ran out of time or were left paused too long. Returns true when it closed one. */
+async function expireIfNeeded(session: FullSession) {
+  if (session.status === "IN_PROGRESS" && Date.now() > endsAtOf(session).getTime() + 5 * 60_000) {
+    await finalize(session.id, "COMPLETED");
+    return true;
+  }
+  if (session.status === "PAUSED" && session.pausedAt && Date.now() - session.pausedAt.getTime() > PAUSE_LIMIT_MS) {
+    await finalize(session.id, "ABANDONED");
+    return true;
+  }
+  return false;
+}
+
 // ───────────────────────── public API ─────────────────────────
 
 function turnView(t: InterviewTurn, task?: BuildTask | null) {
+  const seconds = t.kind === "CODING" ? INTERVIEWER.codingSeconds : t.kind === "PROBLEM" ? INTERVIEWER.problemSeconds : INTERVIEWER.answerSeconds;
   return {
     id: t.id,
     order: t.order,
@@ -238,17 +244,21 @@ function turnView(t: InterviewTurn, task?: BuildTask | null) {
     question: t.question,
     skill: t.skill,
     category: t.category,
+    area: t.area,
     level: t.level,
     answered: !!t.answeredAt,
-    coding: task
-      ? {
-          functionName: task.functionName,
-          starter: { javascript: task.starterJs, python: task.starterPython },
-          publicTests: (task.tests as unknown as TestCase[]).filter((x) => !x.hidden).map(({ name, args, expected }) => ({ name, args, expected })),
-          hiddenTestCount: (task.tests as unknown as TestCase[]).filter((x) => x.hidden).length,
-        }
-      : null,
-    timing: { thinkingSeconds: INTERVIEWER.thinkingSeconds, answerSeconds: t.kind === "CODING" ? INTERVIEWER.codingSeconds : INTERVIEWER.answerSeconds },
+    /** An answer saved before the AI could evaluate it (restored after a refresh or a failed attempt). */
+    savedAnswer: !t.answeredAt && !t.submittedAt ? t.answerText : null,
+    coding:
+      task && t.kind === "CODING"
+        ? {
+            functionName: task.functionName,
+            starter: { javascript: task.starterJs, python: task.starterPython },
+            publicTests: (task.tests as unknown as TestCase[]).filter((x) => !x.hidden).map(({ name, args, expected }) => ({ name, args, expected })),
+            hiddenTestCount: (task.tests as unknown as TestCase[]).filter((x) => x.hidden).length,
+          }
+        : null,
+    timing: { thinkingSeconds: INTERVIEWER.thinkingSeconds, answerSeconds: seconds },
   };
 }
 
@@ -259,98 +269,181 @@ async function currentTurnView(turns: InterviewTurn[]) {
   return turnView(open, task);
 }
 
-export async function startSession(userId: string, input: { matchId: string; durationMinutes: number; questionTarget: number; consent: Omit<Consent, "at"> }) {
+export interface StartInput {
+  matchId?: string;
+  resumeId?: string;
+  targetRole?: string;
+  difficulty?: Difficulty;
+  durationMinutes: number;
+  questionTarget?: number;
+  consent: Omit<Consent, "at">;
+}
+
+export async function startSession(userId: string, input: StartInput) {
   requireAI();
   if (!input.consent.recording || !input.consent.integrity || !input.consent.preparationOnly) throw badRequest("Please accept all three consent statements to start the interview.");
-  const match = await prisma.jobMatch.findFirst({ where: { id: input.matchId, userId }, include: { job: true } });
-  if (!match) throw notFound("Analysis");
-  const active = await prisma.interviewSession.findFirst({ where: { userId, status: "IN_PROGRESS" } });
-  if (active) {
-    const stale = Date.now() - active.startedAt.getTime() > (active.durationMinutes + 30) * 60_000;
+
+  const active = await prisma.interviewSession.findFirst({ where: { userId, status: { in: ["IN_PROGRESS", "PAUSED"] } }, include: sessionInclude });
+  if (active && !(await expireIfNeeded(active))) {
+    const stale = active.status === "IN_PROGRESS" && Date.now() - endsAtOf(active).getTime() > 30 * 60_000;
     if (!stale) throw new AppError(409, "INTERVIEW_IN_PROGRESS", "You already have an interview in progress.", { sessionId: active.id });
     await finalize(active.id, "ABANDONED");
   }
-  const bank = match.questions as unknown as BankQuestion[];
-  const first = pickNextQuestion(bank, []);
-  if (!first) throw conflict("This analysis has no questions. Run the analysis again.");
+
+  const difficulty: Difficulty = input.difficulty ?? "STANDARD";
+  const questionTarget = input.questionTarget ?? QUESTIONS_FOR_DURATION[input.durationMinutes] ?? Math.round(input.durationMinutes / 2.2);
+  let matchId: string | null = null;
+  let resumeId: string;
+  let targetRole: TargetRoleKey | null = null;
+  let title: string;
+  let bank: BankItem[];
+  let aiCalls = 0;
+
+  if (input.matchId) {
+    const match = await prisma.jobMatch.findFirst({ where: { id: input.matchId, userId }, include: { job: true } });
+    if (!match) throw notFound("Analysis");
+    matchId = match.id;
+    resumeId = match.resumeId;
+    title = match.job.title;
+    bank = fromMatchBank(match.questions as unknown as BankQuestion[], match.claims as unknown as { id: string; claim: string }[]);
+  } else {
+    if (!input.resumeId || !input.targetRole) throw badRequest("Choose a resume and a target role, or start from a job-match analysis.");
+    if (!isTargetRole(input.targetRole)) throw badRequest("Unknown target role.");
+    const resume = await prisma.careerResume.findFirst({ where: { id: input.resumeId, userId }, select: { id: true } });
+    if (!resume) throw notFound("Resume");
+    resumeId = resume.id;
+    targetRole = input.targetRole;
+    title = TARGET_ROLES[targetRole].label;
+    bank = [];
+  }
+
+  const past = await history(userId, resumeId);
+  if (!matchId) {
+    const built = await roleBank(userId, resumeId, targetRole!, past.focus);
+    bank = built.bank;
+    aiCalls = built.aiCalls;
+  }
+  if (bank.length < 3) throw conflict("There aren't enough questions for an interview yet. Run the analysis again or generate your Top 100 first.");
+
+  const problemsAvailable = await hasProblems();
+  const blueprint = buildBlueprint(targetRole ?? "fullstack", questionTarget, bank, problemsAvailable);
+  blueprint.readinessBefore = await computeReadiness(userId).then((r) => r.score).catch(() => null);
+
+  const ctx = { bank, turns: [], blueprint, difficulty, focusAreas: past.focus, previouslyAsked: past.asked, score: turnScore };
+  // Open with something from the candidate's own resume when possible — that's how real interviews start.
+  const opener = pickQuestion(ctx, bank.some((q) => q.area === "PROJECTS") ? "PROJECTS" : bank.some((q) => q.area === "RESUME") ? "RESUME" : nextArea(ctx, (a) => bank.some((q) => q.area === a)));
+  if (!opener) throw conflict("This analysis has no questions. Run the analysis again.");
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { name: true } });
 
   const session = await prisma.interviewSession.create({
     data: {
       userId,
-      matchId: match.id,
+      matchId,
+      resumeId,
+      targetRole,
+      difficulty,
+      bank: bank as unknown as Prisma.InputJsonValue,
+      blueprint: blueprint as unknown as Prisma.InputJsonValue,
+      focusAreas: past.focus,
+      aiCalls,
       language: INTERVIEW_LANGUAGE,
       durationMinutes: input.durationMinutes,
-      questionTarget: input.questionTarget,
+      questionTarget,
       consent: { ...input.consent, at: new Date().toISOString() },
-      turns: { create: { order: 0, kind: "QUESTION", bankId: first.id, question: first.question, skill: first.skill, category: first.category, level: first.level } },
+      turns: { create: { order: 0, kind: "QUESTION", bankId: opener.id, question: opener.question, skill: opener.skill, category: opener.area, area: opener.area, claimId: opener.claimId ?? null, level: opener.level } },
     },
     include: { turns: true },
   });
-  await logEvent(userId, "interview_started", { meta: { sessionId: session.id, job: match.job.title } });
+  await logEvent(userId, "interview_started", { meta: { sessionId: session.id, job: title, mode: matchId ? "job" : "role", difficulty } });
   return {
     id: session.id,
     interviewer: INTERVIEWER,
-    intro: intro(user.name, match.job.title, input.questionTarget, input.durationMinutes),
+    intro: intro(user.name, title, questionTarget, input.durationMinutes, !!matchId),
     current: turnView(session.turns[0]),
     progress: { answered: 0, target: session.questionTarget },
-    endsAt: new Date(session.startedAt.getTime() + session.durationMinutes * 60_000),
+    endsAt: endsAtOf(session),
   };
 }
 
-export async function getSession(userId: string, sessionId: string) {
+export async function getSession(userId: string, sessionId: string): Promise<Awaited<ReturnType<typeof sessionView>>> {
   const session = await ownedSession(userId, sessionId);
-  if (session.status === "IN_PROGRESS" && Date.now() > session.startedAt.getTime() + (session.durationMinutes + 5) * 60_000) {
-    await finalize(session.id, "COMPLETED");
-    return getSession(userId, sessionId);
-  }
+  if (await expireIfNeeded(session)) return getSession(userId, sessionId);
+  return sessionView(session);
+}
+
+async function sessionView(session: FullSession) {
   const answered = session.turns.filter((t) => t.answeredAt);
+  const live = session.status === "IN_PROGRESS" || session.status === "PAUSED";
   return {
     id: session.id,
     status: session.status,
     language: INTERVIEW_LANGUAGE,
+    mode: session.matchId ? "JOB" : "ROLE",
+    difficulty: session.difficulty,
+    targetRole: session.targetRole,
     durationMinutes: session.durationMinutes,
     questionTarget: session.questionTarget,
     startedAt: session.startedAt,
     endedAt: session.endedAt,
-    endsAt: new Date(session.startedAt.getTime() + session.durationMinutes * 60_000),
+    pausedAt: session.pausedAt,
+    endsAt: endsAtOf(session),
     screenShareWarnings: session.screenShareWarnings,
     interviewer: INTERVIEWER,
-    job: { title: session.match.job.title, company: session.match.job.company },
+    job: titleOf(session),
     matchId: session.matchId,
+    resumeId: session.resumeId,
     progress: { answered: answered.length, target: session.questionTarget },
-    current: session.status === "IN_PROGRESS" ? await currentTurnView(session.turns) : null,
+    current: live ? await currentTurnView(session.turns) : null,
     readinessScore: session.readinessScore,
     result: session.result,
     report: session.report,
     // Transcript + evaluations are only shown once the interview is over.
-    turns:
-      session.status === "IN_PROGRESS"
-        ? []
-        : session.turns.map((t) => ({
-            id: t.id,
-            order: t.order,
-            kind: t.kind,
-            question: t.question,
-            skill: t.skill,
-            category: t.category,
-            level: t.level,
-            answerText: t.answerText,
-            answerCode: t.answerCode,
-            codeLanguage: t.codeLanguage,
-            codeResult: t.codeResult,
-            skipped: t.skipped,
-            durationSec: t.durationSec,
-            hasAudio: !!t.audioKey,
-            evaluation: t.evaluation,
-            score: turnScore(t),
-          })),
+    turns: live
+      ? []
+      : session.turns.map((t) => ({
+          id: t.id,
+          order: t.order,
+          kind: t.kind,
+          question: t.question,
+          skill: t.skill,
+          category: t.category,
+          area: t.area,
+          level: t.level,
+          answerText: t.answerText,
+          answerCode: t.answerCode,
+          codeLanguage: t.codeLanguage,
+          codeResult: t.codeResult,
+          skipped: t.skipped,
+          excluded: t.excluded,
+          durationSec: t.durationSec,
+          hasAudio: !!t.audioKey,
+          evaluation: t.evaluation,
+          score: turnScore(t),
+        })),
   };
+}
+
+export async function pauseSession(userId: string, sessionId: string) {
+  const session = await ownedSession(userId, sessionId);
+  if (await expireIfNeeded(session)) throw conflict("This interview has ended.");
+  if (session.status !== "IN_PROGRESS") throw conflict("Only an interview in progress can be paused.");
+  await prisma.interviewSession.updateMany({ where: { id: sessionId, status: "IN_PROGRESS" }, data: { status: "PAUSED", pausedAt: new Date() } });
+  return getSession(userId, sessionId);
+}
+
+export async function resumeSession(userId: string, sessionId: string) {
+  const session = await ownedSession(userId, sessionId);
+  if (await expireIfNeeded(session)) throw conflict("This interview was paused for more than a day, so it has been closed. Your report covers the answers you gave.");
+  if (session.status === "IN_PROGRESS") return getSession(userId, sessionId);
+  if (session.status !== "PAUSED" || !session.pausedAt) throw conflict("This interview has ended.");
+  const pausedFor = Date.now() - session.pausedAt.getTime();
+  await prisma.interviewSession.updateMany({ where: { id: sessionId, status: "PAUSED" }, data: { status: "IN_PROGRESS", pausedAt: null, pausedMs: { increment: pausedFor } } });
+  return getSession(userId, sessionId);
 }
 
 export async function runCode(userId: string, sessionId: string, turnId: string, language: "javascript" | "python", code: string) {
   const session = await ownedSession(userId, sessionId);
-  if (session.status !== "IN_PROGRESS") throw conflict("This interview has ended.");
+  if (session.status !== "IN_PROGRESS") throw conflict("This interview isn't running.");
   const turn = session.turns.find((t) => t.id === turnId && !t.answeredAt && t.kind === "CODING");
   if (!turn?.buildTaskSlug) throw notFound("Coding question");
   const task = await prisma.buildTask.findUniqueOrThrow({ where: { slug: turn.buildTaskSlug } });
@@ -376,119 +469,172 @@ export interface AnswerInput {
   codeLanguage?: "javascript" | "python";
 }
 
+/** What the client needs after an answer: the next question, or the end. */
+async function nextState(sessionId: string, leadText: string | null, replay = false) {
+  const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: sessionId }, include: sessionInclude });
+  const answered = session.turns.filter((t) => t.answeredAt).length;
+  if (session.status !== "IN_PROGRESS" && session.status !== "PAUSED") return { done: true, lead: leadText ?? "Okay.", closing: closingLine(), sessionId, replay };
+  const current = await currentTurnView(session.turns);
+  if (!current) return { done: true, lead: leadText ?? "Okay.", closing: closingLine(), sessionId, replay };
+  return { done: false, lead: current.lead ?? leadText ?? "Okay.", current, progress: { answered, target: session.questionTarget }, replay };
+}
+
+/** One AI call charged to the session; refuses once the session's budget is spent. */
+async function chargeAi(sessionId: string, budget: number) {
+  const r = await prisma.interviewSession.updateMany({ where: { id: sessionId, aiCalls: { lt: budget } }, data: { aiCalls: { increment: 1 } } });
+  return r.count > 0;
+}
+
 export async function submitAnswer(userId: string, sessionId: string, input: AnswerInput) {
   const session = await ownedSession(userId, sessionId);
-  if (session.status !== "IN_PROGRESS") throw conflict("This interview has ended.");
+  if (await expireIfNeeded(session)) return nextState(sessionId, null);
   const turn = session.turns.find((t) => t.id === input.turnId);
   if (!turn) throw notFound("Question");
-  if (turn.answeredAt) throw conflict("This question was already answered.");
+  // A repeated request for an answer we already processed returns the same next step (idempotent).
+  if (turn.answeredAt) return nextState(sessionId, null, true);
+  if (session.status === "PAUSED") throw conflict("This interview is paused. Resume it to continue.");
+  if (session.status !== "IN_PROGRESS") throw conflict("This interview has ended.");
   const consent = session.consent as Consent;
+  const skipped = !!input.skipped || (!input.answerText?.trim() && !input.code?.trim());
+
+  // Claim the turn: saves the answer first (so it survives an AI failure) and blocks a concurrent duplicate.
+  const claimed = await prisma.interviewTurn.updateMany({
+    where: { id: turn.id, answeredAt: null, OR: [{ submittedAt: null }, { submittedAt: { lt: new Date(Date.now() - STALE_SUBMIT_MS) } }] },
+    data: {
+      submittedAt: new Date(),
+      answerText: input.answerText?.slice(0, 10000) ?? null,
+      answerCode: input.code?.slice(0, 65536) ?? null,
+      codeLanguage: input.codeLanguage ?? null,
+      durationSec: input.durationSec ?? null,
+    },
+  });
+  if (!claimed.count) throw new AppError(409, "ANSWER_PROCESSING", "Your answer is already being processed.");
 
   // Audio is stored only with recording consent; never required.
-  let audioKey: string | null = null;
+  let audioKey: string | null = turn.audioKey;
   if (input.audioBase64 && consent.recording && consent.storeAudio !== false) {
     const audio = Buffer.from(input.audioBase64, "base64");
     const mime = (input.audioMime ?? "audio/webm").split(";")[0];
-    if (audio.length > MAX_AUDIO_BYTES) throw badRequest("Recording is too large (max 4 MB per answer).");
-    if (!AUDIO_TYPES.includes(mime)) throw badRequest("Unsupported audio format.");
+    if (audio.length > MAX_AUDIO_BYTES || !AUDIO_TYPES.includes(mime)) {
+      await prisma.interviewTurn.update({ where: { id: turn.id }, data: { submittedAt: null } });
+      throw badRequest(audio.length > MAX_AUDIO_BYTES ? "Recording is too large (max 4 MB per answer)." : "Unsupported audio format.");
+    }
     audioKey = `interviews/${userId}/${session.id}/${turn.id}.${mime.split("/")[1]}`;
     await storage().put(audioKey, audio, mime);
   }
 
-  const bank = session.match.questions as unknown as BankQuestion[];
-  const claims = session.match.claims as unknown as { id: string; claim: string }[];
-  const skipped = !!input.skipped || (!input.answerText?.trim() && !input.code?.trim());
-  let evaluation: Evaluation | null = null;
-  let codeResult: CodeResult | null = null;
-  let lead: string;
-
-  if (turn.kind === "CODING" && !skipped) {
-    const task = await prisma.buildTask.findUniqueOrThrow({ where: { slug: turn.buildTaskSlug! } });
-    const tests = task.tests as unknown as TestCase[];
-    const language = input.codeLanguage ?? "javascript";
-    const { program, nonce } = buildHarness(language, input.code ?? "", task.functionName, tests);
-    const r = parseHarnessResult(await executeCode({ language, code: program, env: { PROMPTERS_NONCE: nonce } }), nonce, tests);
-    const passed = r.outcomes.filter((o) => o.passed).length;
-    const p = prompts.reviewCode({ problem: task.description, language, code: input.code ?? "", passed, total: tests.length, explanation: input.answerText ?? "" });
-    const review = await aiJson("review_code", p.system, p.user, codeReviewSchema, 1200);
-    codeResult = { passed, total: tests.length, review, tests: r.outcomes.map((o) => ({ name: o.hidden ? "Hidden test" : o.name, passed: o.passed, hidden: o.hidden })) };
-    lead = review.lead;
-  } else if (!skipped) {
-    const root = turn.kind === "FOLLOW_UP" ? session.turns.find((t) => t.id === turn.parentId) : turn;
-    const depth = session.turns.filter((t) => t.parentId === (root?.id ?? turn.id)).length;
-    const p = prompts.evaluate({
-      question: turn.question,
-      skill: turn.skill,
-      level: turn.level,
-      answer: input.answerText ?? "",
-      context: claimContext(bank, root?.bankId ?? null, claims),
-      depth,
-      maxDepth: MAX_FOLLOW_UPS,
-    });
-    evaluation = await aiJson("evaluate_answer", p.system, p.user, evaluationSchema, 1200);
-    lead = evaluation.lead;
-  } else {
-    lead = "No problem, let's move on.";
+  if (!skipped && input.answerText && MANIPULATION_RE.test(input.answerText)) {
+    await prisma.interviewIntegrityEvent.create({ data: { sessionId, type: PROMPT_MANIPULATION, meta: { turnId: turn.id } } });
   }
 
+  const bank = bankOf(session);
+  const budget = aiBudget(session);
+  let evaluation: Evaluation | null = null;
+  let codeResult: CodeResult | null = null;
+  try {
+    if (!skipped && !(await chargeAi(session.id, budget))) {
+      // Budget spent (should not happen in a normal interview): close gracefully with what we have.
+      await prisma.interviewTurn.update({ where: { id: turn.id }, data: { submittedAt: null } });
+      await finalize(session.id, "COMPLETED");
+      return nextState(sessionId, "Thank you.");
+    }
+    if (turn.kind === "CODING" && !skipped) {
+      const task = await prisma.buildTask.findUniqueOrThrow({ where: { slug: turn.buildTaskSlug! } });
+      const tests = task.tests as unknown as TestCase[];
+      const language = input.codeLanguage ?? "javascript";
+      const { program, nonce } = buildHarness(language, input.code ?? "", task.functionName, tests);
+      const r = parseHarnessResult(await executeCode({ language, code: program, env: { PROMPTERS_NONCE: nonce } }), nonce, tests);
+      const passed = r.outcomes.filter((o) => o.passed).length;
+      const p = prompts.reviewCode({ problem: task.description, language, code: input.code ?? "", passed, total: tests.length, explanation: input.answerText ?? "" });
+      const review = await aiJson("review_code", p.system, p.user, codeReviewSchema, 1200);
+      codeResult = { passed, total: tests.length, review, tests: r.outcomes.map((o) => ({ name: o.hidden ? "Hidden test" : o.name, passed: o.passed, hidden: o.hidden })) };
+    } else if (!skipped) {
+      const root = turn.kind === "FOLLOW_UP" || turn.kind === "REPEAT" ? session.turns.find((t) => t.id === turn.parentId) ?? turn : turn;
+      const depth = session.turns.filter((t) => t.parentId === root.id && t.kind === "FOLLOW_UP").length;
+      const claim = turn.claimId ? bank.find((b) => b.claimId === turn.claimId)?.claim ?? "" : "";
+      const p = prompts.evaluate({ question: turn.question, skill: turn.skill, level: turn.level, answer: input.answerText ?? "", context: claim, depth, maxDepth: MAX_FOLLOW_UPS });
+      evaluation = await aiJson("evaluate_answer", p.system, p.user, evaluationSchema, 1500, { timeoutMs: 45_000 });
+    }
+  } catch (e) {
+    // Never lose the answer: release the claim (the text stays saved on the turn) so the client can retry.
+    await prisma.interviewTurn.update({ where: { id: turn.id }, data: { submittedAt: null, audioKey } });
+    if (e instanceof AppError && e.status < 500 && !e.code.startsWith("AI")) throw e;
+    throw new AppError(503, "AI_RETRY", "Manisha couldn't process that answer just now. Your answer is saved — try again, continue later, or end the interview.");
+  }
+
+  const unclear = evaluation?.verdict === "UNCLEAR";
   await prisma.interviewTurn.update({
     where: { id: turn.id },
     data: {
-      answerText: input.answerText?.slice(0, 10000) ?? null,
-      answerCode: input.code?.slice(0, 65536) ?? null,
-      codeLanguage: input.codeLanguage ?? null,
       codeResult: (codeResult ?? undefined) as Prisma.InputJsonValue | undefined,
       evaluation: (evaluation ?? undefined) as Prisma.InputJsonValue | undefined,
       skipped,
-      durationSec: input.durationSec ?? null,
+      // An unclear transcript is not a wrong answer: it isn't scored.
+      excluded: unclear,
       audioKey,
-      audioMime: audioKey ? (input.audioMime ?? "audio/webm").split(";")[0] : null,
+      audioMime: audioKey ? (input.audioMime ?? turn.audioMime ?? "audio/webm").split(";")[0] : null,
       answeredAt: new Date(),
     },
   });
 
   // ── Decide what Manisha asks next ──
   const turns = await prisma.interviewTurn.findMany({ where: { sessionId: session.id }, orderBy: { order: "asc" } });
-  const answeredCount = turns.length;
-  const outOfTime = Date.now() > session.startedAt.getTime() + session.durationMinutes * 60_000;
-  if (answeredCount >= session.questionTarget || outOfTime) {
-    const done = await finalize(session.id, "COMPLETED");
-    return { done: true, lead, closing: closingLine(), sessionId: done.id };
+  const counted = turns.filter((t) => !t.excluded).length;
+  const outOfTime = Date.now() > endsAtOf(session).getTime();
+  if ((counted >= session.questionTarget && !unclear) || outOfTime) {
+    await finalize(session.id, "COMPLETED");
+    return nextState(session.id, "Thank you.");
   }
 
   const nextOrder = turns.length;
-  const rootId = turn.kind === "FOLLOW_UP" ? turn.parentId : turn.id;
-  const followUpsSoFar = turns.filter((t) => t.parentId === rootId).length;
+  const rootId = turn.kind === "FOLLOW_UP" || turn.kind === "REPEAT" ? turn.parentId ?? turn.id : turn.id;
+  const root = turns.find((t) => t.id === rootId) ?? turn;
+  const followUpsSoFar = turns.filter((t) => t.parentId === rootId && t.kind === "FOLLOW_UP").length;
+  const base = { sessionId: session.id, order: nextOrder };
   let next: Prisma.InterviewTurnUncheckedCreateInput | null = null;
 
-  if (evaluation?.followUp.needed && evaluation.followUp.question && followUpsSoFar < MAX_FOLLOW_UPS && session.questionTarget - answeredCount > 1 && !/correct answer|the answer is/i.test(evaluation.followUp.question)) {
-    const root = turns.find((t) => t.id === rootId)!;
-    next = { sessionId: session.id, order: nextOrder, kind: "FOLLOW_UP", parentId: root.id, question: evaluation.followUp.question, lead, skill: root.skill, category: root.category, level: Math.min(5, root.level + 1) };
+  const followUp = evaluation?.followUp.question?.trim();
+  if (unclear && turn.kind !== "REPEAT") {
+    // Ask the same question again, once — don't score a broken transcript as a failure.
+    next = { ...base, kind: "REPEAT", parentId: rootId, question: turn.question, lead: REPEAT_LEAD, skill: turn.skill, category: turn.category, area: turn.area, claimId: turn.claimId, level: turn.level };
+  } else if (
+    evaluation?.followUp.needed &&
+    followUp &&
+    followUp.length >= 12 &&
+    followUpsSoFar < MAX_FOLLOW_UPS &&
+    session.questionTarget - counted > 1 &&
+    !/correct answer|the answer is|you should have|actually,? it|that'?s (wrong|incorrect|right|correct)/i.test(followUp)
+  ) {
+    next = { ...base, kind: "FOLLOW_UP", parentId: root.id, question: followUp, lead: lead(NEUTRAL_FOLLOW, nextOrder), skill: root.skill, category: root.category, area: root.area, claimId: root.claimId, level: Math.min(5, root.level + 1) };
   } else {
-    const roots = turns.filter((t) => t.kind !== "FOLLOW_UP").length;
-    const codingCheckpoints = [Math.ceil(session.questionTarget * 0.35), Math.ceil(session.questionTarget * 0.7)];
-    const codingDone = turns.filter((t) => t.kind === "CODING").length;
-    if (codingCheckpoints.slice(codingDone).some((c) => roots >= c - 1) && codingDone < 2) {
-      const task = await pickCodingTask(userId, turns.map((t) => t.buildTaskSlug).filter((x): x is string => !!x));
-      if (task) next = { sessionId: session.id, order: nextOrder, kind: "CODING", question: codingQuestionText(task), lead, skill: "Problem solving", category: "IMPORTANT", level: task.difficulty + 1, buildTaskSlug: task.slug };
+    const blueprint = (session.blueprint as Blueprint | null) ?? buildBlueprint(session.targetRole ?? "fullstack", session.questionTarget, bank, false);
+    const past = await history(userId, session.resumeId);
+    const ctx = { bank, turns, blueprint, difficulty: session.difficulty as Difficulty, focusAreas: session.focusAreas, previouslyAsked: past.asked, score: turnScore };
+    const area = nextArea(ctx, (a) => (a === "PROBLEM_SOLVING" ? true : bank.some((q) => q.area === a && !turns.some((t) => t.bankId === q.id))));
+    if (area === "PROBLEM_SOLVING") {
+      const problem = await pickProblem(userId, turns.map((t) => t.buildTaskSlug).filter((x): x is string => !!x));
+      if (problem) {
+        const level = Math.min(5, problem.task.difficulty + (session.difficulty === "HARD" ? 2 : 1));
+        next = { ...base, kind: problem.kind, question: problemText(problem.task, problem.kind), lead: lead(NEUTRAL_NEXT, nextOrder), skill: "Problem solving", category: "PROBLEM_SOLVING", area: "PROBLEM_SOLVING", level, buildTaskSlug: problem.task.slug };
+      }
     }
     if (!next) {
-      const q = pickNextQuestion(bank, turns);
+      const q = pickQuestion(ctx, area === "PROBLEM_SOLVING" ? null : area);
       if (!q) {
         await finalize(session.id, "COMPLETED");
-        return { done: true, lead, closing: closingLine(), sessionId: session.id };
+        return nextState(session.id, "Thank you.");
       }
-      next = { sessionId: session.id, order: nextOrder, kind: "QUESTION", bankId: q.id, question: q.question, lead, skill: q.skill, category: q.category, level: q.level };
+      next = { ...base, kind: "QUESTION", bankId: q.id, question: q.question, lead: lead(NEUTRAL_NEXT, nextOrder), skill: q.skill, category: q.area, area: q.area, claimId: q.claimId ?? null, level: q.level };
     }
   }
 
-  const created = await prisma.interviewTurn.create({ data: next });
-  const task = created.buildTaskSlug ? await prisma.buildTask.findUnique({ where: { slug: created.buildTaskSlug } }) : null;
-  return { done: false, lead, current: turnView(created, task), progress: { answered: answeredCount, target: session.questionTarget } };
-}
-
-function closingLine() {
-  return "Thank you, that's the end of the interview. Your Technical Readiness Report is being prepared.";
+  try {
+    await prisma.interviewTurn.create({ data: next });
+  } catch (e) {
+    // Another request already created the next turn (unique session+order): just return it.
+    if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
+  }
+  return nextState(session.id, null);
 }
 
 export async function logIntegrity(userId: string, sessionId: string, events: { type: InterviewIntegrityType; meta?: Record<string, unknown> }[]) {
@@ -509,6 +655,23 @@ export async function endSession(userId: string, sessionId: string) {
   await ownedSession(userId, sessionId);
   await finalize(sessionId, "COMPLETED");
   return getSession(userId, sessionId);
+}
+
+/** Interview history with per-dimension scores, oldest first, for the progress comparison. */
+export async function interviewHistory(userId: string) {
+  const sessions = await prisma.interviewSession.findMany({
+    where: { userId },
+    orderBy: { startedAt: "desc" },
+    select: {
+      id: true, status: true, readinessScore: true, result: true, startedAt: true, endedAt: true, matchId: true, targetRole: true, difficulty: true, report: true,
+      match: { select: { job: { select: { title: true, company: true } } } },
+    },
+  });
+  return sessions.map(({ report, ...s }) => ({
+    ...s,
+    role: s.match?.job.title ?? (s.targetRole && isTargetRole(s.targetRole) ? TARGET_ROLES[s.targetRole].label : "Technical interview"),
+    dimensions: (report as { dimensions?: Record<string, number | null> } | null)?.dimensions ?? null,
+  }));
 }
 
 export async function audioFor(userId: string, sessionId: string, turnId: string) {
@@ -547,5 +710,11 @@ export async function purgeExpiredRecordings() {
 /** Before deleting a resume/analysis, remove the audio files its interviews stored. */
 export async function deleteAudioForMatches(matchIds: string[]) {
   const turns = await prisma.interviewTurn.findMany({ where: { audioKey: { not: null }, session: { matchId: { in: matchIds } } }, select: { audioKey: true } });
+  await Promise.all(turns.map((t) => storage().delete(t.audioKey!).catch(() => undefined)));
+}
+
+/** Same, for interviews tied directly to a resume (role-only interviews). */
+export async function deleteAudioForResume(resumeId: string) {
+  const turns = await prisma.interviewTurn.findMany({ where: { audioKey: { not: null }, session: { resumeId } }, select: { audioKey: true } });
   await Promise.all(turns.map((t) => storage().delete(t.audioKey!).catch(() => undefined)));
 }

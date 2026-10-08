@@ -88,14 +88,16 @@ describe("AI technical interview", () => {
     expect(start.body.data.intro).toMatch(/^Hi Test, I'm Manisha\..*Please answer in English\./);
     expect((await agent.get(`/api/career/sessions/${sessionId}`)).body.data.language).toBe("en");
     expect((await prisma.interviewSession.findUniqueOrThrow({ where: { id: sessionId } })).language).toBe("en");
-    expect(start.body.data.current.category).toBe("IMPORTANT");
+    // Real interviews open on the candidate's own resume.
+    expect(start.body.data.current.area).toBe("PROJECTS");
 
     // A partial answer with audio → Manisha follows up instead of moving on.
     const audio = Buffer.from("fake-opus-audio").toString("base64");
     let res = await agent.post(`/api/career/sessions/${sessionId}/answer`).send({ turnId: start.body.data.current.id, answerText: "I used JWT tokens", audioBase64: audio, audioMime: "audio/webm;codecs=opus", durationSec: 40 });
     expect(res.body.data.current.kind).toBe("FOLLOW_UP");
     expect(res.body.data.current.question).toMatch(/Where did you store/);
-    expect(res.body.data.lead).toBe("Got it, thanks.");
+    // Manisha's acknowledgement is a fixed neutral phrase, never the model's wording.
+    expect(res.body.data.lead).toMatch(/^(Let's go one level deeper\.|Can you explain that further\?|Okay\. Let's go a little deeper on that\.)$/);
 
     // While in progress nothing about scores or the transcript is exposed.
     const mid = await agent.get(`/api/career/sessions/${sessionId}`);
@@ -131,7 +133,7 @@ describe("AI technical interview", () => {
     expect(s.readinessScore).toBe(s.report.readiness);
     expect(["INTERVIEW_READY", "NEEDS_IMPROVEMENT", "NOT_YET_READY"]).toContain(s.result);
     expect(s.report.disclaimer).toMatch(/not an automated hiring decision/);
-    expect(s.report.nextSteps.at(-1).label).toMatch(/Retake/);
+    expect(s.report.nextSteps.at(-1).label).toMatch(/another interview/);
     const coding = s.turns.find((t: { kind: string }) => t.kind === "CODING");
     expect(coding.codeResult).toMatchObject({ passed: 2, total: 2 });
 
