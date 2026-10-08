@@ -1386,3 +1386,86 @@ export interface SkillGuide {
   planId: string | null;
   questions: { id: string; rank: number; question: string; priority: PrepPriority; status: PrepPracticeStatus; skill: string }[];
 }
+
+// ───────────────────────── Skill Intelligence: knowledge maps & concept chapters ─────────────────────────
+
+export type ConceptImportance = "MUST" | "GOOD" | "ADVANCED";
+export type ConceptStatus = "LEARNING" | "UNDERSTOOD" | "MASTERED";
+
+export interface ConceptRef {
+  key: string;
+  title: string;
+  difficulty: number;
+  frequency: number;
+  importance: ConceptImportance;
+  prerequisites: string[];
+}
+
+export interface SkillMapContent {
+  summary: string;
+  domains: { key: string; title: string; concepts: ConceptRef[] }[];
+  related: string[];
+}
+
+export interface SkillMapView {
+  skill: { key: string; name: string; curated: boolean; source: string };
+  map: SkillMapContent;
+  progress: Record<string, { status: ConceptStatus; explainScore: number | null }>;
+  stats: { concepts: number; started: number; understood: number; mastered: number; mustKnow: number; mustKnowMastered: number; averageExplain: number | null };
+  domains: { key: string; mastered: number; total: number }[];
+  claims: { id: string; claim: string; evidence: string; risk: string; depth: number; drill: { id: string; planId: string; question: string; difficulty: number; status: string }[] }[];
+}
+
+export interface KnowledgeTracks {
+  tracks: { key: string; name: string; concepts: number; domains: number; started: number; mastered: number }[];
+  skills: { key: string; name: string; concepts: number | null; started: number; mastered: number }[];
+}
+
+type DiagramBase = { title: string; objective: string };
+export type Diagram =
+  | (DiagramBase & { kind: "architecture"; layers: { label?: string; nodes: { label: string; note?: string }[] }[] })
+  | (DiagramBase & { kind: "flow"; steps: { label: string; note?: string; branches?: { label: string; steps: string[] }[] }[] })
+  | (DiagramBase & { kind: "comparison"; left: { title: string; points: string[] }; right: { title: string; points: string[] } })
+  | (DiagramBase & { kind: "timeline"; actors: string[]; events: { from: string; to: string; label: string }[] })
+  | (DiagramBase & { kind: "state"; states: string[]; transitions: { from: string; to: string; label?: string }[] })
+  | (DiagramBase & { kind: "decision"; question: string; branches: { answer: string; result?: string; question?: string; branches?: { answer: string; result: string }[] }[] });
+
+export interface ConceptContent {
+  oneLine: string;
+  why: { problem: string; solution: string; tradeoff: string };
+  mentalModel: { analogy: string; explanation: string };
+  visuals: Diagram[];
+  howItWorks: string[];
+  realWorld: { where: string; how: string }[];
+  code: { language: string; snippet: string; explanation: string } | null;
+  whenToUse: string[];
+  whenNotToUse: string[];
+  advantages: string[];
+  disadvantages: string[];
+  mistakes: { wrong: string; right: string }[];
+  levels: { level: number; question: string; hint: string }[];
+  keyPoints: string[];
+  internals: string[];
+  interviewerExpects: string[];
+  cheatSheet: { definition: string; useFor: string[]; remember: string[]; interviewQuestion: string };
+}
+
+export interface ConceptChapter {
+  skill: { key: string; name: string; curated: boolean };
+  domain: { key: string; title: string };
+  concept: Omit<ConceptRef, "prerequisites"> & { prerequisites: { key: string; title: string }[] };
+  content: ConceptContent;
+  locale: "en" | "hinglish" | "hi";
+  progress: { status: ConceptStatus; explainScore: number | null; explainAttempts: number };
+  prev: { key: string; title: string } | null;
+  next: { key: string; title: string } | null;
+  unlocks: { key: string; title: string }[];
+}
+
+export interface ExplainResult {
+  score: number;
+  mastered: boolean;
+  masteryScore: number;
+  evaluation: { correctness: number; completeness: number; depth: number; clarity: number; covered: string[]; missing: string[]; incorrect: string[]; unnecessary: string[]; feedback: string };
+  progress: { status: ConceptStatus; explainScore: number | null; explainAttempts: number };
+}

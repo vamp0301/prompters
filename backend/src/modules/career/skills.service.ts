@@ -52,7 +52,7 @@ function guidePrompt(skill: string, locale: GuideLocale) {
 }
 
 /** Skills the user may open guides for: everything on their resumes plus skills tested in their Top-100 plans. */
-async function ownedSkills(userId: string) {
+export async function ownedSkills(userId: string) {
   const [resumes, questions] = await Promise.all([
     prisma.careerResume.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, select: { id: true, parsed: true } }),
     prisma.prepQuestion.findMany({ where: { plan: { userId } }, distinct: ["skill"], select: { skill: true } }),

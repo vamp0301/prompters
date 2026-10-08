@@ -73,6 +73,7 @@ model User {
   prepPlans          PrepPlan[]
   prepAttempts       PrepAttempt[]
   prepPacks          PrepPack[]
+  conceptProgress    ConceptProgress[]
 
   @@index([role])
   @@index([createdAt])
@@ -1043,6 +1044,54 @@ model PrepPack {
 
 /// A study guide for one skill in one language (what it is, real-world use, implementation, perks,
 /// drawbacks…). Generic, so it is generated once and shared; personal context is added per request.
+/// A skill broken into domains → concepts (the knowledge map). Curated for big tracks (System Design),
+/// generated once per skill otherwise, and shared by every learner.
+model SkillMap {
+  id        String   @id @default(cuid())
+  /// Canonical skill key ("nodejs" for Node.js / NodeJS).
+  key       String   @unique
+  name      String
+  /// CURATED | AI
+  source    String
+  content   Json
+  model     String?
+  createdAt DateTime @default(now())
+}
+
+/// One concept chapter (one-liner, why, mental model, diagrams, code, trade-offs, levels, cheat sheet…).
+/// Generated on first open and cached for everyone; validated against a fixed schema.
+model SkillConcept {
+  id         String   @id @default(cuid())
+  skillKey   String
+  conceptKey String
+  locale     String
+  title      String
+  content    Json
+  model      String?
+  createdAt  DateTime @default(now())
+
+  @@unique([skillKey, conceptKey, locale])
+}
+
+/// A learner's progress on one concept. MASTERED is only earned by explaining it well, not by reading.
+model ConceptProgress {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillKey        String
+  conceptKey      String
+  /// LEARNING | UNDERSTOOD | MASTERED
+  status          String    @default("LEARNING")
+  explainScore    Int?
+  explainAttempts Int       @default(0)
+  lastExplainedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, skillKey, conceptKey])
+  @@index([userId, skillKey])
+}
+
 model SkillGuide {
   id        String   @id @default(cuid())
   /// Canonical skill key ("nodejs" for Node.js / NodeJS / node js).

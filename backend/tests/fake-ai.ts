@@ -126,6 +126,59 @@ export class FakeAI implements AIProvider {
           lead: "Got it, thanks.",
         });
       }
+      case "skill_map": {
+        const concepts = (prefix: string, n: number) =>
+          Array.from({ length: n }, (_, i) => ({ key: `${prefix}-${i + 1}`, title: `${prefix} concept ${i + 1}`, difficulty: (i % 5) + 1, frequency: 5 - (i % 5), importance: ["must", "GOOD", "advanced"][i % 3], prerequisites: i ? [`${prefix}-${i}`, "not-in-map"] : [] }));
+        return JSON.stringify({
+          summary: "A JavaScript runtime for servers.",
+          domains: [
+            { key: "foundation", title: "Foundation", concepts: concepts("basics", 3) },
+            { key: "async", title: "Async programming", concepts: [{ key: "event-loop", title: "Event Loop", difficulty: 3, frequency: 5, importance: "MUST", prerequisites: ["basics-1"] }, ...concepts("async", 2)] },
+            { key: "dupes", title: "Duplicates", concepts: [{ key: "event-loop", title: "Event Loop again", difficulty: 3, frequency: 5, importance: "MUST", prerequisites: [] }] },
+          ],
+          related: ["Express", "JavaScript"],
+        });
+      }
+      case "concept_chapter":
+        return JSON.stringify({
+          oneLine: "The event loop lets Node.js run many I/O operations without a thread per request.",
+          why: { problem: "One thread per request wastes memory.", solution: "Run JS on one thread and hand I/O to the OS.", tradeoff: "CPU-heavy work blocks everyone." },
+          mentalModel: { analogy: "A waiter taking many orders while the kitchen cooks.", explanation: "The waiter never stands at the stove." },
+          visuals: [
+            { kind: "flow", title: "Request lifecycle", objective: "See where async work leaves the stack", steps: [{ label: "Call stack" }, { label: "OS / APIs", branches: [{ label: "Done", steps: ["Callback queue", "Call stack"] }] }] },
+            { kind: "timeline", title: "Broken", objective: "Should be dropped", actors: ["Client", "Server"], events: [{ from: "Client", to: "Database", label: "query" }] },
+            { kind: "comparison", title: "Threads vs loop", objective: "Compare models", left: { title: "Thread per request", points: ["Memory heavy"] }, right: { title: "Event loop", points: ["Cheap I/O"] } },
+          ],
+          howItWorks: ["JS runs on the call stack.", "Async I/O goes to the OS.", "Callbacks wait in queues."],
+          realWorld: [{ where: "API servers", how: "Many concurrent DB calls" }],
+          code: { language: "javascript", snippet: "setTimeout(() => console.log('later'), 0);\nconsole.log('now');", explanation: "Prints now, then later." },
+          whenToUse: ["I/O-heavy APIs"],
+          whenNotToUse: ["CPU-heavy image processing"],
+          advantages: ["Low memory per connection"],
+          disadvantages: ["Blocking code stalls everything"],
+          mistakes: [{ wrong: "Node.js is multi-threaded for JS.", right: "Your JS runs on one thread; libuv uses a pool for some I/O." }],
+          levels: [
+            { level: 1, question: "What is the event loop?", hint: "Think queues." },
+            { level: 2, question: "How do you avoid blocking it?", hint: "Async APIs, workers." },
+            { level: 3, question: "How do you find what blocks it in production?", hint: "Profiling." },
+            { level: 5, question: "CPU is 100% and latency spikes — debug it.", hint: "Look for sync work." },
+          ],
+          keyPoints: ["Single JS thread", "Async I/O offloaded", "Callback / microtask queues", "Blocking stalls all requests"],
+          internals: ["libuv phases: timers, poll, check"],
+          interviewerExpects: ["Single thread", "Queues", "Blocking consequences"],
+          cheatSheet: { definition: "Coordinates JS execution and async callbacks.", useFor: ["I/O-heavy servers"], remember: ["Never block the loop"], interviewQuestion: "Why is Node.js fast for I/O?" },
+        });
+      case "concept_explain": {
+        const answer = user.match(/<candidate_answer>\n([\s\S]*?)\n<\/candidate_answer>/)?.[1] ?? "";
+        const strong = /single thread/i.test(answer) && /block/i.test(answer);
+        return JSON.stringify({
+          correctness: strong ? 9 : 5, completeness: strong ? 9 : 3, depth: strong ? 8 : 3, clarity: 8,
+          covered: strong ? ["Single JS thread", "Blocking stalls all requests"] : ["Async I/O offloaded"],
+          missing: strong ? [] : ["Single JS thread", "Blocking stalls all requests"],
+          incorrect: [], unnecessary: [],
+          feedback: strong ? "Clear and complete." : "Say why one thread is enough and what blocking does.",
+        });
+      }
       case "interview_bank": {
         const areas = ["PROJECTS", "FUNDAMENTALS", "ROLE", "PRACTICAL", "SYSTEM_DESIGN", "RESUME"];
         const skills = ["Node.js", "MongoDB", "JWT", "Express", "System design", "HTTP"];

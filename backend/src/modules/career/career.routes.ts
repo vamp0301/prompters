@@ -11,6 +11,7 @@ import { MATCH_WEIGHTS, analyse, createJob, createResume, deleteResume } from ".
 import * as interview from "./interview.service.js";
 import { careerOverview } from "./overview.service.js";
 import { GUIDE_LOCALES, resumeSkills, skillGuide } from "./skills.service.js";
+import { conceptChapter, explainConcept, knowledgeTracks, markConcept, skillMap } from "./knowledge.service.js";
 import { deletePackFiles } from "../prep/pack.service.js";
 
 const docSchema = z.object({
@@ -48,6 +49,27 @@ export function careerRoutes() {
     const me = currentUser(req);
     const q = parse(z.object({ name: z.string().trim().min(1).max(80), lang: z.enum(GUIDE_LOCALES).default("en") }), req.query);
     return skillGuide(me.id, q.name, q.lang);
+  }));
+
+  // ───── Skill Intelligence: knowledge maps → concept chapters → explain it → mastery ─────
+  const skillName = z.string().trim().min(1).max(80);
+  const conceptKey = z.string().trim().min(1).max(60).regex(/^[a-z0-9-]+$/);
+  r.get("/knowledge", handler(async (req) => knowledgeTracks(currentUser(req).id)));
+  r.get("/knowledge/map", skillGuideLimiter(), handler(async (req) => {
+    const q = parse(z.object({ name: skillName }), req.query);
+    return skillMap(currentUser(req).id, q.name);
+  }));
+  r.get("/knowledge/concept", skillGuideLimiter(), handler(async (req) => {
+    const q = parse(z.object({ name: skillName, c: conceptKey, lang: z.enum(GUIDE_LOCALES).default("en") }), req.query);
+    return conceptChapter(currentUser(req).id, q.name, q.c, q.lang);
+  }));
+  r.post("/knowledge/concept/progress", handler(async (req) => {
+    const b = parse(z.object({ name: skillName, c: conceptKey, status: z.enum(["LEARNING", "UNDERSTOOD"]) }), req.body);
+    return markConcept(currentUser(req).id, b.name, b.c, b.status);
+  }));
+  r.post("/knowledge/concept/explain", careerAnswerLimiter(), handler(async (req) => {
+    const b = parse(z.object({ name: skillName, c: conceptKey, answer: z.string().trim().min(10).max(4000), lang: z.enum(GUIDE_LOCALES).default("en") }), req.body);
+    return explainConcept(currentUser(req).id, b.name, b.c, b.answer, b.lang);
   }));
 
   // ───── Resumes & job descriptions ─────
