@@ -12,6 +12,8 @@ export class FakeAI implements AIProvider {
   prepBroken = false;
   /** Number of upcoming answer evaluations that should fail (simulates a Gemini outage/timeout). */
   failEvaluations = 0;
+  /** Bad chapter drafts to return before good ones (exercises the validator + retry). */
+  badChapters: ("mixed" | "no-visual" | "unrelated-code" | "missing-covers")[] = [];
 
   /** Distinct questions per call, plus a few the validator must reject. */
   private prepBatch(category: string, count: number) {
@@ -139,35 +141,53 @@ export class FakeAI implements AIProvider {
           related: ["Express", "JavaScript"],
         });
       }
-      case "concept_chapter":
-        return JSON.stringify({
-          oneLine: "The event loop lets Node.js run many I/O operations without a thread per request.",
-          why: { problem: "One thread per request wastes memory.", solution: "Run JS on one thread and hand I/O to the OS.", tradeoff: "CPU-heavy work blocks everyone." },
-          mentalModel: { analogy: "A waiter taking many orders while the kitchen cooks.", explanation: "The waiter never stands at the stove." },
+      case "concept_chapter": {
+        const title = user.match(/<concept>\n([\s\S]*?)\n<\/concept>/)?.[1] ?? "Concept";
+        const covers = (user.match(/Must cover: (.*)/)?.[1] ?? "").split(";").map((x) => x.trim()).filter(Boolean);
+        const bad = this.badChapters.shift();
+        const t = title.toLowerCase();
+        const chapter = {
+          oneLine: `${title} is explained here in one line for a beginner.`,
+          explainLikeNew: `Think of ${title} like a helpful traffic police officer at a busy junction.`,
+          why: { problem: `Without ${title}, one part of the system takes all the work.`, solution: `${title} spreads or organises the work.`, tradeoff: `${title} adds another component to run and monitor.` },
+          mentalModel: { analogy: "A receptionist sending visitors to free counters.", explanation: `That is what ${title} does for requests.` },
           visuals: [
-            { kind: "flow", title: "Request lifecycle", objective: "See where async work leaves the stack", steps: [{ label: "Call stack" }, { label: "OS / APIs", branches: [{ label: "Done", steps: ["Callback queue", "Call stack"] }] }] },
-            { kind: "timeline", title: "Broken", objective: "Should be dropped", actors: ["Client", "Server"], events: [{ from: "Client", to: "Database", label: "query" }] },
-            { kind: "comparison", title: "Threads vs loop", objective: "Compare models", left: { title: "Thread per request", points: ["Memory heavy"] }, right: { title: "Event loop", points: ["Cheap I/O"] } },
+            {
+              kind: "architecture", title: `With ${title}`, objective: `See where ${title} sits`, alt: `Users connect to ${title}, which forwards to three servers.`,
+              layers: [{ label: "Clients", nodes: [{ label: "Users" }] }, { label: "Edge", nodes: [{ label: title.slice(0, 40) }] }, { label: "App", nodes: [{ label: "Server 1" }, { label: "Server 2" }, { label: "Server 3" }] }],
+              walkthrough: [{ label: "A request arrives", highlight: "Users" }, { label: `${title} picks a server`, highlight: title.slice(0, 40) }, { label: "Server 2 answers", highlight: "Server 2" }],
+            },
+            { kind: "comparison", title: "Before vs after", objective: "Compare the two setups", alt: "One overloaded server versus several shared servers.", left: { title: "Single server", points: ["Overloaded", "Single point of failure"] }, right: { title: `With ${title}`, points: ["Load shared", "Survives one failure"] } },
           ],
-          howItWorks: ["JS runs on the call stack.", "Async I/O goes to the OS.", "Callbacks wait in queues."],
-          realWorld: [{ where: "API servers", how: "Many concurrent DB calls" }],
-          code: { language: "javascript", snippet: "setTimeout(() => console.log('later'), 0);\nconsole.log('now');", explanation: "Prints now, then later." },
-          whenToUse: ["I/O-heavy APIs"],
-          whenNotToUse: ["CPU-heavy image processing"],
-          advantages: ["Low memory per connection"],
-          disadvantages: ["Blocking code stalls everything"],
-          mistakes: [{ wrong: "Node.js is multi-threaded for JS.", right: "Your JS runs on one thread; libuv uses a pool for some I/O." }],
-          levels: [
-            { level: 1, question: "What is the event loop?", hint: "Think queues." },
-            { level: 2, question: "How do you avoid blocking it?", hint: "Async APIs, workers." },
-            { level: 3, question: "How do you find what blocks it in production?", hint: "Profiling." },
-            { level: 5, question: "CPU is 100% and latency spikes — debug it.", hint: "Look for sync work." },
-          ],
-          keyPoints: ["Single JS thread", "Async I/O offloaded", "Callback / microtask queues", "Blocking stalls all requests"],
-          internals: ["libuv phases: timers, poll, check"],
-          interviewerExpects: ["Single thread", "Queues", "Blocking consequences"],
-          cheatSheet: { definition: "Coordinates JS execution and async callbacks.", useFor: ["I/O-heavy servers"], remember: ["Never block the loop"], interviewQuestion: "Why is Node.js fast for I/O?" },
-        });
+          howItWorks: [`A client request reaches ${title}.`, `${title} chooses a target.`, "The target processes it and replies."],
+          deepDives: Array.from({ length: Math.ceil(covers.length / 2) }, (_, i) => covers.slice(i * 2, i * 2 + 2)).map((group) => ({ title: group[0], body: `${group.join(" and ")} explained for ${title}.`, points: group.map((cv) => `${cv} in practice`) })),
+          realWorld: [{ where: "E-commerce APIs", how: `${title} in front of app servers` }],
+          implementation: { applicable: true, language: "nginx", snippet: `# ${title}\nupstream app { server a; server b; }`, explanation: `A minimal ${title} configuration.` },
+          whenToUse: ["When one instance can't handle peak traffic or you need redundancy"],
+          whenNotToUse: ["For a tiny internal tool with one instance and no availability need"],
+          advantages: ["Higher availability"],
+          disadvantages: ["One more component"],
+          tradeoffs: ["Availability vs operational complexity"],
+          mistakes: [{ wrong: `${title} makes the app faster by itself.`, right: `${title} spreads load; each server still does the work.` }],
+          levels: [1, 2, 3, 4, 5].map((level) => ({ level, question: `Level ${level} question about ${title}?`, hint: `Think about ${title} at level ${level}.` })),
+          quiz: [0, 1, 2].map((i) => ({ question: `Quiz ${i + 1} on ${title}?`, options: ["A", "B", "C", "D"], answer: i % 4, explanation: `Because of how ${title} works.` })),
+          keyPoints: [`What ${title} is`, "Why it exists", "How it works", "Trade-offs"],
+          internals: [`${title} keeps state about targets.`],
+          interviewerExpects: ["Definition", "Mechanism", "Failure handling"],
+          explainTask: `Explain ${title} in 60 seconds.`,
+          cheatSheet: { definition: `${title} in one line.`, useFor: ["Spreading load"], remember: ["Check health"], interviewQuestion: `Why do we need ${title}?` },
+        };
+        if (bad === "mixed") {
+          chapter.oneLine = "System design is about building large systems.";
+          chapter.explainLikeNew = "Big systems need many parts.";
+          chapter.howItWorks = ["Use Sharding to split data.", "Use Cache-Aside for reads.", "Use Message Queues for async work."];
+        }
+        if (bad === "no-visual") chapter.visuals = [{ kind: "flow", title: "Tiny", objective: "Nothing", alt: "Two boxes.", steps: [{ label: "A" }, { label: "A" }] } as never];
+        if (bad === "unrelated-code") chapter.implementation = { applicable: true, language: "python", snippet: "from functools import lru_cache\n@lru_cache\ndef f(x): return x", explanation: "Memoises a function." };
+        if (bad === "missing-covers") chapter.deepDives = [];
+        void t;
+        return JSON.stringify(chapter);
+      }
       case "concept_explain": {
         const answer = user.match(/<candidate_answer>\n([\s\S]*?)\n<\/candidate_answer>/)?.[1] ?? "";
         const strong = /single thread/i.test(answer) && /block/i.test(answer);

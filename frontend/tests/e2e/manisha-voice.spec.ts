@@ -137,6 +137,8 @@ test("voice answer: consent → listening → transcript → edit → submit →
   await page.getByRole("button", { name: "Allow recording" }).click();
   await expect(page.getByText("Listening", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Live transcript")).toContainText("I keep the token in a cookie");
+  // Recording starts asynchronously after consent; stop only once it is actually running.
+  await expect(page.getByText("Recording your answer audio (you allowed this).")).toBeVisible();
   await page.getByRole("button", { name: /Stop & review/ }).click();
   const box = page.getByLabel("Your answer");
   await expect(box).toHaveValue("I keep the token in a cookie");

@@ -42,13 +42,32 @@ test("System Design track → concept chapter → modes → explain → mastered
   await expect(page.getByRole("figure").first()).toContainText("What this shows:");
   expect(await axe(page)).toEqual([]);
 
+  // Learn order: one-line idea → beginner explanation → visual explanation → how it works.
+  const order = await page.locator("main").innerText();
+  const at = (t: string) => order.indexOf(t);
+  expect(at("explained here in one line")).toBeGreaterThan(-1);
+  expect(at("explained here in one line")).toBeLessThan(at("traffic police officer"));
+  expect(at("traffic police officer")).toBeLessThan(at("With Load Balancers"));
+  expect(at("With Load Balancers")).toBeLessThan(at("How it works"));
+
+  // Step-through: Next highlights the next component and announces the step.
+  const fig = page.getByRole("figure").first();
+  await expect(fig).toContainText("A request arrives");
+  await fig.getByRole("button", { name: /^Next/ }).click();
+  await expect(fig).toContainText("Load Balancers picks a server");
+  await fig.getByRole("button", { name: /Previous/ }).click();
+  await expect(fig).toContainText("A request arrives");
+
   await page.getByRole("tab", { name: /Visual/ }).click();
   await expect(page.getByRole("figure")).toHaveCount(2);
   await page.getByRole("tab", { name: /Code/ }).click();
-  await expect(page.getByText("Prints now, then later.")).toBeVisible();
+  await expect(page.getByText("A minimal Load Balancers configuration.")).toBeVisible();
   await page.getByRole("tab", { name: /Interview/ }).click();
+  await expect(page.getByRole("heading", { name: "Quick check" })).toBeVisible();
+  await page.getByRole("group", { name: /Quiz 1 on Load Balancers/ }).getByRole("button", { name: "A", exact: true }).click();
+  await expect(page.getByText("1/1 correct")).toBeVisible();
   await page.getByRole("button", { name: /Show hint/ }).first().click();
-  await expect(page.getByText("Think queues.")).toBeVisible();
+  await expect(page.getByText("Think about Load Balancers at level 1.")).toBeVisible();
   await page.getByRole("button", { name: /Reveal step 1/ }).click();
 
   await page.getByRole("tab", { name: /Explain/ }).click();

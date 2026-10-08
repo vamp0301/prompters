@@ -1,5 +1,6 @@
-import { ArrowDown, ArrowRight, GitBranch } from "lucide-react";
-import type { ReactNode } from "react";
+"use client";
+import { ArrowDown, ArrowRight, ChevronLeft, ChevronRight, GitBranch } from "lucide-react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import type { Diagram } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -11,9 +12,24 @@ import { cn } from "@/lib/utils";
 const box = "rounded-lg border border-border bg-surface px-3 py-2 text-center text-[13px] font-semibold leading-snug shadow-[0_1px_0_var(--line)]";
 const down = <ArrowDown className="mx-auto size-4 text-subtle" aria-hidden />;
 
+/** The component highlighted by the current walkthrough step (matched by label). */
+const ActiveLabel = createContext<string | null>(null);
+
 function Node({ label, note, tone }: { label: string; note?: string; tone?: "accent" | "info" | "warn" }) {
+  const active = useContext(ActiveLabel);
+  const on = !!active && active.toLowerCase() === label.toLowerCase();
   return (
-    <div className={cn(box, tone === "accent" && "border-accent/40 bg-accent-soft", tone === "info" && "border-info/40 bg-info-soft", tone === "warn" && "border-warn/40 bg-warn-soft")}>
+    <div
+      data-active={on || undefined}
+      className={cn(
+        box,
+        "transition-[box-shadow,background-color] duration-200",
+        tone === "accent" && "border-accent/40 bg-accent-soft",
+        tone === "info" && "border-info/40 bg-info-soft",
+        tone === "warn" && "border-warn/40 bg-warn-soft",
+        on && "border-accent-2 bg-accent-2-soft ring-2 ring-accent-2/60",
+      )}
+    >
       {label}
       {note && <div className="mt-0.5 text-[11px] font-normal text-muted">{note}</div>}
     </div>
@@ -233,6 +249,9 @@ export function diagramText(d: Diagram): string[] {
 const KIND_LABEL: Record<Diagram["kind"], string> = { architecture: "Architecture", flow: "Flow", comparison: "Comparison", timeline: "Sequence", state: "States", decision: "Decision" };
 
 export function DiagramView({ diagram, compact }: { diagram: Diagram; compact?: boolean }) {
+  const steps = diagram.walkthrough ?? [];
+  const [step, setStep] = useState(0);
+  const current = steps.length ? steps[Math.min(step, steps.length - 1)] : null;
   let body: ReactNode;
   switch (diagram.kind) {
     case "architecture":
@@ -260,12 +279,48 @@ export function DiagramView({ diagram, compact }: { diagram: Diagram; compact?: 
         <h3 className="font-display text-xl">{diagram.title}</h3>
         <span className="eyebrow text-[9px] text-muted">{KIND_LABEL[diagram.kind]}</span>
       </div>
-      <div aria-hidden>{body}</div>
+      <ActiveLabel.Provider value={current?.highlight ?? null}>
+        <div aria-hidden>{body}</div>
+      </ActiveLabel.Provider>
+      {diagram.alt && <p className="sr-only">{diagram.alt}</p>}
       <ul className="sr-only">
         {diagramText(diagram).map((t, i) => (
           <li key={i}>{t}</li>
         ))}
       </ul>
+      {current && (
+        <div className="mt-4 rounded-lg border border-border bg-surface p-3">
+          <p aria-live="polite" className="text-[13px]">
+            <span className="eyebrow mr-2 text-[9px] text-accent-2">
+              Step {step + 1} / {steps.length}
+            </span>
+            {current.label}
+          </p>
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setStep((s) => Math.max(0, s - 1))}
+              disabled={step === 0}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:border-accent disabled:opacity-40"
+            >
+              <ChevronLeft className="size-3.5" aria-hidden /> Previous
+            </button>
+            <span className="flex gap-1" aria-hidden>
+              {steps.map((_, i) => (
+                <span key={i} className={cn("h-1.5 rounded-full transition-all", i === step ? "w-4 bg-accent-2" : "w-1.5 bg-border-strong")} />
+              ))}
+            </span>
+            <button
+              type="button"
+              onClick={() => setStep((s) => Math.min(steps.length - 1, s + 1))}
+              disabled={step === steps.length - 1}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:border-accent disabled:opacity-40"
+            >
+              Next <ChevronRight className="size-3.5" aria-hidden />
+            </button>
+          </div>
+        </div>
+      )}
       <figcaption className="mt-4 text-xs text-muted">
         <span className="font-semibold text-text">What this shows:</span> {diagram.objective}
       </figcaption>

@@ -1421,7 +1421,7 @@ export interface KnowledgeTracks {
   skills: { key: string; name: string; concepts: number | null; started: number; mastered: number }[];
 }
 
-type DiagramBase = { title: string; objective: string };
+type DiagramBase = { title: string; objective: string; alt?: string; walkthrough?: { label: string; highlight?: string }[] };
 export type Diagram =
   | (DiagramBase & { kind: "architecture"; layers: { label?: string; nodes: { label: string; note?: string }[] }[] })
   | (DiagramBase & { kind: "flow"; steps: { label: string; note?: string; branches?: { label: string; steps: string[] }[] }[] })
@@ -1431,13 +1431,21 @@ export type Diagram =
   | (DiagramBase & { kind: "decision"; question: string; branches: { answer: string; result?: string; question?: string; branches?: { answer: string; result: string }[] }[] });
 
 export interface ConceptContent {
+  _v?: number;
   oneLine: string;
+  explainLikeNew?: string;
   why: { problem: string; solution: string; tradeoff: string };
   mentalModel: { analogy: string; explanation: string };
   visuals: Diagram[];
   howItWorks: string[];
+  deepDives?: { title: string; body: string; points: string[]; visual?: Diagram }[];
   realWorld: { where: string; how: string }[];
   code: { language: string; snippet: string; explanation: string } | null;
+  /** Why there's no code ("Code is not the best way to understand this concept."). */
+  codeNote?: string | null;
+  tradeoffs?: string[];
+  quiz?: { question: string; options: string[]; answer: number; explanation: string }[];
+  explainTask?: string;
   whenToUse: string[];
   whenNotToUse: string[];
   advantages: string[];

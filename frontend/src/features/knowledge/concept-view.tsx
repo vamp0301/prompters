@@ -144,7 +144,13 @@ export function ConceptView({ name, conceptKey }: { name: string; conceptKey: st
       {mode === "learn" && (
         <div className="space-y-4">
           <p className="font-display text-2xl leading-snug sm:text-[1.75rem]">{c.oneLine}</p>
-          {c.visuals[0] && <DiagramView diagram={c.visuals[0]} />}
+
+          <TapedNote tape="Explain like I'm new" className="rotate-0">
+            {c.explainLikeNew && <p className="text-[15px] leading-relaxed">{c.explainLikeNew}</p>}
+            <p className="font-display mt-3 text-2xl leading-snug">&ldquo;{c.mentalModel.analogy}&rdquo;</p>
+            <p className="mt-2 text-[14px]">{c.mentalModel.explanation}</p>
+          </TapedNote>
+
           <div className="grid gap-3 md:grid-cols-3">
             {[
               ["Problem", c.why.problem, "text-danger"],
@@ -159,23 +165,43 @@ export function ConceptView({ name, conceptKey }: { name: string; conceptKey: st
               </div>
             ))}
           </div>
-          <TapedNote tape="Mental model" className="rotate-0">
-            <p className="font-display text-2xl leading-snug">&ldquo;{c.mentalModel.analogy}&rdquo;</p>
-            <p className="mt-3 text-[14px]">{c.mentalModel.explanation}</p>
-          </TapedNote>
+
+          <section aria-labelledby="visual-h" className="space-y-3">
+            <h2 id="visual-h" className="eyebrow text-accent">
+              Visual explanation
+            </h2>
+            {c.visuals.length ? c.visuals.map((v, i) => <DiagramView key={i} diagram={v} />) : <p className="text-sm text-muted">No diagram for this chapter.</p>}
+          </section>
 
           <Section title="How it works" open>
             <ol className="space-y-2">
-              {c.howItWorks.map((s, i) => (
+              {c.howItWorks.map((st, i) => (
                 <li key={i} className="flex gap-3">
                   <span className="font-mono text-xs text-accent-2">{String(i + 1).padStart(2, "0")}</span>
-                  {s}
+                  {st}
                 </li>
               ))}
             </ol>
           </Section>
+
+          {(c.deepDives ?? []).map((dd, i) => (
+            <Section key={i} title={dd.title}>
+              <p>{dd.body}</p>
+              {dd.points.length > 0 && (
+                <div className="mt-3">
+                  <Bullets items={dd.points} />
+                </div>
+              )}
+              {dd.visual && (
+                <div className="mt-4">
+                  <DiagramView diagram={dd.visual} compact />
+                </div>
+              )}
+            </Section>
+          ))}
+
           {c.realWorld.length > 0 && (
-            <Section title="Where you'll see it">
+            <Section title="Where it's used">
               <ul className="space-y-2">
                 {c.realWorld.map((r, i) => (
                   <li key={i}>
@@ -185,6 +211,18 @@ export function ConceptView({ name, conceptKey }: { name: string; conceptKey: st
               </ul>
             </Section>
           )}
+
+          <Section title="Implementation">
+            {c.code ? (
+              <div className="space-y-3">
+                <CodeBlock code={c.code.snippet} language={c.code.language} />
+                <p>{c.code.explanation}</p>
+              </div>
+            ) : (
+              <p className="text-muted">{c.codeNote ?? "Code is not the best way to understand this concept."}</p>
+            )}
+          </Section>
+
           <Section title="When to use it — and when not to">
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -208,9 +246,15 @@ export function ConceptView({ name, conceptKey }: { name: string; conceptKey: st
                 <Bullets items={c.disadvantages} tone="warn" />
               </div>
             </div>
+            {(c.tradeoffs ?? []).length > 0 && (
+              <div className="mt-4 border-t border-border pt-3">
+                <div className="eyebrow mb-2 text-muted">The trade-off in one line</div>
+                <Bullets items={c.tradeoffs!} tone="warn" />
+              </div>
+            )}
           </Section>
           {c.mistakes.length > 0 && (
-            <Section title="Common mistakes">
+            <Section title="Common mistakes — wrong vs right">
               <ul className="space-y-3">
                 {c.mistakes.map((m, i) => (
                   <li key={i} className="space-y-1">
@@ -238,6 +282,9 @@ export function ConceptView({ name, conceptKey }: { name: string; conceptKey: st
         <div className="space-y-4">
           <p className="text-sm text-muted">{c.oneLine}</p>
           {c.visuals.length ? c.visuals.map((v, i) => <DiagramView key={i} diagram={v} />) : <p className="text-sm text-muted">This chapter has no diagrams.</p>}
+          {(c.deepDives ?? []).filter((dd) => dd.visual).map((dd, i) => (
+            <DiagramView key={`dd-${i}`} diagram={dd.visual!} />
+          ))}
         </div>
       )}
 
@@ -250,7 +297,7 @@ export function ConceptView({ name, conceptKey }: { name: string; conceptKey: st
               {c.visuals.find((v) => v.kind === "flow") && <DiagramView diagram={c.visuals.find((v) => v.kind === "flow")!} compact />}
             </>
           ) : (
-            <p className={cn(paperCard, "p-5 text-sm text-muted")}>This concept is about design and reasoning — there&apos;s no code that would genuinely help here. Use the Visual and Interview modes.</p>
+            <p className={cn(paperCard, "p-5 text-sm text-muted")}>{c.codeNote ?? "Code is not the best way to understand this concept."} Use the Visual and Interview modes instead.</p>
           )}
         </div>
       )}
@@ -351,6 +398,7 @@ function InterviewMode({ d }: { d: ConceptChapter }) {
   const c = d.content;
   return (
     <div className="space-y-4">
+      {(c.quiz ?? []).length > 0 && <Quiz quiz={c.quiz!} />}
       <section aria-labelledby="levels-h" className={cn(paperCard, "p-5")}>
         <h2 id="levels-h" className="font-display text-2xl">
           From zero to interview level
@@ -418,6 +466,67 @@ function InterviewMode({ d }: { d: ConceptChapter }) {
   );
 }
 
+function Quiz({ quiz }: { quiz: NonNullable<ConceptChapter["content"]["quiz"]> }) {
+  const [picked, setPicked] = useState<Record<number, number>>({});
+  const answered = Object.keys(picked).length;
+  const right = quiz.filter((q, i) => picked[i] === q.answer).length;
+  return (
+    <section aria-labelledby="quiz-h" className={cn(paperCard, "p-5")}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="quiz-h" className="font-display text-2xl">
+          Quick check
+        </h2>
+        {answered > 0 && (
+          <span className="font-mono text-xs text-muted" aria-live="polite">
+            {right}/{answered} correct
+          </span>
+        )}
+      </div>
+      <ol className="mt-4 space-y-5">
+        {quiz.map((q, i) => {
+          const choice = picked[i];
+          const done = choice !== undefined;
+          return (
+            <li key={i}>
+              <fieldset>
+                <legend className="text-[15px] font-medium">
+                  {i + 1}. {q.question}
+                </legend>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {q.options.map((o, k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      disabled={done}
+                      aria-pressed={choice === k}
+                      onClick={() => setPicked((p) => ({ ...p, [i]: k }))}
+                      className={cn(
+                        "rounded-lg border px-3 py-2 text-left text-[13px] transition-colors",
+                        !done && "border-border hover:border-accent",
+                        done && k === q.answer && "border-accent bg-accent-soft",
+                        done && choice === k && k !== q.answer && "border-danger bg-danger-soft",
+                        done && choice !== k && k !== q.answer && "border-border opacity-60",
+                      )}
+                    >
+                      {o}
+                    </button>
+                  ))}
+                </div>
+                {done && (
+                  <p className={cn("mt-2 text-[13px]", choice === q.answer ? "text-accent" : "text-danger")}>
+                    {choice === q.answer ? "Correct. " : "Not quite. "}
+                    <span className="text-text">{q.explanation}</span>
+                  </p>
+                )}
+              </fieldset>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+}
+
 const SECONDS = 60;
 
 function ExplainMode({ d, name, lang, onDone }: { d: ConceptChapter; name: string; lang: Lang; onDone: () => void }) {
@@ -469,7 +578,7 @@ function ExplainMode({ d, name, lang, onDone }: { d: ConceptChapter; name: strin
         </h2>
         <span className="text-xs text-muted">Score {d.progress.explainScore ?? "—"} · mastered at 75+</span>
       </div>
-      <p className="text-sm text-muted">Say it like you would in an interview — out loud, or type it. Manisha checks it against what an interviewer listens for.</p>
+      <p className="text-sm text-muted">{d.content.explainTask ?? `Explain ${d.concept.title} in 60 seconds.`} Say it like you would in an interview — out loud, or type it. Manisha checks it against what an interviewer listens for.</p>
       {left !== null && (
         <div>
           <div className="flex items-center justify-between font-mono text-sm tabular-nums">

@@ -5,16 +5,29 @@ import { z } from "zod";
  * before it is stored or shown; the frontend renders these shapes, so a page is never hand-built.
  */
 
-const str = (max = 300) => z.string().trim().max(max);
-const line = (max = 160) => str(max).min(1);
-const list = (max = 8, item = 240) => z.array(line(item)).max(max).default([]);
+/** Over-long text is shortened at a word boundary instead of failing the whole response. */
+export function clip(text: string, max: number) {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.-]+$/, "")}…`;
+}
+const str = (max = 300) => z.preprocess((v) => (typeof v === "string" ? clip(v, max) : v), z.string().max(max));
+const line = (max = 160) => z.preprocess((v) => (typeof v === "string" ? clip(v, max) : v), z.string().min(1).max(max));
+/** Extra items beyond `max` are dropped rather than rejected. */
+const capped = <T extends z.ZodTypeAny>(item: T, max: number) => z.preprocess((v) => (Array.isArray(v) ? v.slice(0, max) : v), z.array(item));
+const list = (max = 8, item = 240) => capped(line(item), max).default([]);
 const level = z.coerce.number().int().min(1).max(5);
 
 // ───────────────────────── diagrams ─────────────────────────
 // Six kinds, each tied to what it teaches (`objective`). Shapes are deliberately small so they
 // render cleanly on a phone and read well as text for screen readers.
 
-const base = { title: line(80), objective: line(200) };
+/** Optional step-through: each step explains one moment and can highlight one component by its label. */
+const walkthrough = z.array(z.object({ label: line(140), highlight: str(40).optional() })).max(8).optional();
+// objective/alt are filled in by the validator when the model omits them (see knowledge.validate.ts).
+const base = { title: line(80), objective: str(200).optional(), alt: str(400).optional(), walkthrough };
 const node = z.object({ label: line(40), note: str(80).optional() });
 
 export const diagramSchema = z.discriminatedUnion("kind", [
@@ -42,6 +55,26 @@ export const diagramSchema = z.discriminatedUnion("kind", [
 ]);
 export type Diagram = z.infer<typeof diagramSchema>;
 
+/** Diagrams are parsed one by one: a broken diagram is dropped instead of failing the whole chapter. */
+const KIND_BY_FIELD: [string, Diagram["kind"]][] = [["layers", "architecture"], ["steps", "flow"], ["left", "comparison"], ["actors", "timeline"], ["states", "state"], ["question", "decision"]];
+/** Models sometimes omit or capitalise `kind`; the shape itself says which diagram it is. */
+function withKind(v: unknown) {
+  if (!v || typeof v !== "object") return v;
+  const o = v as Record<string, unknown>;
+  const kind = typeof o.kind === "string" && o.kind.trim() ? o.kind.trim().toLowerCase() : KIND_BY_FIELD.find(([f]) => f in o)?.[1];
+  if (!kind) return o;
+  // A flow drawn only as a walkthrough: the walkthrough labels are its steps.
+  if (kind === "flow" && !Array.isArray(o.steps) && Array.isArray(o.walkthrough)) {
+    const steps = o.walkthrough.map((w) => (w && typeof w === "object" ? (w as { label?: unknown }).label : w)).filter((l): l is string => typeof l === "string" && !!l.trim());
+    return { ...o, kind, steps: steps.map((label) => ({ label })) };
+  }
+  return { ...o, kind };
+}
+const lenientDiagram = z.unknown().transform((v) => {
+  const r = diagramSchema.safeParse(withKind(v));
+  return r.success ? r.data : undefined;
+});
+
 /** Drops diagrams that reference actors/states they don't declare, instead of rendering nonsense. */
 export function coherent(d: Diagram) {
   if (d.kind === "timeline") return d.events.every((e) => d.actors.includes(e.from) && d.actors.includes(e.to));
@@ -61,6 +94,10 @@ const conceptRef = z.object({
   frequency: level,
   importance: z.preprocess((v) => (typeof v === "string" ? v.toUpperCase() : v), z.enum(IMPORTANCE)).catch("GOOD"),
   prerequisites: z.array(z.string().max(60)).max(4).default([]),
+  /** Approved scope: the subtopics this concept's chapter must teach (deterministic curriculum, not AI). */
+  covers: z.array(line(60)).max(10).default([]),
+  /** What the learner should be able to do after the chapter. */
+  objective: str(200).optional(),
 });
 export type ConceptRef = z.infer<typeof conceptRef>;
 
@@ -76,30 +113,78 @@ export type SkillMapContent = z.infer<typeof skillMapSchema>;
 
 // ───────────────────────── concept chapter ─────────────────────────
 
+/** Bump when the chapter contract changes: older cached chapters are rewritten on next open. */
+export const CONCEPT_VERSION = 2;
+
+const LEVEL_NAMES = ["beginner", "developer", "production", "system design", "interview"];
+/** Models write levels as 3, "3", "Level 3" or "Production"; anything else falls back to its position. */
+function levelNumber(v: unknown, index: number) {
+  const n = typeof v === "number" ? v : Number(String(v ?? "").match(/\d/)?.[0] ?? NaN);
+  if (n >= 1 && n <= 5) return Math.round(n);
+  const named = LEVEL_NAMES.findIndex((name) => String(v ?? "").toLowerCase().includes(name));
+  return named >= 0 ? named + 1 : Math.min(index + 1, 5);
+}
+
+const quizItem = z.object({ question: line(240), options: capped(line(160), 4).pipe(z.array(z.string()).min(3)), answer: z.coerce.number().int().min(0).max(3), explanation: line(300) });
+
 export const conceptSchema = z.object({
   /** One sentence a beginner understands. */
   oneLine: line(240),
-  why: z.object({ problem: line(300), solution: line(300), tradeoff: line(300) }),
+  /** Explain like I'm new: a real-world analogy in plain words. */
+  explainLikeNew: line(500),
+  // tradeoff may be omitted by the model; the validator fills it from `tradeoffs` or rejects the chapter.
+  why: z.object({ problem: line(300), solution: line(300), tradeoff: str(300).default("") }),
   mentalModel: z.object({ analogy: line(200), explanation: line(400) }),
-  /** 1–3 diagrams, each with a learning objective. */
-  visuals: z.array(diagramSchema).min(1).max(3),
-  howItWorks: z.array(line(240)).min(2).max(6),
-  realWorld: z.array(z.object({ where: line(80), how: line(240) })).max(4).default([]),
-  code: z.object({ language: line(20), snippet: line(2000), explanation: line(300) }).nullable().default(null),
+  /** 1–3 teaching diagrams (mandatory), each with an objective and accessibility text. */
+  visuals: capped(lenientDiagram, 3).transform((ds) => ds.filter((d): d is Diagram => !!d)),
+  /** Step-by-step operation of THIS concept. */
+  howItWorks: capped(line(240), 7).pipe(z.array(z.string()).min(2)),
+  /** Concept-specific subtopics (e.g. Algorithms, Health checks, L4 vs L7), each optionally with its own diagram. */
+  deepDives: capped(z.object({ title: line(120), body: line(700), points: list(6, 200), visual: lenientDiagram.optional() }), 8).default([]),
+  realWorld: capped(z.object({ where: line(80), how: line(240) }), 4).default([]),
+  /** Real implementation only when code genuinely teaches the concept; otherwise applicable=false with a reason. */
+  implementation: z.object({
+    applicable: z.boolean(),
+    reason: str(240).optional(),
+    language: str(20).optional(),
+    snippet: str(2000).optional(),
+    explanation: str(400).optional(),
+  }),
   whenToUse: list(5),
   whenNotToUse: list(5),
   advantages: list(5),
   disadvantages: list(5),
-  mistakes: z.array(z.object({ wrong: line(200), right: line(300) })).max(5).default([]),
+  tradeoffs: list(4, 300),
+  mistakes: capped(z.object({ wrong: line(200), right: line(300) }), 5).default([]),
   /** Level 1 Beginner · 2 Developer · 3 Production · 4 System design · 5 Interview. */
-  levels: z.array(z.object({ level, question: line(240), hint: line(240) })).min(3).max(5),
+  levels: capped(z.object({ level: z.unknown(), question: line(240), hint: line(240) }), 5)
+    .transform((ls) => ls.map((l, i) => ({ ...l, level: levelNumber(l.level, i) })))
+    .pipe(z.array(z.object({ level, question: z.string(), hint: z.string() })).min(3)),
+  // A malformed quiz item (wrong option count, answer out of range) is dropped; at least 2 must survive.
+  quiz: capped(
+    z.unknown().transform((v) => {
+      const r = quizItem.safeParse(v);
+      return r.success && r.data.answer < r.data.options.length ? r.data : undefined;
+    }),
+    5,
+  )
+    .transform((qs) => qs.filter((q): q is z.infer<typeof quizItem> => !!q))
+    .pipe(z.array(z.any()).min(2)),
   /** What an interviewer listens for — also used to judge "explain it in 60 seconds". */
-  keyPoints: z.array(line(160)).min(3).max(8),
+  keyPoints: capped(line(160), 8).pipe(z.array(z.string()).min(3)),
   internals: list(6, 300),
   interviewerExpects: list(8, 120),
+  explainTask: line(240),
   cheatSheet: z.object({ definition: line(200), useFor: list(5, 80), remember: list(5, 120), interviewQuestion: line(200) }),
 });
-export type ConceptContent = z.infer<typeof conceptSchema>;
+
+/** What the API stores and serves: the validated chapter plus derived fields the UI already uses. */
+export type ConceptChapterContent = z.infer<typeof conceptSchema> & {
+  _v: number;
+  code: { language: string; snippet: string; explanation: string } | null;
+  codeNote: string | null;
+};
+export type ConceptContent = ConceptChapterContent;
 
 // ───────────────────────── explain it in 60 seconds ─────────────────────────
 

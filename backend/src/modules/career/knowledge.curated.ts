@@ -10,11 +10,73 @@ type Row = [string, number, number, "MUST" | "GOOD" | "ADVANCED", string[]?];
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 
+/**
+ * Approved scope for the most-asked concepts: what the chapter must teach (and nothing broader).
+ * Chapters for other concepts still get a single-concept objective.
+ */
+const SCOPE: Record<string, { objective: string; covers: string[] }> = {
+  "load-balancers": {
+    objective: "Explain why a load balancer is needed, how it routes requests, and how it handles unhealthy servers.",
+    covers: ["Single server bottleneck", "Request routing", "Round robin", "Weighted round robin", "Least connections", "IP hash", "Health checks", "Session affinity", "L4 vs L7", "Reverse proxy relationship"],
+  },
+  "cache-aside": {
+    objective: "Explain the cache-aside read and write paths and the consistency problems they create.",
+    covers: ["Cache hit", "Cache miss", "Read path", "Write path and invalidation", "TTL", "Stale data", "Cache stampede", "Cache failure fallback"],
+  },
+  cdn: {
+    objective: "Explain how a CDN serves content from edge locations and what it should and shouldn't cache.",
+    covers: ["Edge locations", "Origin server", "Cache hit at the edge", "TTL and invalidation", "Static vs dynamic content", "Latency reduction"],
+  },
+  sharding: {
+    objective: "Explain how sharding splits data across databases and how to choose a shard key.",
+    covers: ["Shard key", "Range sharding", "Hash sharding", "Hot shards", "Cross-shard queries", "Resharding"],
+  },
+  replication: {
+    objective: "Explain leader-follower replication and its consistency and failover trade-offs.",
+    covers: ["Leader and followers", "Synchronous vs asynchronous replication", "Replication lag", "Read scaling", "Failover"],
+  },
+  "cap-theorem": {
+    objective: "Explain what CAP actually says about behaviour during a network partition.",
+    covers: ["Consistency", "Availability", "Partition tolerance", "Behaviour during a partition", "CP vs AP systems", "Common misconception"],
+  },
+  "rate-limiting": {
+    objective: "Explain why APIs rate-limit and how the common algorithms work.",
+    covers: ["Why limit", "Token bucket", "Leaky bucket", "Fixed window", "Sliding window", "Where to enforce", "429 response"],
+  },
+  "message-queues": {
+    objective: "Explain how a message queue decouples producers and consumers and what guarantees it gives.",
+    covers: ["Producer", "Consumer", "Decoupling", "Buffering bursts", "Acknowledgement", "Retries", "Dead-letter queue"],
+  },
+  redis: {
+    objective: "Explain what Redis is, why it is fast, and the problems it solves in a backend.",
+    covers: ["In-memory key-value store", "Data structures", "TTL", "Caching use case", "Persistence options", "Eviction"],
+  },
+  "database-indexing": {
+    objective: "Explain how an index speeds up reads and what it costs.",
+    covers: ["Full table scan", "B-tree index", "Index lookup", "Composite index order", "Write cost", "When an index is not used"],
+  },
+  "consistent-hashing": {
+    objective: "Explain how consistent hashing limits data movement when nodes join or leave.",
+    covers: ["Hash ring", "Node placement", "Key lookup", "Adding a node", "Virtual nodes"],
+  },
+  idempotency: {
+    objective: "Explain why repeated requests must have the same effect and how APIs guarantee it.",
+    covers: ["Retries create duplicates", "Idempotency key", "Storing results", "Safe vs idempotent methods", "Payments example"],
+  },
+  "design-a-url-shortener": {
+    objective: "Walk through designing a URL shortener the way an interviewer expects.",
+    covers: ["Requirements", "Scale estimation", "APIs", "Short code generation", "Database choice", "Caching redirects", "Scaling", "Trade-offs"],
+  },
+};
+
 function domain(key: string, title: string, rows: Row[]) {
   return {
     key,
     title,
-    concepts: rows.map(([t, difficulty, frequency, importance, prerequisites]) => ({ key: slug(t), title: t, difficulty, frequency, importance, prerequisites: (prerequisites ?? []).map(slug) })),
+    concepts: rows.map(([t, difficulty, frequency, importance, prerequisites]) => {
+      const scope = SCOPE[slug(t)];
+      return { key: slug(t), title: t, difficulty, frequency, importance, prerequisites: (prerequisites ?? []).map(slug), covers: scope?.covers ?? [], objective: scope?.objective };
+    }),
   };
 }
 

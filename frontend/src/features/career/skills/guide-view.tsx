@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Check, Lightbulb, Loader2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Lightbulb, Loader2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonClass } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -53,8 +53,8 @@ export function GuideView({ name }: { name: string }) {
       </Link>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-accent">Skill guide</div>
-          <h1 className="font-display text-3xl font-semibold">{data?.name ?? name}</h1>
+          <div className="eyebrow mb-2 text-accent">Skill overview</div>
+          <h1 className="font-display text-4xl">{data?.name ?? name}</h1>
         </div>
         <Tabs
           value={locale}
@@ -76,6 +76,15 @@ export function GuideView({ name }: { name: string }) {
       ) : g ? (
         <>
           <p className="max-w-3xl text-lg leading-relaxed text-muted">{g.summary}</p>
+          <Link
+            href={`/career/skills/map?name=${encodeURIComponent(data?.name ?? name)}`}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-accent/30 bg-accent-soft px-4 py-3 text-sm hover:border-accent"
+          >
+            <span>This is the big picture. Each concept — with diagrams, examples, a quiz and interview questions — is taught one at a time in the knowledge map.</span>
+            <span className="inline-flex items-center gap-1 font-bold text-accent">
+              Open the knowledge map <ArrowRight className="size-3.5" aria-hidden />
+            </span>
+          </Link>
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Section title="✓ Perks">

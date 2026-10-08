@@ -1,5 +1,6 @@
 import type { ZodType, ZodTypeDef } from "zod";
 import { AppError } from "../utils/errors.js";
+import { logger } from "../lib/logger.js";
 import { aiProvider } from "./provider.js";
 
 export function requireAI() {
@@ -34,6 +35,7 @@ export async function aiJson<T>(task: string, system: string, user: string, sche
       lastError = e instanceof Error ? e.message : "not JSON";
     }
   }
+  logger.warn({ task, error: lastError.slice(0, 1500) }, "AI output failed schema validation twice");
   throw new AppError(502, "AI_BAD_OUTPUT", "The AI returned something we couldn't use. Please try again.");
 }
 
