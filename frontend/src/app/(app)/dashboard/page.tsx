@@ -1,15 +1,24 @@
 "use client";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, CheckCircle2, Circle, Flame, Hammer, RefreshCw, TrendingUp } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, ChevronRight, Circle, Command, Flame, Hammer, Plus, RefreshCw, TrendingUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonClass } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { EmptyState, ErrorState, PageSkeleton } from "@/components/ui/misc";
+import { EmptyState, ErrorState, PageHeader, PageSkeleton } from "@/components/ui/misc";
+import { StatCard, TapedNote, paperCard } from "@/components/ui/paper";
+import { cn } from "@/lib/utils";
 import { Progress, ScoreRing } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
 import type { Dashboard } from "@/lib/api/types";
 import { CareerOverview } from "@/features/dashboard/career-overview";
+
+const PATH_TONES = ["bg-accent-soft text-accent", "bg-info-soft text-info", "bg-accent-2-soft text-accent-2", "bg-pink-soft text-pink"];
+const QUICK_LINKS = [
+  { href: "/learn", label: "Open roadmap" },
+  { href: "/practice", label: "Practice 10" },
+  { href: "/career", label: "Career AI" },
+];
 
 const FACTOR_LABEL: Record<string, string> = { mastery: "Topic mastery", dsa: "DSA", projects: "Projects", recall: "Recall", interview: "Interview", resume: "Resume & profile" };
 
@@ -21,16 +30,86 @@ export default function DashboardPage() {
   const r = d.readiness;
   const delta = r.sevenDaysAgo === null ? null : r.score - r.sevenDaysAgo;
   const minutes = d.plan.filter((p) => !p.done).reduce((a, p) => a + p.minutes, 0);
+  const built = d.recentBuilds.filter((b) => b.independenceScore !== null);
+  const independence = built.length ? Math.round(built.reduce((a, b) => a + (b.independenceScore ?? 0), 0) / built.length) : null;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div className="font-mono text-[11px] uppercase tracking-wider text-accent">Dashboard</div>
-          <h1 className="font-display text-2xl font-semibold sm:text-3xl">Namaste, {d.user.name.split(" ")[0]} 👋</h1>
-        </div>
-        <div className="flex items-center gap-2 text-sm text-muted">
-          <Flame className={d.streak.activeToday ? "size-4 text-warn" : "size-4"} /> {d.streak.current}-day streak
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow={<span className="inline-flex items-center gap-3">Namaste, {d.user.name.split(" ")[0]} <span className={cn("inline-flex items-center gap-1 normal-case tracking-normal", d.streak.activeToday ? "text-accent-2" : "text-muted")}><Flame className="size-3.5" aria-hidden /> {d.streak.current}-day streak</span></span>}
+        title="A focused place to make progress"
+        description="Everything you need is close at hand."
+        actions={
+          <Link href={d.continue ? `/learn/topic/${d.continue.topic.slug}` : "/learn"} className={buttonClass("primary", "lg")}>
+            <Plus className="size-4" aria-hidden /> Start next step
+          </Link>
+        }
+      />
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="Topics mastered" value={d.totals.mastered} hint={`of ${d.totals.available} live topics`} tone="green" />
+        <StatCard label="Readiness" value={`${r.score}/100`} hint={delta === null ? r.status : `${delta >= 0 ? "+" : ""}${delta} this week`} tone="orange" />
+        <StatCard
+          label="Independence"
+          value={independence === null ? "—" : `${independence}/100`}
+          hint={independence === null ? "After your first build" : `Across ${built.length} build${built.length === 1 ? "" : "s"}`}
+          tone="blue"
+        />
+        <StatCard label="Streak" value={`${d.streak.current} day${d.streak.current === 1 ? "" : "s"}`} hint={`${d.streak.activeDays} active days`} tone="pink" />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)]">
+        <section aria-labelledby="path-title" className={cn(paperCard, "p-6")}>
+          <p className="eyebrow text-accent">Your path</p>
+          <h2 id="path-title" className="font-display mt-1 text-2xl">
+            Small steps, visible proof
+          </h2>
+          <p className="mt-1 text-xs text-muted">{minutes ? `Today's plan · about ${minutes} minutes left` : "Today's plan · all done 🎉"}</p>
+          {d.plan.length ? (
+            <ul className="mt-5 divide-y divide-border border-y border-border">
+              {d.plan.map((p, i) => (
+                <li key={p.key}>
+                  <Link href={p.href} className="group flex items-center gap-4 py-4">
+                    <span className={cn("grid size-[34px] shrink-0 place-items-center rounded-lg", PATH_TONES[i % PATH_TONES.length])}>
+                      {p.done ? <Check className="size-4" aria-hidden /> : <Circle className="size-3.5" aria-hidden />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className={cn("block text-[13px] font-bold", p.done && "text-muted line-through")}>{p.label}</span>
+                      <span className="block text-xs text-muted">{p.done ? "Done today" : `About ${p.minutes} minutes`}</span>
+                    </span>
+                    <span className="font-mono text-[10px] text-muted">{p.minutes}m</span>
+                    <ChevronRight className="size-4 text-muted transition-transform group-hover:translate-x-0.5" aria-hidden />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-5 text-sm text-muted">Your plan appears once you start your first topic.</p>
+          )}
+        </section>
+        <div className="space-y-4">
+          <TapedNote tape="A note to self">
+            <p className="font-display text-[1.9rem] leading-[1.15]">Build something you can defend.</p>
+            <p className="mt-4 text-[13px] leading-relaxed">Confidence doesn&apos;t come from knowing everything. It comes from knowing your own decisions.</p>
+            <p className="font-display mt-3 text-sm italic">— the Prompters way</p>
+          </TapedNote>
+          <nav aria-labelledby="quick-title" className={cn(paperCard, "p-6")}>
+            <div className="flex items-center justify-between">
+              <h2 id="quick-title" className="font-display text-2xl">
+                Quick links
+              </h2>
+              <Command className="size-4" aria-hidden />
+            </div>
+            <ul className="mt-4 divide-y divide-border border-b border-border">
+              {QUICK_LINKS.map((q) => (
+                <li key={q.href}>
+                  <Link href={q.href} className="flex items-center justify-between py-3 text-[13px] hover:text-accent">
+                    {q.label} <ArrowUpRight className="size-3.5" aria-hidden />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </nav>
         </div>
       </div>
 
@@ -43,7 +122,7 @@ export default function DashboardPage() {
 
       <CareerOverview />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+      <div className="grid gap-4">
         <Card>
           <CardHeader title="Readiness score" description={`Target role: ${({ BACKEND: "Backend", FRONTEND: "Frontend", FULLSTACK: "Full-stack", DEVOPS: "DevOps", SDE: "SDE", AI: "AI Engineer" } as Record<string, string>)[r.role] ?? r.role}`} action={<Link href="/readiness" className="text-xs text-muted hover:text-text">Details →</Link>} />
           <CardBody className="flex flex-col gap-6 sm:flex-row sm:items-center">
@@ -64,24 +143,6 @@ export default function DashboardPage() {
           </CardBody>
         </Card>
 
-        <Card>
-          <CardHeader title="Today's plan" description={minutes ? `About ${minutes} minutes left` : "All done for today 🎉"} />
-          <CardBody>
-            {d.plan.length ? (
-              <ul className="space-y-1">
-                {d.plan.map((p) => (
-                  <li key={p.key}>
-                    <Link href={p.href} className="flex items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-surface-2">
-                      {p.done ? <CheckCircle2 className="size-4 text-accent" /> : <Circle className="size-4 text-subtle" />}
-                      <span className={p.done ? "flex-1 text-muted line-through" : "flex-1"}>{p.label}</span>
-                      <span className="font-mono text-xs text-subtle">{p.minutes}m</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="text-sm text-muted">Your plan appears once you start your first topic.</p>}
-          </CardBody>
-        </Card>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">

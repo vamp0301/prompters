@@ -63,3 +63,26 @@ export function StudyStamp({ children, tone = "green", className }: { children: 
 export function NotebookSection({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={cn(paperCard, "p-5 sm:p-6", className)}>{children}</div>;
 }
+
+const STAT_TONE = { green: "text-accent", orange: "text-accent-2", blue: "text-info", pink: "text-pink" } as const;
+
+/** Reference-style stat card: mono caps label, large coloured mono number, small hint. */
+export function StatCard({ label, value, hint, tone = "green", className }: { label: ReactNode; value: ReactNode; hint?: ReactNode; tone?: keyof typeof STAT_TONE; className?: string }) {
+  return (
+    <div className={cn(paperCard, "p-[18px]", className)}>
+      <div className="eyebrow text-[9px] text-text">{label}</div>
+      <div className={cn("mt-5 font-mono text-[28px] leading-none tracking-tight tabular-nums", STAT_TONE[tone])}>{value}</div>
+      {hint && <div className="mt-3 text-[10px] text-muted">{hint}</div>}
+    </div>
+  );
+}
+
+/** A taped yellow sticky note. */
+export function TapedNote({ tape, children, className }: { tape: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("note-yellow relative rotate-[-1.5deg] rounded-sm p-8 pt-14 shadow-[0_18px_40px_rgba(94,85,46,0.16)]", className)}>
+      <span className="tape left-7 top-[-8px]">{tape}</span>
+      {children}
+    </div>
+  );
+}

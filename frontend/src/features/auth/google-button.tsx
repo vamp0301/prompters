@@ -31,7 +31,7 @@ export function GoogleButton({ next }: { next: string }) {
           }
         },
       });
-      if (ref.current) window.google?.accounts.id.renderButton(ref.current, { theme: "filled_black", size: "large", width: 320, text: "continue_with", shape: "rectangular" });
+      if (ref.current) window.google?.accounts.id.renderButton(ref.current, { theme: "outline", size: "large", width: 304, text: "continue_with", shape: "rectangular" });
     };
     if (window.google) return render();
     const s = document.createElement("script");

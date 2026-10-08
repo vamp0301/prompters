@@ -100,7 +100,7 @@ function PromptBody({ prompt: p }: { prompt: PromptDetail }) {
               <Link href={`/learn/topic/${p.topic.slug}`} className="text-xs text-muted hover:text-text">Topic: {p.topic.title}</Link>
               <span className="font-mono text-[11px] text-subtle">v{p.version}</span>
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight">{p.title}</h1>
+            <h1 className="font-display text-3xl leading-tight">{p.title}</h1>
             <p className="mt-1 max-w-2xl text-sm text-muted">{p.task}</p>
           </div>
           <Button variant="secondary" size="sm" onClick={() => fav.mutate()} loading={fav.isPending} aria-pressed={p.favorite} className="self-start">

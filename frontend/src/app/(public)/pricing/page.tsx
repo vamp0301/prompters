@@ -39,8 +39,8 @@ export default function PricingPage() {
     <>
       <section className="bg-grid border-b border-border">
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 md:py-20">
-          <div className="font-mono text-xs uppercase tracking-wider text-accent">Pricing</div>
-          <h1 className="mt-2 text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl">Free during beta.</h1>
+          <div className="eyebrow text-accent">Pricing</div>
+          <h1 className="font-display mt-3 text-[2.8rem] leading-[1.02] sm:text-[4rem]">Free during beta.</h1>
           <p className="mt-5 max-w-2xl text-lg leading-relaxed text-muted">
             We haven&apos;t decided on a pricing model yet, so we&apos;re not going to show you made-up plans. While Prompters is in beta, everything
             below is free.
@@ -55,8 +55,8 @@ export default function PricingPage() {
       </section>
 
       <section aria-labelledby="included-heading" className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
-        <div className="font-mono text-xs uppercase tracking-wider text-accent">Beta</div>
-        <h2 id="included-heading" className="mt-2 text-3xl font-semibold tracking-tight">What&apos;s included</h2>
+        <div className="eyebrow text-accent">Beta</div>
+        <h2 id="included-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">What&apos;s included</h2>
         <ul className="mt-10 grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
           {INCLUDED.map((f) => (
             <li key={f.title} className="flex gap-3 bg-surface p-5">
@@ -73,8 +73,8 @@ export default function PricingPage() {
 
       <section aria-labelledby="faq-heading" className="border-y border-border bg-surface/40">
         <div className="mx-auto max-w-3xl px-4 py-20 sm:px-6">
-          <div className="font-mono text-xs uppercase tracking-wider text-accent">FAQ</div>
-          <h2 id="faq-heading" className="mt-2 text-3xl font-semibold tracking-tight">Questions</h2>
+          <div className="eyebrow text-accent">FAQ</div>
+          <h2 id="faq-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">Questions</h2>
           <dl className="mt-8 divide-y divide-border rounded-xl border border-border bg-surface">
             {FAQ.map((f) => (
               <div key={f.q} className="p-5">
@@ -88,7 +88,7 @@ export default function PricingPage() {
 
       <section aria-labelledby="cta-heading">
         <div className="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6">
-          <h2 id="cta-heading" className="text-3xl font-semibold tracking-tight sm:text-4xl">Start building.</h2>
+          <h2 id="cta-heading" className="font-display text-[2.4rem] leading-tight sm:text-[3.2rem]">Start building.</h2>
           <p className="mx-auto mt-3 max-w-lg text-muted">Pick Python or JavaScript and get your personal roadmap in five minutes.</p>
           <Link href="/register" className={buttonClass("primary", "lg", "mt-8")}>
             Create your free account <ArrowRight className="size-4" aria-hidden />

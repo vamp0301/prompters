@@ -1,4 +1,5 @@
 "use client";
+import { ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -41,14 +42,15 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   });
 
   return (
-    <div className="bg-grid grid min-h-[calc(100vh-3.5rem)] place-items-center px-4 py-12">
-      <div className="w-full max-w-sm">
-        <div className="mb-6 text-center">
+    <div className="bg-grid grid min-h-[calc(100vh-72px)] place-items-start justify-items-center px-4 pb-16 pt-16 sm:pt-[70px]">
+      <div className="w-full max-w-[360px]">
+        <div className="mb-8 text-center">
           <Logo className="justify-center" />
-          <h1 className="mt-6 text-2xl font-semibold tracking-tight">{mode === "login" ? "Welcome back" : "Create your account"}</h1>
+          <p className="eyebrow mt-10 text-accent">{mode === "login" ? "Welcome back" : "Get started"}</p>
+          <h1 className="font-display mt-2 text-[2.9rem] leading-tight">{mode === "login" ? "Welcome back" : "Create your account"}</h1>
           <p className="mt-1 text-sm text-muted">{mode === "login" ? "Continue where you left off." : "Free to start. Pick Python or JavaScript next."}</p>
         </div>
-        <form onSubmit={onSubmit} noValidate className="space-y-4 rounded-xl border border-border bg-surface p-5">
+        <form onSubmit={onSubmit} noValidate className="space-y-4 rounded-xl border border-border bg-surface/95 p-7 shadow-[var(--shadow)]">
           {mode === "register" && (
             <Field label="Name" htmlFor="name" error={formState.errors.name?.message}>
               <Input id="name" autoComplete="name" {...register("name")} aria-invalid={!!formState.errors.name} />
@@ -61,16 +63,16 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
             <Input id="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} {...register("password")} aria-invalid={!!formState.errors.password} />
           </Field>
           {serverError && <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{serverError}</p>}
-          <Button type="submit" className="w-full" loading={formState.isSubmitting}>
-            {mode === "login" ? "Log in" : "Create account"}
+          <Button type="submit" variant="ink" className="w-full" loading={formState.isSubmitting}>
+            {mode === "login" ? "Log in" : "Create account"} <ArrowUpRight className="size-3.5" aria-hidden />
           </Button>
           <GoogleButton next={mode === "register" ? "/onboarding" : next} />
         </form>
-        <p className="mt-4 text-center text-sm text-muted">
+        <p className="mt-3 text-center text-xs text-muted">
           {mode === "login" ? (
-            <>New to Prompters? <Link href="/register" className="text-accent hover:underline">Create an account</Link></>
+            <>New to Prompters? <Link href="/register" className="font-bold text-accent hover:underline">Create an account</Link></>
           ) : (
-            <>Already have an account? <Link href="/login" className="text-accent hover:underline">Log in</Link></>
+            <>Already have an account? <Link href="/login" className="font-bold text-accent hover:underline">Log in</Link></>
           )}
         </p>
       </div>

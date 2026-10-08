@@ -15,7 +15,7 @@ export function MarketDemand() {
   return (
     <section aria-labelledby="demand-heading" className="space-y-5">
       <div>
-        <h2 id="demand-heading" className="text-2xl font-semibold tracking-tight">Which language is most in demand?</h2>
+        <h2 id="demand-heading" className="font-display text-3xl leading-tight">Which language is most in demand?</h2>
         <p className="mt-1 max-w-2xl text-sm text-muted">
           By developer usage, <strong className="text-text">JavaScript</strong> is the most used of the four, with <strong className="text-text">Python</strong> close behind. Java and C++ are used
           by fewer developers overall but remain core in enterprise backends and performance-critical software.
@@ -86,7 +86,7 @@ export function SyllabusBrowser({ roadmapHref = "/roadmap" }: { roadmapHref?: st
   return (
     <section aria-labelledby="syllabus-heading" className="space-y-5">
       <div>
-        <h2 id="syllabus-heading" className="text-2xl font-semibold tracking-tight">One syllabus, four languages</h2>
+        <h2 id="syllabus-heading" className="font-display text-3xl leading-tight">One syllabus, four languages</h2>
         <p className="mt-1 max-w-2xl text-sm text-muted">
           Python, JavaScript, Java and C++ follow exactly the same {SYLLABUS.length} modules and {total} topics in the same order. Every topic inside a track belongs to that language only.
         </p>

@@ -60,7 +60,7 @@ export default function TopicEditorPage({ params }: { params: Promise<{ id: stri
       <div className="mb-5">
         <Link href="/admin/topics" className="mb-2 inline-flex items-center gap-1 text-xs text-muted hover:text-text"><ChevronLeft className="size-3.5" /> Topics</Link>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{topic.title}</h1>
+          <h1 className="font-display text-3xl leading-tight">{topic.title}</h1>
           <StatusBadge status={topic.status} />
           <span className="font-mono text-xs text-subtle">{topic.publishedVersion ? `live v${topic.publishedVersion}` : "never published"}</span>
         </div>

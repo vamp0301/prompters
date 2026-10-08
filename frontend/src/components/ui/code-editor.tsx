@@ -33,7 +33,7 @@ export function CodeEditor({ value, onChange, language, height = "100%", readOnl
       options={{
         readOnly,
         ariaLabel,
-        fontFamily: "var(--font-jetbrains), ui-monospace, monospace",
+        fontFamily: "var(--font-dm-mono), ui-monospace, monospace",
         fontSize: 14,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,

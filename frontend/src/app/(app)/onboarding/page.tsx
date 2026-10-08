@@ -145,7 +145,7 @@ export default function OnboardingPage() {
         <div className="mt-10 flex gap-1.5" aria-label={`Step ${step + 1} of ${steps.length}`}>
           {steps.map((_, i) => <span key={i} className={cn("h-1 flex-1 rounded-full", i <= step ? "bg-accent" : "bg-surface-2")} />)}
         </div>
-        <h1 className="mt-6 text-2xl font-semibold tracking-tight">{s.title}</h1>
+        <h1 className="mt-6 font-display text-3xl leading-tight">{s.title}</h1>
         <div className="mt-6">{s.body}</div>
         <div className="mt-8 flex justify-between">
           <Button variant="ghost" onClick={() => setStep((x) => x - 1)} disabled={step === 0 || saving}><ArrowLeft className="size-4" /> Back</Button>

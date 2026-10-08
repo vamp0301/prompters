@@ -340,7 +340,7 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
           <div className="flex items-center gap-4">
             <ManishaAvatar speaking={voice.speaking} />
             <div>
-              <div className="font-mono text-[11px] uppercase tracking-wider text-accent">AI technical interview</div>
+              <div className="eyebrow text-accent">AI technical interview</div>
               <h1 className="text-xl font-semibold">Manisha · {session.interviewer.role}</h1>
               <p className="text-sm text-muted">{session.job.title}{session.job.company ? ` · ${session.job.company}` : ""} · {session.questionTarget} questions · {session.durationMinutes} min · English</p>
             </div>

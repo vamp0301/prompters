@@ -10,8 +10,8 @@ export default function SyllabusPage() {
     <>
       <section className="bg-grid border-b border-border">
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 md:py-20">
-          <div className="font-mono text-xs uppercase tracking-wider text-accent">Syllabus</div>
-          <h1 className="mt-2 text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl">
+          <div className="eyebrow text-accent">Syllabus</div>
+          <h1 className="font-display mt-3 text-[2.8rem] leading-[1.02] sm:text-[4rem]">
             Choose <span className="font-script text-6xl font-normal text-accent">your</span> language.
           </h1>
           <p className="mt-4 max-w-2xl text-lg leading-relaxed text-muted">

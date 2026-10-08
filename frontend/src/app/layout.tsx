@@ -1,12 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, JetBrains_Mono, Pinyon_Script, Tiro_Devanagari_Hindi } from "next/font/google";
+import { DM_Mono, DM_Serif_Display, Plus_Jakarta_Sans, Tiro_Devanagari_Hindi } from "next/font/google";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
-const geist = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const mono = JetBrains_Mono({ variable: "--font-jetbrains", subsets: ["latin"] });
-// Calligraphy accent for one or two words (e.g. "YOUR") — never for UI text.
-const calligraphy = Pinyon_Script({ variable: "--font-calligraphy", subsets: ["latin"], weight: "400", display: "swap" });
+const jakarta = Plus_Jakarta_Sans({ variable: "--font-jakarta", subsets: ["latin"] });
+const dmMono = DM_Mono({ variable: "--font-dm-mono", subsets: ["latin"], weight: ["400", "500"] });
+// Editorial serif for headings; its italic is the green accent word (e.g. "your").
+const dmSerif = DM_Serif_Display({ variable: "--font-dm-serif", subsets: ["latin"], weight: "400", style: ["normal", "italic"] });
 const tiroDeva = Tiro_Devanagari_Hindi({ variable: "--font-tiro-deva", subsets: ["devanagari"], weight: "400", display: "swap", preload: false });
 
 export const metadata: Metadata = {
@@ -16,8 +16,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f6f0e1" },
-    { media: "(prefers-color-scheme: dark)", color: "#15130f" },
+    { media: "(prefers-color-scheme: light)", color: "#fbf9f5" },
+    { media: "(prefers-color-scheme: dark)", color: "#191817" },
   ],
   width: "device-width",
   initialScale: 1,
@@ -32,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       lang="en"
       data-theme="light"
       suppressHydrationWarning
-      className={`${geist.variable} ${mono.variable} ${calligraphy.variable} ${tiroDeva.variable} h-full antialiased`}
+      className={`${jakarta.variable} ${dmMono.variable} ${dmSerif.variable} ${tiroDeva.variable} h-full antialiased`}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />

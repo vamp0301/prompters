@@ -34,7 +34,7 @@ const READINESS = [
 ];
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
-  return <div className="font-mono text-xs uppercase tracking-wider text-accent">{children}</div>;
+  return <div className="eyebrow text-accent">{children}</div>;
 }
 
 export default function HowItWorksPage() {
@@ -43,7 +43,7 @@ export default function HowItWorksPage() {
       <section className="bg-grid border-b border-border">
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 md:py-20">
           <Eyebrow>How it works</Eyebrow>
-          <h1 className="mt-2 text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl">
+          <h1 className="font-display mt-3 text-[2.8rem] leading-[1.02] sm:text-[4rem]">
             One loop for every topic.
             <br />
             <span className="text-accent">Scores you actually earn.</span>
@@ -56,7 +56,7 @@ export default function HowItWorksPage() {
 
       <section aria-labelledby="loop-heading" className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
         <Eyebrow>The loop</Eyebrow>
-        <h2 id="loop-heading" className="mt-2 text-3xl font-semibold tracking-tight">Learn → Practise → Build → Explain → Master → Interview</h2>
+        <h2 id="loop-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">Learn → Practise → Build → Explain → Master → Interview</h2>
         <ol className="mt-10 grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-3">
           {LOOP.map(({ icon: Icon, step, text }, i) => (
             <li key={step} className="bg-surface p-5">
@@ -75,7 +75,7 @@ export default function HowItWorksPage() {
         <div className="mx-auto grid max-w-6xl gap-10 px-4 py-20 sm:px-6 lg:grid-cols-2">
           <div>
             <Eyebrow>Mastery</Eyebrow>
-            <h2 id="mastery-heading" className="mt-2 text-3xl font-semibold tracking-tight">The 80% rule</h2>
+            <h2 id="mastery-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">The 80% rule</h2>
             <p className="mt-3 text-muted">
               A topic is mastered only when you score <span className="font-mono text-text">80%</span> or more on a fresh quiz — new questions,
               not the ones you&apos;ve already seen. Watching the lesson or finishing the practice isn&apos;t enough on its own.
@@ -113,7 +113,7 @@ export default function HowItWorksPage() {
       <section aria-labelledby="independence-heading" className="mx-auto grid max-w-6xl gap-10 px-4 py-20 sm:px-6 lg:grid-cols-2">
         <div>
           <Eyebrow>Build without AI</Eyebrow>
-          <h2 id="independence-heading" className="mt-2 text-3xl font-semibold tracking-tight">Independence score</h2>
+          <h2 id="independence-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">Independence score</h2>
           <p className="mt-3 text-muted">
             Every build starts at <span className="font-mono text-text">100</span>. Stuck? Take a hint — it&apos;s there to help, and it costs a few
             points so your score reflects how much you did yourself.
@@ -150,7 +150,7 @@ export default function HowItWorksPage() {
         <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
           <div className="max-w-3xl">
             <Eyebrow>Prompt library</Eyebrow>
-            <h2 id="prompts-heading" className="mt-2 text-3xl font-semibold tracking-tight">Learn first, then prompt.</h2>
+            <h2 id="prompts-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">Learn first, then prompt.</h2>
             <p className="mt-3 text-muted">
               AI is a professional tool, and you should use it like one. A topic&apos;s tested prompts unlock only after you master that topic — so
               you can judge what the AI gives you, and defend it when someone asks “why?”.
@@ -178,7 +178,7 @@ export default function HowItWorksPage() {
       <section aria-labelledby="readiness-heading" className="mx-auto grid max-w-6xl gap-10 px-4 py-20 sm:px-6 lg:grid-cols-2">
         <div>
           <Eyebrow>Readiness Score</Eyebrow>
-          <h2 id="readiness-heading" className="mt-2 text-3xl font-semibold tracking-tight">One honest number</h2>
+          <h2 id="readiness-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">One honest number</h2>
           <p className="mt-3 text-muted">
             Your Readiness Score is out of <span className="font-mono text-text">100</span> and is computed only from real activity — quizzes you
             passed, projects you built, reviews you kept up with, interviews you practised. Nothing is estimated or padded. If you haven&apos;t done
@@ -211,7 +211,7 @@ export default function HowItWorksPage() {
       <section aria-labelledby="integrity-heading" className="border-y border-border bg-surface/40">
         <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
           <Eyebrow>Mock tests</Eyebrow>
-          <h2 id="integrity-heading" className="mt-2 text-3xl font-semibold tracking-tight">Integrity, honestly</h2>
+          <h2 id="integrity-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">Integrity, honestly</h2>
           <p className="mt-3 max-w-3xl text-muted">
             Mock tests are timed, company-style assessments. To keep scores meaningful, some events are logged during a test.
           </p>
@@ -237,7 +237,7 @@ export default function HowItWorksPage() {
 
       <section aria-labelledby="cta-heading">
         <div className="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6">
-          <h2 id="cta-heading" className="text-3xl font-semibold tracking-tight sm:text-4xl">Start the loop.</h2>
+          <h2 id="cta-heading" className="font-display text-[2.4rem] leading-tight sm:text-[3.2rem]">Start the loop.</h2>
           <p className="mx-auto mt-3 max-w-lg text-muted">Pick Python or JavaScript, take a short placement test, and get your personal roadmap.</p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link href="/register" className={buttonClass("primary", "lg")}>

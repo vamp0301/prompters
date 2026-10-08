@@ -53,11 +53,11 @@ export function ErrorState({ error, retry }: { error: unknown; retry?: () => voi
 
 export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?: ReactNode; title: ReactNode; description?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
-        {eyebrow && <div className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-accent">{eyebrow}</div>}
-        <h1 className="font-display text-[1.75rem] font-semibold leading-tight sm:text-3xl">{title}</h1>
-        {description && <p className="mt-1 max-w-2xl text-sm text-muted">{description}</p>}
+        {eyebrow && <div className="eyebrow mb-3 text-accent">{eyebrow}</div>}
+        <h1 className="font-display text-[2.35rem] leading-[1.04] text-balance sm:text-5xl lg:text-[3.5rem]">{title}</h1>
+        {description && <p className="mt-3 max-w-2xl text-[15px] text-muted">{description}</p>}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>}
     </div>

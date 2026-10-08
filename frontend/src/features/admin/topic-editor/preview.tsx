@@ -49,7 +49,7 @@ export function TopicPreview({ snapshot, locale }: { snapshot: TopicSnapshot; lo
         <nav aria-label="Breadcrumb" className="mb-2 flex flex-wrap gap-1.5 text-xs text-muted">
           <span>Roadmap</span><span>/</span><span>Stage {snapshot.stage.code} · {snapshot.stage.title}</span><span>/</span><span>{snapshot.module.title}</span>
         </nav>
-        <h1 className="text-2xl font-semibold tracking-tight @2xl:text-3xl">{snapshot.title}</h1>
+        <h1 className="font-display text-3xl leading-tight @2xl:text-3xl">{snapshot.title}</h1>
         <div className="mt-3 flex flex-wrap gap-2 text-xs">
           <Badge><Clock className="size-3" /> {snapshot.estMinutes} min</Badge>
           <Badge>{["Beginner", "Intermediate", "Advanced"][snapshot.difficulty - 1]}</Badge>

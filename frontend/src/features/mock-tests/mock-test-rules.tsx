@@ -69,8 +69,8 @@ function Rules({ a }: { a: AssessmentSummary }) {
     <div className="space-y-6">
       <Link href="/mock-tests" className="inline-flex items-center gap-1 text-xs text-muted hover:text-text"><ArrowLeft className="size-3.5" aria-hidden /> All tests</Link>
       <div>
-        <div className="font-mono text-[11px] uppercase tracking-wider text-accent">{a.kind === "STAGE_EXAM" ? "Stage exam" : "Mock test"}{a.stage ? ` · ${a.stage.title}` : ""}</div>
-        <h1 className="text-2xl font-semibold tracking-tight">{a.title}</h1>
+        <div className="eyebrow text-accent">{a.kind === "STAGE_EXAM" ? "Stage exam" : "Mock test"}{a.stage ? ` · ${a.stage.title}` : ""}</div>
+        <h1 className="font-display text-3xl leading-tight">{a.title}</h1>
         {a.description && <p className="mt-1 max-w-2xl text-sm text-muted">{a.description}</p>}
       </div>
 

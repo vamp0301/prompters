@@ -174,7 +174,7 @@ function StoryCard({ project }: { project: CompletedProject }) {
         <dl className="space-y-3">
           {rows.map(([k, v]) => (
             <div key={k} className="grid gap-1 sm:grid-cols-[88px_1fr] sm:gap-3">
-              <dt className="font-mono text-[11px] uppercase tracking-wider text-accent sm:pt-0.5">{k}</dt>
+              <dt className="eyebrow text-accent sm:pt-0.5">{k}</dt>
               <dd className="text-sm text-text/90">{v}</dd>
             </div>
           ))}
@@ -261,7 +261,7 @@ export function ResumeTab({ profile }: { profile: ProfileResponse }) {
 
       <section aria-labelledby="story-builder" className="space-y-4">
         <div>
-          <div className="font-mono text-[11px] uppercase tracking-wider text-accent">Interview prep</div>
+          <div className="eyebrow text-accent">Interview prep</div>
           <h2 id="story-builder" className="text-lg font-semibold tracking-tight">Project story builder</h2>
           <p className="mt-1 text-sm text-muted">Your own “How I built it” answers, arranged as a STAR story and a 30-second pitch. Practise saying them out loud.</p>
         </div>

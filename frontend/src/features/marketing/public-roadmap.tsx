@@ -57,7 +57,7 @@ function StageCard({ stage, className, nested }: { stage: PublicStage; className
             {stage.code}
           </span>
           <div className="min-w-0">
-            {trackLabel[stage.track] && <div className="font-mono text-[11px] uppercase tracking-wider text-accent">{trackLabel[stage.track]}</div>}
+            {trackLabel[stage.track] && <div className="eyebrow text-accent">{trackLabel[stage.track]}</div>}
             <Heading id={headingId} className="font-semibold tracking-tight">
               <span className="sr-only">Stage {stage.code}: </span>
               {stage.title}

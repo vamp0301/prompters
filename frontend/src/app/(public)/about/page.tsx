@@ -26,8 +26,8 @@ export default function AboutPage() {
     <>
       <section className="bg-grid border-b border-border">
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 md:py-20">
-          <div className="font-mono text-xs uppercase tracking-wider text-accent">About</div>
-          <h1 className="mt-2 max-w-3xl text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl">
+          <div className="eyebrow text-accent">About</div>
+          <h1 className="font-display mt-3 max-w-3xl text-[2.8rem] leading-[1.02] sm:text-[4rem]">
             Helping students become developers — <span className="text-accent">not just learn to code.</span>
           </h1>
           <p className="mt-5 max-w-2xl text-lg leading-relaxed text-muted">
@@ -37,8 +37,8 @@ export default function AboutPage() {
       </section>
 
       <section aria-labelledby="problem-heading" className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
-        <div className="font-mono text-xs uppercase tracking-wider text-accent">The problem</div>
-        <h2 id="problem-heading" className="mt-2 text-3xl font-semibold tracking-tight">Why we&apos;re building this</h2>
+        <div className="eyebrow text-accent">The problem</div>
+        <h2 id="problem-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">Why we&apos;re building this</h2>
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           {PROBLEMS.map(({ icon: Icon, title, text }) => (
             <div key={title} className="rounded-xl border border-border bg-surface p-5">
@@ -53,8 +53,8 @@ export default function AboutPage() {
       <section aria-labelledby="fix-heading" className="border-y border-border bg-surface/40">
         <div className="mx-auto grid max-w-6xl gap-10 px-4 py-20 sm:px-6 lg:grid-cols-2">
           <div>
-            <div className="font-mono text-xs uppercase tracking-wider text-accent">The fix</div>
-            <h2 id="fix-heading" className="mt-2 text-3xl font-semibold tracking-tight">One path, from zero to job-ready</h2>
+            <div className="eyebrow text-accent">The fix</div>
+            <h2 id="fix-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">One path, from zero to job-ready</h2>
             <p className="mt-3 text-muted">
               Every topic follows the same loop, and at the end you get an honest Readiness Score that tells you how interview-ready you really are
               — computed only from real activity.
@@ -96,8 +96,8 @@ export default function AboutPage() {
       </section>
 
       <section aria-labelledby="values-heading" className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
-        <div className="font-mono text-xs uppercase tracking-wider text-accent">Values</div>
-        <h2 id="values-heading" className="mt-2 text-3xl font-semibold tracking-tight">What we won&apos;t compromise on</h2>
+        <div className="eyebrow text-accent">Values</div>
+        <h2 id="values-heading" className="font-display mt-3 text-[2.2rem] leading-tight sm:text-[2.75rem]">What we won&apos;t compromise on</h2>
         <div className="mt-10 grid gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-3">
           {VALUES.map(({ icon: Icon, title, text }) => (
             <div key={title} className="bg-surface p-5">
@@ -111,7 +111,7 @@ export default function AboutPage() {
 
       <section aria-labelledby="cta-heading" className="border-t border-border">
         <div className="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6">
-          <h2 id="cta-heading" className="text-3xl font-semibold tracking-tight sm:text-4xl">Learn. Build. Prove. Get hired.</h2>
+          <h2 id="cta-heading" className="font-display text-[2.4rem] leading-tight sm:text-[3.2rem]">Learn. Build. Prove. Get hired.</h2>
           <p className="mx-auto mt-3 max-w-lg text-muted">Free during beta. Pick Python or JavaScript and get your personal roadmap.</p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link href="/register" className={buttonClass("primary", "lg")}>

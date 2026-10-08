@@ -3,15 +3,15 @@ import Link from "next/link";
 import { useId, useRef, useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
-import { ArrowRight, FileText, Upload, X } from "lucide-react";
+import { ArrowUpRight, FileText, Plus, X } from "lucide-react";
 import { Button, buttonClass } from "@/components/ui/button";
-import { InkAnnotation } from "@/components/ui/paper";
 import { ApiError, api } from "@/lib/api/client";
 import type { Me } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { friendlyError, readDocument, type PickedFile } from "@/features/career/shared";
 import { savePendingResume } from "./pending-resume";
 import { startPreparing, TARGET_ROLES } from "./start-preparing";
+import { DEFAULT_LANDING, type LandingContent } from "./landing-content";
 
 type Outcome = { kind: "plan"; planId: string } | { kind: "signup"; stored: boolean; to: string };
 
@@ -19,7 +19,7 @@ type Outcome = { kind: "plan"; planId: string } | { kind: "signup"; stored: bool
  * Landing-page resume card. Signed-in users upload straight to the career API. Visitors keep the
  * file in this browser until they have an account — nothing is sent to the server before that.
  */
-export function VellumUpload() {
+export function VellumUpload({ content = DEFAULT_LANDING.upload }: { content?: LandingContent["upload"] }) {
   const uid = useId();
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -82,18 +82,29 @@ export function VellumUpload() {
 
   return (
     <form
+      id="upload"
       aria-labelledby={`${uid}-title`}
-      className="glass glow-ring relative rounded-2xl p-5 sm:p-7"
+      className="relative scroll-mt-24 rounded-xl border border-border bg-surface/90 px-6 pb-6 pt-9 shadow-[var(--shadow)] sm:px-[30px]"
       onSubmit={(e) => {
         e.preventDefault();
-        if (file && !busy) start.mutate();
+        if (busy) return;
+        if (file) start.mutate();
+        else inputRef.current?.click();
       }}
     >
-      <p className="font-mono text-[10px] font-semibold tracking-[0.24em] text-accent">STEP 1 · YOUR RESUME</p>
-      <h2 id={`${uid}-title`} className="font-display mt-1 text-2xl font-semibold">
-        Upload your resume
+      <span className="tape">{content.tape}</span>
+      <p aria-hidden className="note-yellow mb-4 w-full px-0.5 py-1 text-[15px] leading-6 shadow-[0_3px_8px_rgba(0,0,0,0.06)]">
+        {content.noteLine1}
+        <br />
+        <strong className="font-semibold">{content.noteLine2}</strong>
+      </p>
+      <span className="grid size-[54px] place-items-center rounded-full bg-accent-soft text-accent" aria-hidden>
+        <FileText className="size-5" />
+      </span>
+      <h2 id={`${uid}-title`} className="font-display mt-5 text-[26px] leading-tight">
+        {content.title}
       </h2>
-      <p className="mt-1 font-mono text-[11px] text-subtle">PDF or TXT · Max 5MB</p>
+      <p className="mt-2 text-[13px] text-muted">{content.subtitle}</p>
 
       <div
         onDragOver={(e) => {
@@ -102,13 +113,10 @@ export function VellumUpload() {
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        className={cn(
-          "mt-5 flex flex-col items-center gap-3 rounded-lg border border-dashed px-4 py-7 text-center transition-colors",
-          dragging ? "border-accent bg-accent-soft" : "border-border-strong bg-bg/40",
-        )}
+        className={cn("my-6 rounded-lg border border-dashed border-accent transition-colors", dragging ? "bg-accent-soft" : "bg-transparent")}
       >
         {file ? (
-          <div className="flex w-full items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2.5 text-left text-sm">
+          <div className="flex items-center gap-2.5 px-4 py-5 text-left text-sm">
             <FileText className="size-4 shrink-0 text-accent" aria-hidden />
             <span className="min-w-0 flex-1 truncate">{file.name}</span>
             <span className="font-mono text-xs text-subtle">{Math.max(1, Math.round(file.size / 1024))} KB</span>
@@ -125,14 +133,17 @@ export function VellumUpload() {
               <X className="size-3.5" aria-hidden />
             </button>
           </div>
-        ) : (
-          <>
-            <Upload className="size-5 text-muted" aria-hidden />
-            <p className="text-sm">Drop your resume here</p>
-            <InkAnnotation className="text-2xl">we&apos;ll do the boring part</InkAnnotation>
-            <p className="text-xs text-subtle">or</p>
-          </>
-        )}
+        ) : null}
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          className={cn("flex w-full flex-col items-center gap-1.5 rounded-lg px-4 text-accent transition-colors hover:bg-accent-soft/60", file ? "border-t border-dashed border-accent/50 py-3" : "py-7")}
+        >
+          <Plus className="size-4" aria-hidden />
+          <span className="text-[15px] font-bold">{file ? "Choose another file" : content.dropTitle}</span>
+          {!file && <span className="text-[11px] text-muted">{content.dropHint}</span>}
+        </button>
         <input
           ref={inputRef}
           id={`${uid}-file`}
@@ -146,12 +157,9 @@ export function VellumUpload() {
             e.target.value = "";
           }}
         />
-        <Button type="button" variant="secondary" size="sm" onClick={() => inputRef.current?.click()} disabled={busy}>
-          {file ? "Choose another file" : "Choose file"}
-        </Button>
       </div>
 
-      <label htmlFor={`${uid}-role`} className="mt-5 block text-xs font-medium text-muted">
+      <label htmlFor={`${uid}-role`} className="eyebrow block text-text">
         Target role
       </label>
       <select
@@ -159,7 +167,7 @@ export function VellumUpload() {
         value={role}
         onChange={(e) => setRole(e.target.value)}
         disabled={busy}
-        className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm text-text"
+        className="mt-2 h-11 w-full rounded-lg border border-border bg-surface px-3 text-[13px] text-text focus:border-accent focus:outline-none"
       >
         {TARGET_ROLES.map((r) => (
           <option key={r.key} value={r.key}>
@@ -168,11 +176,11 @@ export function VellumUpload() {
         ))}
       </select>
 
-      <Button type="submit" size="lg" className="mt-5 w-full" disabled={!file || busy} loading={start.isPending}>
-        Start preparing <ArrowRight className="size-4" aria-hidden />
+      <Button type="submit" variant="ink" size="md" className="mt-4 w-full" disabled={busy} loading={start.isPending}>
+        {content.button} <ArrowUpRight className="size-3.5" aria-hidden />
       </Button>
 
-      <p role="status" aria-live="polite" className={cn("mt-3 min-h-5 text-xs", fileError || start.error ? "text-danger" : "text-muted")}>
+      <p role="status" aria-live="polite" className={cn("mt-3 min-h-4 text-center text-xs", fileError || start.error ? "text-danger" : "text-muted")}>
         {status}
       </p>
       {blocked ? (
@@ -183,7 +191,7 @@ export function VellumUpload() {
           </Link>
         </div>
       ) : (
-        <p className="text-xs text-subtle">Not signed in? Your resume is uploaded only after you create a free account.</p>
+        <p className="text-center text-[10px] text-muted">{content.finePrint}</p>
       )}
     </form>
   );

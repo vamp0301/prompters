@@ -13,7 +13,7 @@ export function ThemeToggle({ className }: { className?: string }) {
       type="button"
       onClick={() => applyTheme(dark ? "light" : "dark")}
       aria-label={dark ? "Switch to paper (light) theme" : "Switch to night (dark) theme"}
-      className={cn("grid size-9 place-items-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-text", className)}
+      className={cn("grid size-9 place-items-center rounded-[9px] border border-border bg-surface text-text transition-[transform,border-color] duration-200 hover:-translate-y-0.5 hover:border-accent", className)}
     >
       {theme === undefined ? <span className="size-4" aria-hidden /> : dark ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}
     </button>

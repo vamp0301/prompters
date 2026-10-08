@@ -263,7 +263,7 @@ export function QuizRunner({ attempt, title, onFinished }: { attempt: Attempt; t
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-4 sm:px-6">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
         <div className="min-w-0">
-          <div className="font-mono text-[11px] uppercase tracking-wider text-accent">{attempt.kind.replace("_", " ").toLowerCase()}</div>
+          <div className="eyebrow text-accent">{attempt.kind.replace("_", " ").toLowerCase()}</div>
           <h1 className="truncate font-semibold">{title}</h1>
         </div>
         <div className="flex items-center gap-4">

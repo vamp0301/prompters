@@ -254,9 +254,9 @@ export function ProjectDetailView({ slug }: { slug: string }) {
     <div className="space-y-6">
       <Link href="/projects" className="inline-flex items-center gap-1 text-xs text-muted hover:text-text"><ArrowLeft className="size-3.5" aria-hidden /> Project ladder</Link>
       <div>
-        <div className="font-mono text-[11px] uppercase tracking-wider text-accent">Rung {p.rung}</div>
+        <div className="eyebrow text-accent">Rung {p.rung}</div>
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{p.title}</h1>
+          <h1 className="font-display text-3xl leading-tight">{p.title}</h1>
           {p.unlocked ? <WorkStatusBadge status={sub?.status ?? "NOT_STARTED"} /> : <Badge><Lock className="size-3" aria-hidden /> Locked</Badge>}
         </div>
         <div className="mt-2 flex flex-wrap gap-1.5">
