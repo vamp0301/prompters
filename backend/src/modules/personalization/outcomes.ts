@@ -74,6 +74,14 @@ export function progressOf(r: Rec, d: StudentData): Progress {
       const done = s.status !== "IN_PROGRESS" && after(s.completedAt);
       return { started: done || after(s.updatedAt), completed: done, good: done ? true : null };
     }
+    case "PRACTICE_PROJECT": {
+      // Re-tested on the same skill in the same project.
+      const [projectId, skill] = r.itemId.split(":");
+      const later = d.projectAnswers.filter((a) => a.projectId === projectId && canonicalSkill(a.skill) === skill && after(a.createdAt)).map((a) => a.score / 100);
+      if (!later.length) return none;
+      const avg = later.reduce((a, b) => a + b, 0) / later.length;
+      return { started: true, completed: true, good: avg >= 0.7 };
+    }
     case "LEARN_CONCEPT": {
       const [skill, concept] = r.itemId.split("/");
       const c = d.concepts.find((x) => x.skillKey === skill && x.conceptKey === concept);

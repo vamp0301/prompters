@@ -24,6 +24,7 @@ export const REASON_LABEL: Record<string, string> = {
   started_not_proven: "Started, not proven",
   increase_difficulty: "Ready for harder",
   decrease_difficulty: "Step back a level",
+  project_weakness: "Weak in your project interview",
 };
 
 const ACTION_VERB: Record<Candidate["action"], string> = {
@@ -35,6 +36,7 @@ const ACTION_VERB: Record<Candidate["action"], string> = {
   PRACTICE_QUESTION: "Answer",
   FINISH_BUILD: "Finish the build",
   LEARN_CONCEPT: "Prove you understand",
+  PRACTICE_PROJECT: "Review, then re-test",
 };
 
 export const actionLabel = (a: Candidate["action"]) => ACTION_VERB[a];
@@ -77,6 +79,10 @@ export function explain(c: Pick<Candidate, "action" | "subject" | "reasons" | "f
       if (c.action === "LEARN_CONCEPT") parts.push(f.explainScore !== null && f.explainScore !== undefined ? `Your last explanation scored ${f.explainScore}/100 — 75 proves it.` : "Explaining it in 60 seconds proves it.");
       break;
     }
+    case "PRACTICE_PROJECT":
+      parts.push(`In your ${f.project} knowledge test, ${c.subject} answers averaged ${f.projectScore}%.`);
+      parts.push(`Review it, then re-test the project — interviewers who pick ${f.project} will drill into it.`);
+      break;
     case "FINISH_BUILD":
       parts.push(`You started ${c.subject}${f.total ? ` and pass ${f.passed}/${f.total} tests` : ""}${typeof f.idleDays === "number" && f.idleDays > 0 ? `; untouched for ${f.idleDays} day${f.idleDays === 1 ? "" : "s"}` : ""}.`);
       break;

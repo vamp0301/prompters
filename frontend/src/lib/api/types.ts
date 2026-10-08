@@ -1621,3 +1621,151 @@ export interface PersonalDebug {
   resolved: PersonalDebugRec[];
   predictions: { modelName: string; modelVersion: string; target: string; prediction: number; confidence: number | null; createdAt: string }[];
 }
+
+// ───────────────────────── Project experience intelligence ─────────────────────────
+
+export type Basis = "RESUME" | "USER_FACT" | "GENERAL" | "NOT_SPECIFIED";
+export interface Sourced { text: string; basis: Basis }
+export interface Why { fact: string | null; explanation: string; possibleReason: string | null }
+export type ProjectDimension = "PROJECT" | "ARCHITECTURE" | "TECHNOLOGY" | "DATABASE" | "API" | "SECURITY" | "PERFORMANCE" | "DEBUGGING" | "TRADEOFFS" | "SCALABILITY";
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  source: "PROJECT" | "EXPERIENCE" | "BOTH";
+  company: string | null;
+  role: string | null;
+  technologies: string[];
+  claims: number;
+  generated: boolean;
+  stale: boolean;
+  lastTest: { completedAt: string; overall: number | null } | null;
+}
+
+export interface ProjectTechCard {
+  technology: string;
+  whatItIs: string;
+  whyUsed: Why;
+  problemSolved: string;
+  howUsed: Sourced;
+  alternative: string;
+  whyNotAlternative: string;
+  alternativeBetterWhen: string;
+  worseWhen: string;
+  tradeoff: string;
+  recommendation: "KEEP" | "CONSIDER" | "BENCHMARK";
+  recommendationReason: string;
+  interviewQuestion: string;
+  answer: string;
+  followUp: string;
+  deeperFollowUp: string;
+}
+
+export interface ProjectQuestion {
+  key: string;
+  level: number;
+  dimension: ProjectDimension;
+  skill: string;
+  question: string;
+  answer: string;
+  whyThisAnswer: string;
+  followUp: string;
+  followUpAnswer: string;
+  deepFollowUp: string;
+  deepFollowUpAnswer: string;
+}
+
+export interface ProjectContentT {
+  story: {
+    overview: { problem: Sourced; users: Sourced; whatBuilt: Sourced };
+    experience: { question: string; answer: string; basis: Basis }[];
+    pitches: { sec30: string; sec60: string; min2: string[]; min5: string[] };
+    architecture: { diagram?: Diagram; requestFlow: string[] };
+    dataFlow: { step: string; why: string; whatCanFail: string; handling: string; basis: Basis }[];
+    database: { name: string; whyChosen: Why; dataModel: Sourced; entities: string[]; questions: { q: string; a: string }[] } | null;
+    security: { area: string; why: string; risk: string; change: string }[];
+    performance: { problem: Sourced; cause: Sourced; identified: Sourced; solution: Sourced; whySolution: string; tradeoff: string; result: Sourced };
+    challenges: { real: { text: string; source: "RESUME" | "USER_FACT" }[]; likely: string[] };
+    tradeoffs: string[];
+    scaling: { at: string; bottleneck: string; change: string }[];
+    ifBuiltToday: { current: string; recommended: string; reason: string }[];
+    skillLadder: { level: number; skills: { name: string; evidence: string; confidence: "HIGH" | "MEDIUM" | "LOW" | "NONE" }[] }[];
+  };
+  technologies: ProjectTechCard[];
+  decisionMap: { category: string; decisions: { technology: string; why: string; whyIsFact: boolean; insteadOf: string; tradeoff: string; change: string }[] }[];
+  ai: {
+    used: string[];
+    fact: string;
+    flow: Diagram;
+    concerns: { topic: string; practice: string }[];
+    comparison: { key: string; option: string; type: string; potentialAdvantages: string[]; costsAndRisks: string[]; chooseWhen: string }[];
+    decision: { question: string; answer: string; otherAdvantages: string[]; otherDisadvantages: string[]; recommendation: string; why: string };
+    followUps: string[];
+    note: string;
+  } | null;
+  questions: ProjectQuestion[];
+  drillDown: { question: string; lookingFor: string }[];
+  claimDefense: { claimId: string; claim: string; questions: string[] }[];
+  experienceQuestions: { question: string; hint: string }[];
+  technologiesUsed: string[];
+  autoFixes: string[];
+}
+
+export interface ProjectFact { key: string; label: string; group: string; hint?: string; value: string | null; source: "RESUME" | "USER" | null }
+
+export interface ProjectModule {
+  id: string;
+  name: string;
+  source: ProjectSummary["source"];
+  company: string | null;
+  role: string | null;
+  technologies: string[];
+  verified: { chunks: { type: string; title: string; text: string }[]; problem: string | null; architecture: string | null; features: string[]; contribution: string | null; claims: { id: string; claim: string; evidence: string }[] };
+  facts: ProjectFact[];
+  integrations: ProjectIntegrations;
+  content: ProjectContentT | null;
+  stale: boolean;
+  generatedAt: string | null;
+}
+
+export type IntegrationKind = "OWN_REST" | "INTERNAL_SERVICE" | "THIRD_PARTY" | "INFRASTRUCTURE" | "BROWSER";
+export type ApiFocus = "ALL" | IntegrationKind;
+export interface ApiQuestionT { key: string; question: string; level: number; kind: IntegrationKind | "SYSTEM"; dimension: ProjectDimension; skill: string }
+export interface IntegrationGuide { key: string; title: string; flow: Diagram; points: string[]; questions: string[]; failures: { failure: string; response: string }[] }
+export interface ProjectIntegrations {
+  kinds: { kind: IntegrationKind; label: string; items: { name: string; basis: "RESUME" | "USER_FACT"; guide: string }[]; guides: IntegrationGuide[] }[];
+  endpoints: string[] | null;
+  methods: { method: string; meaning: string; typicalUse: string }[];
+  browser: { name: string; basis: "RESUME" | "USER_FACT"; what: string; why: string; permission: string; security: string; support: string; fallback: string }[];
+  failures: { dependency: string; failure: string; status: "IMPLEMENTED" | "RECOMMENDED"; response: string }[];
+  chain: ApiQuestionT[];
+  architecture: ApiQuestionT[];
+  checklists: { security: string[]; performance: string[]; observability: string[]; testing: string[] };
+  measurements: { value: string; basis: "USER_FACT" | "NOT_SPECIFIED" };
+  testing: { value: string; basis: "USER_FACT" | "NOT_SPECIFIED" };
+  focuses: ApiFocus[];
+}
+
+export type ProjectTestMode = "QUICK" | "DEEP" | "DRILL" | "SENIOR" | "DEFENSE" | "API";
+export interface ProjectTestResult {
+  overall: number | null;
+  highestLevelPassed: number;
+  dimensions: { dimension: ProjectDimension; score: number | null; answers: number; evidence: string[] }[];
+  skills: { key: string; skill: string; score: number; answers: number; status: "STRONG" | "MODERATE" | "WEAK" }[];
+  unknownSkills: string[];
+}
+export interface ProjectTestView {
+  id: string;
+  mode: ProjectTestMode;
+  status: "IN_PROGRESS" | "COMPLETED";
+  isRetest: boolean;
+  current: { key: string; question: string; level: number; dimension: ProjectDimension; skill: string; isFollowUp: boolean } | null;
+  progress: { answered: number; total: number };
+  answers: { questionKey: string; question: string; level: number; dimension: string; skill: string; isFollowUp: boolean; score: number }[];
+  result: ProjectTestResult | null;
+  last?: { score: number; verdict: string; covered: string[]; missing: string[] };
+}
+export interface ProjectReport extends ProjectTestResult {
+  tests: { id: string; mode: ProjectTestMode; completedAt: string; isRetest: boolean; overall: number | null }[];
+  progress: { dimension: ProjectDimension; first: number | null; latest: number | null; tests: number }[] | null;
+}

@@ -15,7 +15,7 @@ const round = (x: number, d = 3) => Math.round(x * 10 ** d) / 10 ** d;
 
 // ───────────────────────── skill state ─────────────────────────
 
-export type EvidenceSource = "quiz" | "review" | "build" | "prep" | "interview" | "explain";
+export type EvidenceSource = "quiz" | "review" | "build" | "prep" | "interview" | "explain" | "project";
 
 /** One piece of evidence about a concept: a quiz, a review, a build, a practice or interview answer… */
 export interface Observation {
@@ -31,7 +31,7 @@ export interface Observation {
 }
 
 /** How much each kind of evidence counts. */
-export const EVIDENCE_WEIGHT: Record<EvidenceSource, number> = { quiz: 1, review: 1.2, build: 0.8, prep: 1, interview: 1.5, explain: 1 };
+export const EVIDENCE_WEIGHT: Record<EvidenceSource, number> = { quiz: 1, review: 1.2, build: 0.8, prep: 1, interview: 1.5, explain: 1, project: 1.2 };
 
 /** Evidence older than this counts half as much (and keeps halving). */
 const HALF_LIFE_DAYS = 60;
@@ -80,7 +80,7 @@ export function estimateSkillState(
   const stabilityDays = 2 * 2 ** Math.min(recallDays, 6) * (0.5 + mastery);
   const forgettingRisk = lastSeen ? 1 - Math.exp(-daysBetween(lastSeen, opts.now) / stabilityDays) : 0;
   const computedReview = lastSeen ? new Date(lastSeen.getTime() + stabilityDays * Math.log(1 / REVIEW_RETENTION) * DAY) : null;
-  const signals = { quiz: 0, review: 0, build: 0, prep: 0, interview: 0, explain: 0, resumePrior: !!opts.resumePrior };
+  const signals = { quiz: 0, review: 0, build: 0, prep: 0, interview: 0, explain: 0, project: 0, resumePrior: !!opts.resumePrior };
   for (const o of obs) signals[o.source]++;
   return {
     mastery: round(clamp01(mastery)),

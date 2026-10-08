@@ -19,6 +19,12 @@ export class FakeAI implements AIProvider {
   stageGate: Promise<void> | null = null;
   /** Skill guides to return without a usable flow diagram before a good one. */
   badGuides = 0;
+  /** Project-module drafts to return with a planted fabrication (validator tests). */
+  badProject: ("metrics" | "foreign" | "generic")[] = [];
+  /** Project parts that keep fabricating even after the retry (forces the scrub path). */
+  stubbornProject = false;
+  /** Per-call faults for project_questions only (first draft, retry…), consumed in order. */
+  questionDrafts: ("generic" | "genericHigh" | "hypothetical")[] = [];
 
   /** Distinct questions per call, plus a few the validator must reject. */
   private prepBatch(category: string, count: number, system = "", user = "") {
@@ -56,6 +62,17 @@ export class FakeAI implements AIProvider {
       { ...good(0), skill: "Kotlin Multiplatform", question: `How does Kotlin Multiplatform share code across omega${++this.prepCounter} targets?` },
       { ...good(0), keyPoints: [] }, // schema: needs ≥1 key point
     ];
+  }
+
+
+  /** Project name, technologies and claim ids from a project prompt. */
+  private projectCtx(user: string) {
+    const name = user.match(/^Project: (.+)$/m)?.[1]?.trim() ?? "Project";
+    const techBlock = user.match(/<technologies>\n([\s\S]*?)\n<\/technologies>/)?.[1] ?? "";
+    const techs = techBlock.split("\n").map((l) => l.replace(/\s*\(compare with:.*\)$/, "").trim()).filter(Boolean);
+    const claimIds = [...user.matchAll(/^- \[([^\]]+)\] /gm)].map((m) => m[1]);
+    const experience = /Appears under: (WORK EXPERIENCE|PROJECTS and WORK EXPERIENCE)/.test(user);
+    return { name, techs, claimIds, experience };
   }
 
   async complete(system: string, user: string) {
@@ -271,6 +288,91 @@ export class FakeAI implements AIProvider {
                   steps: [{ label: "Request arrives" }, { label: "Event loop picks it" }, { label: "I/O to thread pool", note: "libuv" }, { label: "Callback queued" }, { label: "Response sent" }],
                 },
         });
+      case "project_story": {
+        const { name, techs } = this.projectCtx(user);
+        const bad = this.stubbornProject ? this.badProject[0] : this.badProject.shift();
+        const db = techs.find((t) => /mongo|postgres|mysql|sqlite/i.test(t));
+        const story = {
+          overview: { problem: { text: `${name} solves the problem described on the resume.`, basis: "RESUME" }, users: { text: "Not specified — edit this answer.", basis: "NOT_SPECIFIED" }, whatBuilt: { text: `${name} built with ${techs.slice(0, 3).join(", ")}.`, basis: "RESUME" } },
+          experience: [
+            { question: "What was the project?", answer: `${name}, built with ${techs.slice(0, 2).join(" and ")}.`, basis: "RESUME" },
+            { question: "Who used it?", answer: "Not specified — edit this answer.", basis: "NOT_SPECIFIED" },
+            { question: "What did I personally implement?", answer: "Not specified — edit this answer.", basis: "NOT_SPECIFIED" },
+            { question: "What would I improve today?", answer: "Add tests around the core flow and measure the slow paths.", basis: "GENERAL" },
+          ],
+          pitches: { sec30: `${name} is a project using ${techs.join(", ")}.`, sec60: `${name}: what it does, how it is built with ${techs.join(", ")}, and the key decisions.`, min2: ["Problem", "Stack", "My part", "One decision"], min5: ["Problem", "Architecture", "Data flow", "Decisions", "Trade-offs", "What I would change"] },
+          architecture: {
+            diagram: { kind: "architecture", title: `${name} architecture`, objective: "Where each part sits", alt: `User to ${techs.join(", ")}`, layers: [{ label: "Client", nodes: [{ label: "User" }] }, { label: "App", nodes: techs.slice(0, 3).map((t) => ({ label: t })) }, { label: "Data", nodes: [{ label: db ?? "Storage" }] }] },
+            requestFlow: ["User performs an action", "Request reaches the API", "Business logic runs", "Data is read or written", "Response returned"],
+          },
+          dataFlow: [
+            { step: "Input", why: "User submits data", whatCanFail: "Invalid input", handling: "Validate and return a clear error", basis: "GENERAL" },
+            { step: "Business logic", why: "Applies the rules", whatCanFail: "Unexpected state", handling: "Guard clauses and logging", basis: "GENERAL" },
+            { step: "Database", why: "Persists data", whatCanFail: "Connection lost", handling: "Retry and surface an error", basis: "GENERAL" },
+          ],
+          database: db ? { name: db, whyChosen: { fact: null, explanation: `${db} fits structured application data.`, possibleReason: "The team may have known it already." }, dataModel: { text: "Not specified — edit this answer.", basis: "NOT_SPECIFIED" }, entities: [], questions: [{ q: `Why ${db}?`, a: `${db} fit the data access pattern.` }] } : null,
+          security: [{ area: "Input validation", why: "User input reaches the API", risk: "Injection", change: "Validate every request body" }],
+          performance: { problem: { text: "Not specified — edit this answer.", basis: "NOT_SPECIFIED" }, cause: { text: "Not specified — edit this answer.", basis: "NOT_SPECIFIED" }, identified: { text: "Not specified — edit this answer.", basis: "NOT_SPECIFIED" }, solution: { text: "Not specified — edit this answer.", basis: "NOT_SPECIFIED" }, whySolution: "Depends on the measured bottleneck.", tradeoff: "Complexity versus speed.", result: { text: "Not provided — add actual measurement.", basis: "NOT_SPECIFIED" } },
+          challenges: { real: [], likely: ["Handling invalid data from users"] },
+          tradeoffs: ["Simplicity over flexibility"],
+          scaling: [{ at: "10×", bottleneck: "The database", change: "Add indexes and read replicas" }],
+          ifBuiltToday: [{ current: `${techs[0] ?? "The app"} handles requests directly`, recommended: "Add automated tests and metrics", reason: "Safer changes and visible performance" }],
+          skillLadder: [1, 2, 3, 4, 5].map((level) => ({ level, skills: [{ name: techs[level % Math.max(1, techs.length)] ?? "Programming", evidence: `Used in ${name}`, confidence: level <= 2 ? "HIGH" : "MEDIUM" }] })),
+        };
+        if (bad === "metrics") {
+          story.performance.result = { text: "Reduced API latency by 70% for 100K users.", basis: "RESUME" };
+          story.pitches.sec30 = `${name} handled 100K users with 99.99% uptime.`;
+        }
+        if (bad === "foreign") {
+          story.overview.whatBuilt = { text: `${name} cached every response in Redis and queued work in Kafka.`, basis: "RESUME" };
+          story.architecture.diagram.layers.push({ label: "Cache", nodes: [{ label: "Redis" }] });
+        }
+        return JSON.stringify(story);
+      }
+      case "project_tech": {
+        const { name, techs } = this.projectCtx(user);
+        const card = (t: string) => ({
+          technology: t, whatItIs: `${t} is a widely used tool.`, whyUsed: { fact: null, explanation: `${t} fit ${name}'s needs.`, possibleReason: "The team may have known it." },
+          problemSolved: `It handled one part of ${name}.`, howUsed: { text: "Not specified — edit this answer.", basis: "NOT_SPECIFIED" }, alternative: "An alternative", whyNotAlternative: "The requirements did not call for it.",
+          alternativeBetterWhen: "When requirements change.", worseWhen: "When the current needs hold.", tradeoff: "Familiarity versus flexibility.", recommendation: "KEEP", recommendationReason: "No project-specific reason to change.",
+          interviewQuestion: `Why did you choose ${t} for ${name}?`, answer: `${t} fit ${name}'s access pattern; I would revisit it if requirements changed.`, followUp: "Why not the alternative?", deeperFollowUp: "What would make you migrate?",
+        });
+        return JSON.stringify({ technologies: [...techs.map(card), card("Kafka")] });
+      }
+      case "project_questions": {
+        const { name, techs, claimIds, experience } = this.projectCtx(user);
+        const draft = this.questionDrafts.shift();
+        const bad = draft ?? (this.stubbornProject ? this.badProject[0] : this.badProject.shift());
+        const t = (i: number) => techs[i % Math.max(1, techs.length)] ?? "the stack";
+        const dims = ["PROJECT", "ARCHITECTURE", "TECHNOLOGY", "DATABASE", "API", "SECURITY", "PERFORMANCE", "DEBUGGING", "TRADEOFFS", "SCALABILITY"];
+        const questions = Array.from({ length: 20 }, (_, i) => {
+          const level = Math.floor(i / 4) + 1;
+          return {
+            level, dimension: dims[(i + level) % dims.length], skill: t(i),
+            question: (bad === "generic" && i < 3) || (bad === "genericHigh" && i >= 17) ? `What is a variable number ${i}?` : bad === "hypothetical" && i === 19 ? `L5 q20: how would ${name} handle a surge to 600,000 users?` : `L${level} q${i + 1}: how does ${t(i)} work in ${name}?`,
+            answer: bad === "metrics" && i === 0 ? `In ${name} we cut response time by 70% using ${t(i)}.` : bad === "hypothetical" && i === 19 ? `At 600,000 users I would add caching in front of ${t(i)}.` : `In ${name}, ${t(i)} handles part of the flow; explain your own part.`,
+            whyThisAnswer: "Shows you know your own project.", followUp: `Why ${t(i)} here?`, followUpAnswer: `It fit ${name}.`, deepFollowUp: "What would you change?", deepFollowUpAnswer: "Measure first, then change.",
+          };
+        });
+        return JSON.stringify({
+          questions,
+          drillDown: Array.from({ length: 9 }, (_, i) => ({ question: `Drill ${i + 1} on ${name}`, lookingFor: "Specifics" })),
+          claimDefense: claimIds.map((claimId) => ({ claimId, questions: ["What exactly did you build?", "How did you measure it?", "What would break first?", "What did it cost?", "What would you do differently?"] })),
+          experienceQuestions: experience ? Array.from({ length: 6 }, (_, i) => ({ question: `Experience question ${i + 1} about your responsibility on ${name}`, hint: "Prepare a real example." })) : [],
+        });
+      }
+      case "project_answer_eval": {
+        const answer = user.match(/<candidate_answer>\n([\s\S]*?)\n<\/candidate_answer>/)?.[1] ?? "";
+        const strong = /\bbecause\b/i.test(answer) && answer.length > 40;
+        const s10 = strong ? 9 : 3;
+        return JSON.stringify({
+          correctness: s10, completeness: s10, depth: s10, reasoning: s10, understanding: s10, practical: s10, communication: s10,
+          verdict: strong ? "CORRECT" : "PARTIAL",
+          conceptsMentioned: strong ? ["data model", "trade-off"] : ["basics"], missingConcepts: strong ? [] : ["indexing", "failure handling"], unsupportedClaims: [],
+          followUp: strong ? { needed: false } : { needed: true, question: `You said "${answer.slice(0, 30)}" — what exactly did you do?` },
+          lead: "Okay.",
+        });
+      }
       case "prep_dedupe": {
         // Flags the first two questions as the same ask, plus a bogus id that must be ignored.
         const ids = [...user.matchAll(/^(q\d+):/gm)].map((m) => m[1]);

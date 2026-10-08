@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  BookOpen, Briefcase, BriefcaseBusiness, ChevronRight, Code2, Compass, FileText, History, Languages, LayoutDashboard, LogOut, Menu,
+  BookOpen, Briefcase, BriefcaseBusiness, ChevronRight, Code2, Compass, FileText, FolderGit2, History, Languages, LayoutDashboard, LogOut, Menu,
   MessagesSquare, MoreHorizontal, NotebookPen, Search, Settings, Shield, Sparkles, Target, Timer, Trophy, User, X, Zap,
 } from "lucide-react";
 import { Logo } from "./logo";
@@ -36,6 +36,7 @@ const NAV: { group: string; items: { href: string; label: string; icon: typeof B
     group: "Get hired",
     items: [
       { href: "/career", label: "Career AI", icon: BriefcaseBusiness },
+      { href: "/career/projects", label: "My projects", icon: FolderGit2 },
       { href: "/career/skills", label: "Learn my skills", icon: NotebookPen },
       { href: "/interviews", label: "Interview prep", icon: MessagesSquare },
       { href: "/mock-tests", label: "Mock tests", icon: Timer },
@@ -53,7 +54,7 @@ const EXTRA: PaletteItem[] = [
 
 const isActive = (pathname: string, href: string) =>
   (pathname === href || pathname.startsWith(`${href}/`)) &&
-  !(href === "/career" && pathname.startsWith("/career/skills")) &&
+  !(href === "/career" && (pathname.startsWith("/career/skills") || pathname.startsWith("/career/projects"))) &&
   !(href === "/learn" && pathname.startsWith("/learn/syllabus"));
 
 /** The page name shown in the breadcrumb: the most specific nav entry that matches the URL. */

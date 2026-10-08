@@ -10,6 +10,7 @@ import { redis } from "../lib/redis.js";
 import { logger } from "../lib/logger.js";
 import { loadUser, requireAuth } from "../middleware/auth.js";
 import { personalizationRoutes } from "../modules/personalization/personalization.routes.js";
+import { projectExperienceRoutes } from "../modules/project-experience/project-experience.routes.js";
 import { csrfGuard } from "../middleware/csrf.js";
 import { errorHandler, notFoundHandler } from "../middleware/error-handler.js";
 import { globalLimiter } from "../middleware/rate-limit.js";
@@ -94,6 +95,7 @@ export function createApp() {
   api.use("/code", requireAuth, codeRoutes());
   api.use("/ai", requireAuth, aiRoutes());
   api.use("/career/prep", requireAuth, prepRoutes());
+  api.use("/career/projects", requireAuth, projectExperienceRoutes());
   api.use("/career", requireAuth, careerRoutes());
   api.use("/admin", requireAuth, adminRoutes());
   api.use("/", requireAuth, learningRoutes());

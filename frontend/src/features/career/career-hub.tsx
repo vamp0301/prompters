@@ -9,6 +9,7 @@ import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field, Select } from "@/components/ui/input";
 import { EmptyState, ErrorState, PageHeader, Skeleton, Tabs } from "@/components/ui/misc";
+import { ProjectsList } from "./projects/projects-list";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
 import type { CareerAnalysisItem, CareerJob, CareerResume, CareerSessionItem, CareerStatus } from "@/lib/api/types";
@@ -41,7 +42,7 @@ export function CareerHub() {
   const disabled = !status.data?.available;
   const params = useSearchParams();
   const initial = params.get("tab");
-  const [tab, setTab] = useState<"prep" | "interview" | "match">(initial === "interview" || initial === "match" ? initial : "prep");
+  const [tab, setTab] = useState<"prep" | "interview" | "projects" | "match">(initial === "interview" || initial === "match" || initial === "projects" ? initial : "prep");
 
   return (
     <div className="space-y-6">
@@ -57,6 +58,7 @@ export function CareerHub() {
         items={[
           { value: "prep", label: "Top 100 prep" },
           { value: "interview", label: "AI interview" },
+          { value: "projects", label: "My projects" },
           { value: "match", label: "Job match" },
         ]}
       />
@@ -73,6 +75,8 @@ export function CareerHub() {
           <InterviewStartCard disabled={disabled} onNeedResume={() => setTab("match")} />
           <SessionsCard />
         </div>
+      ) : tab === "projects" ? (
+        <ProjectsList />
       ) : (
         <div className="space-y-6">
           <p className="text-sm text-muted">Match a resume to a real job description. From an analysis you can take an interview built around that exact job.</p>

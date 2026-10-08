@@ -24,7 +24,7 @@ const CODING_LEVEL: Record<string, DifficultyLevel> = { BEGINNER: "easy", INTERM
 
 export async function loadStudentData(userId: string, now = new Date()) {
   const since90 = new Date(now.getTime() - 90 * DAY);
-  const [profile, path, masteries, quizzes, submissions, resume, plan, prepAttempts, turns, concepts, events, maps, prereqs] = await Promise.all([
+  const [profile, path, masteries, quizzes, submissions, resume, plan, prepAttempts, turns, concepts, events, maps, prereqs, projectAnswers] = await Promise.all([
     prisma.userProfile.findUnique({ where: { userId }, select: { goalRole: true, codingLevel: true } }),
     learnerPath(userId),
     prisma.mastery.findMany({ where: { userId } }),
@@ -47,9 +47,11 @@ export async function loadStudentData(userId: string, now = new Date()) {
     prisma.learningEvent.findMany({ where: { userId, createdAt: { gte: since90 } }, select: { createdAt: true, eventType: true, entityId: true }, orderBy: { createdAt: "asc" } }),
     prisma.skillMap.findMany({ select: { key: true } }),
     prisma.topicPrerequisite.findMany({ select: { topicId: true, prerequisite: { select: { slug: true, title: true } } } }),
+    // Project knowledge-test answers: "how well do you know YOUR project" evidence, per skill.
+    prisma.projectAnswer.findMany({ where: { userId }, select: { projectId: true, skill: true, score: true, level: true, createdAt: true, project: { select: { name: true } } }, orderBy: { createdAt: "asc" } }),
   ]);
   const latestJob = plan?.job ?? (await prisma.jobTarget.findFirst({ where: { userId }, orderBy: { createdAt: "desc" }, select: { title: true, parsed: true } }));
-  return { userId, now, profile, path, masteries, quizzes, submissions, resume, plan, prepAttempts, turns, concepts, events, mapKeys: new Set(maps.map((m) => m.key)), prereqs, latestJob };
+  return { userId, now, profile, path, masteries, quizzes, submissions, resume, plan, prepAttempts, turns, concepts, events, mapKeys: new Set(maps.map((m) => m.key)), prereqs, projectAnswers, latestJob };
 }
 export type StudentData = Awaited<ReturnType<typeof loadStudentData>>;
 
@@ -191,6 +193,7 @@ export function conceptStates(d: StudentData, c: CareerContext): ConceptState[] 
   for (const q of d.plan?.questions ?? []) add(q.skill);
   for (const t of d.turns) add(t.skill);
   for (const a of d.prepAttempts) add(a.question.skill);
+  for (const a of d.projectAnswers) if (a.skill !== "Resume claim") add(a.skill);
   const jobData = d.latestJob ? jobParsedSchema.safeParse(d.latestJob.parsed) : null;
   if (jobData?.success) [...jobData.data.requiredSkills, ...jobData.data.preferredSkills].forEach(add);
   const conceptsBySkill = new Map<string, ConceptProgress[]>();
@@ -202,6 +205,7 @@ export function conceptStates(d: StudentData, c: CareerContext): ConceptState[] 
     const obs: Observation[] = [
       ...d.prepAttempts.filter((a) => canonicalSkill(a.question.skill) === key).map((a) => ({ source: "prep" as const, score: a.score / 100, at: a.createdAt, weight: EVIDENCE_WEIGHT.prep, difficulty: a.question.difficulty })),
       ...interview,
+      ...d.projectAnswers.filter((a) => canonicalSkill(a.skill) === key).map((a) => ({ source: "project" as const, score: a.score / 100, at: a.createdAt, weight: EVIDENCE_WEIGHT.project, difficulty: a.level })),
       // Explaining a concept counts; ticking "I understand this" is a self-report, not evidence.
       ...(conceptsBySkill.get(key) ?? []).filter((cp) => cp.explainScore !== null && cp.lastExplainedAt).map((cp) => ({ source: "explain" as const, score: cp.explainScore! / 100, at: cp.lastExplainedAt!, weight: EVIDENCE_WEIGHT.explain })),
     ];
@@ -225,6 +229,7 @@ export function difficultyObservations(d: StudentData): Observation[] {
     ...d.quizzes.filter((q) => q.score !== null && q.topic && q.kind !== "PLACEMENT").map((q) => ({ source: quizSource(q), score: q.score! / 100, at: q.finishedAt!, weight: 1, timeSec: (q.finishedAt!.getTime() - q.startedAt.getTime()) / 1000, difficulty: q.topic!.difficulty })),
     ...d.prepAttempts.map((a) => ({ source: "prep" as const, score: a.score / 100, at: a.createdAt, weight: 1, difficulty: a.question.difficulty })),
     ...d.turns.map((t) => ({ source: "interview" as const, score: turnScore(t) / 100, at: t.answeredAt!, weight: 1, timeSec: t.durationSec, difficulty: Math.min(5, t.level + 1) })),
+    ...d.projectAnswers.map((a) => ({ source: "project" as const, score: a.score / 100, at: a.createdAt, weight: 1, difficulty: a.level })),
   ];
 }
 

@@ -40,7 +40,16 @@ export type EventType =
   | "interview_completed"
   | "resume_uploaded"
   | "interview_answer_evaluated"
-  | "interview_followup";
+  | "interview_followup"
+  | "project_viewed"
+  | "project_fact_edited"
+  | "project_test_started"
+  | "project_test_completed"
+  | "project_question_answered"
+  | "project_followup_asked"
+  | "project_skill_gap"
+  | "project_reinterview_started"
+  | "project_reinterview_completed";
 
 export async function logEvent(
   userId: string,

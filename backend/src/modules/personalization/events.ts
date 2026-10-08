@@ -23,6 +23,19 @@ export const STUDENT_EVENTS = [
   "INTERVIEW_COMPLETED",
   "INTERVIEW_ANSWER_EVALUATED",
   "INTERVIEW_FOLLOWUP",
+  "PROJECT_VIEWED",
+  "PROJECT_FACT_EDITED",
+  "PROJECT_EXPLANATION_VIEWED",
+  "PROJECT_QUESTION_STARTED",
+  "PROJECT_QUESTION_ANSWERED",
+  "PROJECT_FOLLOWUP_ASKED",
+  "PROJECT_KNOWLEDGE_TEST_STARTED",
+  "PROJECT_KNOWLEDGE_TEST_COMPLETED",
+  "PROJECT_SKILL_GAP_IDENTIFIED",
+  "PROJECT_REVISION_STARTED",
+  "PROJECT_REVISION_COMPLETED",
+  "PROJECT_REINTERVIEW_STARTED",
+  "PROJECT_REINTERVIEW_COMPLETED",
   "PROMPT_USED",
   "RESUME_UPLOADED",
   "JOB_VIEWED",
@@ -30,7 +43,7 @@ export const STUDENT_EVENTS = [
 ] as const;
 export type StudentEventType = (typeof STUDENT_EVENTS)[number];
 
-export const ENTITY_TYPES = ["TOPIC", "QUIZ_ATTEMPT", "BUILD_TASK", "PREP_QUESTION", "PREP_PLAN", "INTERVIEW_SESSION", "INTERVIEW_QUESTION", "INTERVIEW_ANSWER", "RESUME", "JOB", "PROMPT", "CONCEPT", "RECOMMENDATION"] as const;
+export const ENTITY_TYPES = ["TOPIC", "QUIZ_ATTEMPT", "BUILD_TASK", "PREP_QUESTION", "PREP_PLAN", "INTERVIEW_SESSION", "INTERVIEW_QUESTION", "INTERVIEW_ANSWER", "PROJECT", "RESUME", "JOB", "PROMPT", "CONCEPT", "RECOMMENDATION"] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 /** Server-logged event type → normalized name and the meta key holding the entity id. */
@@ -54,6 +67,15 @@ const MAP: Record<string, { event: StudentEventType; entity: EntityType; idKey?:
   interview_completed: { event: "INTERVIEW_COMPLETED", entity: "INTERVIEW_SESSION", idKey: "sessionId" },
   interview_answer_evaluated: { event: "INTERVIEW_ANSWER_EVALUATED", entity: "INTERVIEW_ANSWER", idKey: "turnId" },
   interview_followup: { event: "INTERVIEW_FOLLOWUP", entity: "INTERVIEW_ANSWER", idKey: "turnId" },
+  project_viewed: { event: "PROJECT_VIEWED", entity: "PROJECT", idKey: "projectId" },
+  project_fact_edited: { event: "PROJECT_FACT_EDITED", entity: "PROJECT", idKey: "projectId" },
+  project_test_started: { event: "PROJECT_KNOWLEDGE_TEST_STARTED", entity: "PROJECT", idKey: "projectId" },
+  project_test_completed: { event: "PROJECT_KNOWLEDGE_TEST_COMPLETED", entity: "PROJECT", idKey: "projectId" },
+  project_question_answered: { event: "PROJECT_QUESTION_ANSWERED", entity: "PROJECT", idKey: "projectId" },
+  project_followup_asked: { event: "PROJECT_FOLLOWUP_ASKED", entity: "PROJECT", idKey: "projectId" },
+  project_skill_gap: { event: "PROJECT_SKILL_GAP_IDENTIFIED", entity: "PROJECT", idKey: "projectId" },
+  project_reinterview_started: { event: "PROJECT_REINTERVIEW_STARTED", entity: "PROJECT", idKey: "projectId" },
+  project_reinterview_completed: { event: "PROJECT_REINTERVIEW_COMPLETED", entity: "PROJECT", idKey: "projectId" },
   application_added: { event: "JOB_APPLIED", entity: "JOB", idKey: "applicationId" },
   resume_uploaded: { event: "RESUME_UPLOADED", entity: "RESUME", idKey: "resumeId" },
 };
@@ -77,9 +99,12 @@ export function normalizeEvent(type: string, topicId: string | null | undefined,
  * Events the browser may report. Only low-stakes interaction signals: anything with a score or an
  * outcome is recorded by the server where it happens, so a student can't fake progress.
  */
-export const CLIENT_EVENTS = ["TOPIC_REVISITED", "QUESTION_SKIPPED", "JOB_VIEWED"] as const satisfies readonly StudentEventType[];
+export const CLIENT_EVENTS = ["TOPIC_REVISITED", "QUESTION_SKIPPED", "JOB_VIEWED", "PROJECT_EXPLANATION_VIEWED", "PROJECT_QUESTION_STARTED", "PROJECT_REVISION_STARTED"] as const satisfies readonly StudentEventType[];
 export const CLIENT_ENTITY: Record<(typeof CLIENT_EVENTS)[number], EntityType[]> = {
   TOPIC_REVISITED: ["TOPIC"],
   QUESTION_SKIPPED: ["PREP_QUESTION", "INTERVIEW_QUESTION"],
   JOB_VIEWED: ["JOB"],
+  PROJECT_EXPLANATION_VIEWED: ["PROJECT"],
+  PROJECT_QUESTION_STARTED: ["PROJECT"],
+  PROJECT_REVISION_STARTED: ["PROJECT"],
 };

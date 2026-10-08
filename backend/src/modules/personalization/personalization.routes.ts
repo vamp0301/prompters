@@ -161,8 +161,10 @@ export function personalizationRoutes() {
           ? await prisma.prepQuestion.count({ where: { id: body.entityId, rank: { gt: 0 }, plan: { userId: me.id } } })
           : body.entityType === "JOB"
             ? await prisma.jobTarget.count({ where: { id: body.entityId, userId: me.id } })
-            : 0;
-    if (!owned) throw notFound(body.entityType === "TOPIC" ? "Topic" : body.entityType === "JOB" ? "Job" : "Question");
+            : body.entityType === "PROJECT"
+              ? await prisma.projectExperience.count({ where: { id: body.entityId, userId: me.id } })
+              : 0;
+    if (!owned) throw notFound(body.entityType === "TOPIC" ? "Topic" : body.entityType === "JOB" ? "Job" : body.entityType === "PROJECT" ? "Project" : "Question");
     const event = await prisma.learningEvent.create({
       data: { userId: me.id, type: "client_event", eventType: body.eventType, entityType: body.entityType, entityId: body.entityId, meta: (body.metadata ?? {}) as Prisma.InputJsonValue },
       select: { id: true, eventType: true, entityType: true, entityId: true, createdAt: true },

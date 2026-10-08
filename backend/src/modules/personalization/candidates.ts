@@ -11,12 +11,12 @@ import { levelOf, LEVELS, successAt, type CandidateFeatures, type DifficultyEsti
  * all derived from those features — never written by a model.
  */
 
-export const ACTIONS = ["LEARN_TOPIC", "TAKE_QUIZ", "REVISE_TOPIC", "REVISIT_PREREQUISITE", "PRACTICE_SKILL", "PRACTICE_QUESTION", "FINISH_BUILD", "LEARN_CONCEPT"] as const;
+export const ACTIONS = ["LEARN_TOPIC", "TAKE_QUIZ", "REVISE_TOPIC", "REVISIT_PREREQUISITE", "PRACTICE_SKILL", "PRACTICE_QUESTION", "FINISH_BUILD", "LEARN_CONCEPT", "PRACTICE_PROJECT"] as const;
 export type Action = (typeof ACTIONS)[number];
 
 export interface Candidate {
   action: Action;
-  itemType: "TOPIC" | "SKILL" | "PREP_QUESTION" | "BUILD_TASK" | "CONCEPT";
+  itemType: "TOPIC" | "SKILL" | "PREP_QUESTION" | "BUILD_TASK" | "CONCEPT" | "PROJECT_SKILL";
   itemId: string;
   title: string;
   href: string;
@@ -158,6 +158,31 @@ export function generateCandidates(d: StudentData, c: CareerContext, states: Con
     const rel = skillRelevance(cp.skillKey, c);
     const f: CandidateFeatures = { mastery: s?.mastery ?? 0.3, confidence: s?.confidence ?? 0, forgettingRisk: 0, skillGap: 1 - (s?.mastery ?? 0.3), jobRelevance: rel.jobRelevance, prerequisiteReadiness: 1, interviewRelevance: s?.interviewAverage != null ? r3(1 - s.interviewAverage) : 0, successProbability: successAt(difficulty, difficulty.level), questionImportance: 0, dueForReview: 0 };
     out.push({ action: "LEARN_CONCEPT", itemType: "CONCEPT", itemId: `${cp.skillKey}/${cp.conceptKey}`, title: cp.conceptKey.replace(/-/g, " "), href: `/career/skills/concept?name=${encodeURIComponent(s?.label ?? cp.skillKey)}&c=${encodeURIComponent(cp.conceptKey)}`, subject: s?.label ?? cp.skillKey, conceptId: `skill:${cp.skillKey}`, difficulty: null, features: f, reasons: reasonsFor(f, ["started_not_proven"], rel, s), facts: { explainScore: cp.explainScore } });
+  }
+
+  // 8. Project weaknesses: a skill the student struggled with in THEIR OWN project's knowledge test.
+  const projectSkill = new Map<string, { projectId: string; project: string; skill: string; key: string; scores: number[] }>();
+  for (const a of d.projectAnswers) {
+    const key = canonicalSkill(a.skill);
+    if (!key || a.skill === "Resume claim") continue;
+    const k = `${a.projectId}:${key}`;
+    const e = projectSkill.get(k) ?? { projectId: a.projectId, project: a.project.name, skill: a.skill, key, scores: [] };
+    e.scores.push(a.score / 100);
+    projectSkill.set(k, e);
+  }
+  for (const [itemId, e] of projectSkill) {
+    // The latest few answers decide whether it is still weak.
+    const recent = e.scores.slice(-3);
+    const avg = recent.reduce((x, y) => x + y, 0) / recent.length;
+    if (avg >= 0.5) continue;
+    const s = byId.get(`skill:${e.key}`);
+    const rel = skillRelevance(e.key, c);
+    const f: CandidateFeatures = { mastery: s?.mastery ?? avg, confidence: s?.confidence ?? 0, forgettingRisk: s?.forgettingRisk ?? 0, skillGap: r3(1 - avg), jobRelevance: Math.max(rel.jobRelevance, 0.7), prerequisiteReadiness: 1, interviewRelevance: r3(1 - avg), successProbability: successAt(difficulty, difficulty.level), questionImportance: 0, dueForReview: 0 };
+    out.push({
+      action: "PRACTICE_PROJECT", itemType: "PROJECT_SKILL", itemId, title: `Review ${e.skill} before your next ${e.project} interview`, href: `/career/projects/${e.projectId}?tab=gaps`, subject: e.skill, conceptId: `skill:${e.key}`, difficulty: difficulty.level, features: f,
+      reasons: reasonsFor(f, ["project_weakness"], rel, s),
+      facts: { project: e.project, projectScore: Math.round(avg * 100), answers: recent.length },
+    });
   }
 
   // One candidate per (action, item).

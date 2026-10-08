@@ -67,7 +67,7 @@ async function postJson(url: string, body: unknown, headers: Record<string, stri
 }
 
 /** OpenAI-compatible chat completions: OpenRouter, Ollama, Hugging Face router. */
-class OpenAICompatible implements AIProvider {
+export class OpenAICompatible implements AIProvider {
   constructor(readonly name: string, private baseUrl: string, private model: string, private apiKey?: string) {}
   async complete(system: string, user: string, opts: CompleteOptions = {}) {
     const data = await postJson(

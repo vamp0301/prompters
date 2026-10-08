@@ -78,6 +78,9 @@ model User {
   recommendations    Recommendation[]
   recFeedback        RecommendationFeedback[]
   mlPredictions      MLPrediction[]
+  projectExperiences ProjectExperience[]
+  projectTests       ProjectTest[]
+  projectAnswers     ProjectAnswer[]
 
   @@index([role])
   @@index([createdAt])
@@ -716,6 +719,7 @@ model AdminAuditLog {
 
 model CareerResume {
   id         String             @id @default(cuid())
+  projects   ProjectExperience[]
   userId     String
   user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   label      String
@@ -1259,4 +1263,89 @@ model MLTrainingRun {
   finishedAt   DateTime?
 
   @@index([modelName, startedAt])
+}
+
+// ───────────────────────── Project experience intelligence ─────────────────────────
+
+/// One project (or job) from a resume, as an interview-preparation module. Built from the resume's
+/// PROJECT / EXPERIENCE chunks; facts are editable without touching the resume.
+model ProjectExperience {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeId    String
+  resume      CareerResume   @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  /// Stable key within the resume (normalized project name).
+  key         String
+  name        String
+  /// PROJECT | EXPERIENCE | BOTH — where it appears on the resume.
+  source      String
+  company     String?
+  role        String?
+  /// Level A evidence copied from the resume: chunk ids, text, technologies, problem, features, contribution, claims.
+  evidence    Json
+  /// Editable facts: { [field]: { value, source: RESUME | USER | null } }. Unknown = null, never guessed.
+  facts       Json
+  /// Generated module (explanations, decisions, questions…), validated; null until first opened.
+  content     Json?
+  /// Hash of the facts the content was generated from — edited facts make it stale.
+  contentHash String?
+  model       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  tests       ProjectTest[]
+  answers     ProjectAnswer[]
+
+  @@unique([resumeId, key])
+  @@index([userId])
+}
+
+/// A project knowledge test: QUICK (10), DEEP (20), DRILL (adaptive), SENIOR (L4–L5), DEFENSE (resume claims).
+model ProjectTest {
+  id          String            @id @default(cuid())
+  projectId   String
+  project     ProjectExperience @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode        String
+  /// IN_PROGRESS | COMPLETED
+  status      String            @default("IN_PROGRESS")
+  /// Planned / asked questions and the adaptive state (current level, follow-ups so far).
+  state       Json
+  /// Scores per dimension with evidence, and skill gaps (set when completed).
+  result      Json?
+  /// A later test on the same project after one was completed: the re-interview.
+  isRetest    Boolean           @default(false)
+  startedAt   DateTime          @default(now())
+  completedAt DateTime?
+  answers     ProjectAnswer[]
+
+  @@index([projectId, startedAt])
+  @@index([userId, startedAt])
+}
+
+/// One answered project question (scores feed skill state and personalization).
+model ProjectAnswer {
+  id          String            @id @default(cuid())
+  testId      String
+  test        ProjectTest       @relation(fields: [testId], references: [id], onDelete: Cascade)
+  projectId   String
+  project     ProjectExperience @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionKey String
+  question    String
+  level       Int
+  /// PROJECT | ARCHITECTURE | TECHNOLOGY | DATABASE | API | SECURITY | PERFORMANCE | DEBUGGING | TRADEOFFS | SCALABILITY
+  dimension   String
+  skill       String
+  isFollowUp  Boolean           @default(false)
+  answer      String
+  /// 0–100
+  score       Int
+  evaluation  Json
+  createdAt   DateTime          @default(now())
+
+  @@index([projectId, createdAt])
+  @@index([userId, skill])
 }
