@@ -2,6 +2,7 @@ import type { JobTarget, PrepCategory } from "@prisma/client";
 import { jobParsedSchema, type JobParsed } from "../career/schemas.js";
 import type { ResumeIntelligence } from "./intelligence.service.js";
 import { resumeSkills } from "./intelligence.service.js";
+import { ADVANCED_TOPICS, BAND_BRIEF, effectiveBand, type ExperienceBand } from "./ladder.js";
 import { TARGET_ROLES, type TargetRoleKey } from "./roles.js";
 import { canonicalSkill, skillMatcher } from "./text.js";
 import type { Source } from "./validator.js";
@@ -29,10 +30,10 @@ export function inferRole(title: string): TargetRoleKey {
   return "sde";
 }
 
-export function levelFor(months: number) {
-  if (months <= 6) return "fresher / final-year student (0–6 months of internships)";
-  if (months < 24) return `junior developer (~${Math.round(months / 12) || 1} year)`;
-  return `developer with ~${Math.round(months / 12)} years of experience`;
+/** How the candidate is described to the model: their band plus their actual experience. */
+export function levelFor(band: ExperienceBand, months: number) {
+  const exp = months <= 0 ? "no professional experience yet" : months < 12 ? `${months} months of experience` : `~${Math.round(months / 12)} years of experience`;
+  return `${BAND_BRIEF[band]} (${exp})`;
 }
 
 export interface CandidateProfile {
@@ -41,8 +42,12 @@ export interface CandidateProfile {
   matchSkill: (skill: string) => string | null;
   target: string;
   targetSource: Source;
+  /** Experience band the plan is pitched at (the job's seniority wins when it is higher). */
+  band: ExperienceBand;
   level: string;
   counts: { projects: number; claims: number; achievements: number; skills: number; gapSkills: number };
+  /** What was found on the resume, shown to the candidate while it is being read. */
+  found: { skills: string[]; projects: string[] };
   gapSkills: string[];
   /** Per-category topics spread across parallel batches. */
   focus: Partial<Record<PrepCategory, string[]>>;
@@ -124,6 +129,10 @@ export function buildProfile(intel: ResumeIntelligence, target: { job: JobTarget
     targetSource = { type: "ROLE", label: r.label, evidence: "" };
   }
   const role = TARGET_ROLES[roleKey];
+  const band = effectiveBand(parsed.totalExperienceMonths, job);
+  // Experienced candidates are drilled on a superset: the entry-level universe plus these topics.
+  const experienced = band === "MID" || band === "SENIOR";
+  const advanced = experienced ? ADVANCED_TOPICS : [];
 
   const resumeSet = [...resumeSkills(parsed), ...chunks.flatMap((c) => c.technologies), ...claims.flatMap((c) => c.skills)];
   const jobSet = job ? [...job.requiredSkills, ...job.preferredSkills, ...Object.values(job.technologies).flat()] : [];
@@ -134,16 +143,23 @@ export function buildProfile(intel: ResumeIntelligence, target: { job: JobTarget
   return {
     text: lines.join("\n"),
     sources,
-    matchSkill: skillMatcher([...resumeSet, ...jobSet, ...role.skills, ...role.concepts, ...BASE_CONCEPTS, ...SYSTEM_DESIGN, ...DEVOPS]),
+    matchSkill: skillMatcher([...resumeSet, ...jobSet, ...role.skills, ...role.concepts, ...BASE_CONCEPTS, ...SYSTEM_DESIGN, ...DEVOPS, ...advanced]),
     target: targetText,
     targetSource,
-    level: levelFor(parsed.totalExperienceMonths),
+    band,
+    level: levelFor(band, parsed.totalExperienceMonths),
     focus: {
       SKILL: [...evidenced, ...skillChunks.filter((c) => !evidenced.includes(c))].map((c) => c.title).concat(gapSkills),
       PROJECT: [...sources.entries()].filter(([, v]) => v.type === "PROJECT" || v.type === "EXPERIENCE").map(([k, v]) => `${k} ${v.label}`),
       CLAIM: [...sources.entries()].filter(([, v]) => v.type === "CLAIM").map(([k, v]) => `${k} ${v.label}`),
-      CONCEPTUAL: [...role.concepts, "System design: scalability, caching, load balancing", "DevOps: containers, CI/CD, monitoring"],
-      SCENARIO: ["System design: scale one of your projects to 100× users", "System design: caching and database bottlenecks", "DevOps: a failed deployment / rollback", "DevOps: production incident — logs, metrics, alerts", "Debugging a slow API in your stack"],
+      CONCEPTUAL: [...role.concepts, "System design: scalability, caching, load balancing", "DevOps: containers, CI/CD, monitoring", ...advanced],
+      SCENARIO: experienced
+        ? ["System design: scale one of your projects to 100× users", "System design: caching and database bottlenecks", "DevOps: a failed deployment / rollback", "DevOps: production incident — logs, metrics, alerts", "Debugging a slow API in your stack", "Security: a vulnerability found in production", "Performance: profiling a hot path", "Architecture: splitting or migrating a service safely"]
+        : ["Debugging a bug in one of your projects", "System design basics: what changes when your project gets 10× more users", "Choosing between two approaches in your project", "DevOps basics: deploying your project and reading its logs", "Debugging a slow API in your stack"],
+    },
+    found: {
+      skills: [...evidenced, ...skillChunks.filter((c) => !evidenced.includes(c))].map((c) => c.title).slice(0, 16),
+      projects: [...projects, ...experience].map((c) => c.title).slice(0, 8),
     },
     counts: { projects: projects.length + experience.length, claims: claims.length, achievements: achievements.length, skills: skillChunks.length, gapSkills: gapSkills.length },
     gapSkills,

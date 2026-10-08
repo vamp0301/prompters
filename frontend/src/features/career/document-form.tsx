@@ -7,6 +7,7 @@ import { Field, Input, Textarea } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/misc";
 import { api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
+import { ResumeReader } from "./prep/resume-reader";
 import { careerKeys, InlineError, readDocument, type PickedFile } from "./shared";
 
 type Kind = "resume" | "job";
@@ -160,7 +161,13 @@ export function DocumentForm({ kind, disabled, onDone }: { kind: Kind; disabled?
       )}
 
       <InlineError error={create.error} />
-      {busy && (
+      {busy && kind === "resume" && (
+        <div className="rounded-lg border border-border bg-surface-2/40 p-4">
+          <ResumeReader reading label={mode === "file" && file ? file.name : label.trim() || "Pasted resume"} />
+          <p className="mt-3 text-xs text-subtle">Parsing usually takes 10–30 seconds.</p>
+        </div>
+      )}
+      {busy && kind !== "resume" && (
         <p role="status" className="flex items-center gap-2 text-xs text-muted">
           <Loader2 className="size-3.5 animate-spin text-accent" aria-hidden />
           Reading and parsing your {noun} with AI — this can take 10–30 seconds.

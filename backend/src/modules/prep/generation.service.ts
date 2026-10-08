@@ -6,14 +6,15 @@ import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { AppError, badRequest, conflict, notFound } from "../../utils/errors.js";
 import { logEvent } from "../platform/events.js";
-import { allocateQuestions, calibratePriorities, PREP_CATEGORIES, rankQuestions, TOTAL_QUESTIONS } from "./allocation.js";
+import { allocateQuestions, calibratePriorities, PREP_CATEGORIES, priorityFor, rankQuestions, TOTAL_QUESTIONS } from "./allocation.js";
 import { ensureResumeIntelligence } from "./intelligence.service.js";
+import { BAND_LABEL, ladderOrder, rotate, stagePlan, STAGES, type ExperienceBand } from "./ladder.js";
 import { buildProfile, type CandidateProfile } from "./profile.js";
 import { prepPrompts } from "./prompts.js";
 import { TARGET_ROLES, type TargetRoleKey } from "./roles.js";
 import { dedupeSchema, questionBatchSchema } from "./schemas.js";
 import { contentTokens, normalize } from "./text.js";
-import { emptyStats, mergeStats, validateBatch, type ValidationStats, type ValidQuestion } from "./validator.js";
+import { emptyStats, isDuplicate, mergeStats, PREVIOUS_THRESHOLD, validateBatch, type ValidationStats, type ValidQuestion } from "./validator.js";
 
 const BATCH = 10;
 /** Candidates generated per allocated question, so de-dup and selection can drop the weakest. */
@@ -21,15 +22,26 @@ const OVER_GENERATE = 1.3;
 const AI_TIMEOUT = 120_000;
 /** Concurrent model calls per plan. */
 const AI_CONCURRENCY = 5;
-/** Below this many validated questions the plan fails rather than presenting a thin "Top 100". */
-const MIN_QUESTIONS = 60;
+/** A stage that can't reach this share of its questions fails rather than publishing a thin stage. */
+const MIN_STAGE_SHARE = 0.6;
+/** Questions from earlier plans shown to the model as "ask something different" (all of them are still checked). */
+const PREVIOUS_IN_PROMPT = 40;
+/** Earlier-plan questions included in each stage's semantic de-duplication pass. */
+const PREVIOUS_IN_DEDUPE = 100;
 
 type StepState = "pending" | "running" | "done" | "failed";
 export interface PlanProgress {
   resume: { state: StepState; chunks?: number };
-  skills: { state: StepState; count?: number };
-  projects: { state: StepState; count?: number };
+  skills: { state: StepState; count?: number; names?: string[] };
+  projects: { state: StepState; count?: number; names?: string[] };
+  /** Plans made before the ladder: per-category progress. */
   categories: Partial<Record<PrepCategory, { target: number; done: number; state: StepState }>>;
+  /** Experience band the plan is pitched at. */
+  level?: { band: ExperienceBand; label: string; months: number };
+  /** The ladder: each stage is written, checked and published before the next starts. */
+  stages?: { stage: number; label: string; target: number; done: number; published: number; state: StepState }[];
+  /** How many earlier plans for this target were avoided, and how many questions still had to repeat. */
+  fresh?: { previousPlans: number; repeated: number };
   dedupe?: { state: StepState; removed?: number };
   ranking: { state: StepState };
 }
@@ -151,6 +163,11 @@ async function generateCategory(opts: {
   minimum?: number;
   /** Items (skills, projects, claims…) spread across the parallel batches so they don't all ask about the same thing. */
   focus?: string[];
+  /** The ladder stage being written. */
+  stage?: (typeof STAGES)[number];
+  /** Earlier plans' questions: rejected as "asked before" so a regenerated plan is a fresh set. */
+  previous?: { norm: string; tokens: Set<string> }[];
+  previousText?: string[];
 }) {
   let have = opts.have;
   let stats = emptyStats();
@@ -166,6 +183,8 @@ async function generateCategory(opts: {
       level: opts.profile.level,
       avoid: opts.avoid.slice(-80).map((q) => q.slice(0, 140)),
       focus,
+      stage: opts.stage,
+      previous: opts.previousText?.slice(0, PREVIOUS_IN_PROMPT).map((q) => q.slice(0, 140)),
     });
     let items: unknown[];
     try {
@@ -183,6 +202,8 @@ async function generateCategory(opts: {
       matchSkill: opts.profile.matchSkill,
       accepted: opts.accepted,
       fallbackSource: opts.profile.targetSource,
+      stage: opts.stage,
+      previous: opts.previous,
     });
     stats = mergeStats(stats, s);
     // Keep the most likely ones when the model over-delivered; reserve the slots before any await.
@@ -211,32 +232,41 @@ async function generateCategory(opts: {
 }
 
 /**
- * Asks the model which questions are the same ask in different words, keeps the most likely
- * question of each group (resume-anchored wins ties) and deletes the rest. Never fails the plan.
+ * Asks the model which questions are the same ask in different words, within one stage's
+ * candidates and against everything already published — and against the candidate's previous
+ * plan, so a regenerated plan doesn't reword old questions. A candidate that repeats a published
+ * or previous question is dropped; otherwise the most likely of each group survives (resume-anchored
+ * wins ties). Published questions are never removed. Never fails the plan.
  */
-async function semanticDedupe(planId: string) {
-  const rows = await prisma.prepQuestion.findMany({ where: { planId }, select: { id: true, question: true, category: true, probability: true } });
-  if (rows.length < 2) return [];
-  const ids = rows.map((_, i) => `q${i + 1}`);
-  const p = prepPrompts.dedupe(rows.map((r, i) => ({ id: ids[i], question: r.question })));
+async function semanticDedupe(planId: string, stage: number, previous: string[] = []) {
+  const candidates = await prisma.prepQuestion.findMany({ where: { planId, stage, rank: 0 }, select: { id: true, question: true, category: true, probability: true } });
+  if (candidates.length < 2) return [];
+  const published = await prisma.prepQuestion.findMany({ where: { planId, rank: { gt: 0 } }, select: { id: true, question: true } });
+  const items = [
+    ...candidates.map((c) => ({ ...c, published: false })),
+    ...published.map((p) => ({ ...p, category: "SKILL" as PrepCategory, probability: 1, published: true })),
+    ...previous.slice(0, PREVIOUS_IN_DEDUPE).map((question, i) => ({ id: `previous-${i}`, question, category: "SKILL" as PrepCategory, probability: 1, published: true })),
+  ];
+  const ids = items.map((_, i) => `q${i + 1}`);
+  const p = prepPrompts.dedupe(items.map((r, i) => ({ id: ids[i], question: r.question })));
   let groups: string[][];
   try {
     groups = (await aiJson("prep_dedupe", p.system, p.user, dedupeSchema, 6000, { timeoutMs: AI_TIMEOUT, fast: true })).groups;
   } catch (e) {
-    logger.warn({ err: e, planId }, "Semantic de-duplication skipped");
+    logger.warn({ err: e, planId, stage }, "Semantic de-duplication skipped");
     return [];
   }
-  const byId = new Map(ids.map((id, i) => [id, rows[i]]));
+  const byId = new Map(ids.map((id, i) => [id, items[i]]));
   const anchored = (c: PrepCategory) => (c === "PROJECT" || c === "CLAIM" || c === "ACHIEVEMENT" ? 1 : 0);
-  const remove = new Map<string, (typeof rows)[number]>();
+  const remove = new Map<string, (typeof items)[number]>();
   for (const g of groups) {
-    const members = [...new Set(g)].map((id) => byId.get(id)).filter((r): r is (typeof rows)[number] => !!r && !remove.has(r.id));
+    const members = [...new Set(g)].map((id) => byId.get(id)).filter((r): r is (typeof items)[number] => !!r && !remove.has(r.id));
     if (members.length < 2) continue;
-    members.sort((a, b) => b.probability - a.probability || anchored(b.category) - anchored(a.category));
-    for (const m of members.slice(1)) remove.set(m.id, m);
+    const fresh = members.filter((m) => !m.published).sort((a, b) => b.probability - a.probability || anchored(b.category) - anchored(a.category));
+    for (const m of members.some((m) => m.published) ? fresh : fresh.slice(1)) remove.set(m.id, m);
   }
   // Guard against a model that lumps everything together: never drop more than a third in one pass.
-  const dropped = [...remove.values()].slice(0, Math.floor(rows.length / 3));
+  const dropped = [...remove.values()].slice(0, Math.floor(candidates.length / 3));
   if (dropped.length) await prisma.prepQuestion.deleteMany({ where: { id: { in: dropped.map((d) => d.id) } } });
   return dropped;
 }
@@ -245,20 +275,32 @@ async function semanticDedupe(planId: string) {
  * Picks the final 100: the most likely questions of each category up to its allocation, then
  * the best remaining questions (any category) for slots a thin category couldn't fill.
  */
-export function selectTop<T extends { category: PrepCategory; probability: number; priority: PrepPriorityLike; difficulty: number }>(rows: T[], allocation: Record<PrepCategory, number>) {
+export function selectTop<T extends { category: PrepCategory; probability: number; priority: PrepPriorityLike; difficulty: number }>(rows: T[], allocation: Record<PrepCategory, number>, cap = TOTAL_QUESTIONS) {
   const picked = new Set<T>();
   for (const c of PREP_CATEGORIES) {
     rows.filter((r) => r.category === c).sort((a, b) => b.probability - a.probability).slice(0, allocation[c] ?? 0).forEach((r) => picked.add(r));
   }
   for (const r of rankQuestions(rows.filter((x) => !picked.has(x)))) {
-    if (picked.size >= TOTAL_QUESTIONS) break;
+    if (picked.size >= cap) break;
     picked.add(r);
   }
-  return [...picked].slice(0, TOTAL_QUESTIONS);
+  return [...picked].slice(0, cap);
 }
 type PrepPriorityLike = Parameters<typeof rankQuestions>[0][number]["priority"];
 
 const toRow = (planId: string, q: ValidQuestion): Prisma.PrepQuestionCreateManyInput => ({ planId, ...q });
+
+/**
+ * Priority bands are relative to the candidate's own bank (see calibratePriorities). Re-run after
+ * each stage is published so the bands always describe everything visible so far.
+ */
+async function recalibrate(planId: string) {
+  const rows = await prisma.prepQuestion.findMany({ where: { planId, rank: { gt: 0 } }, select: { id: true, probability: true, category: true, difficulty: true, priority: true } });
+  const ranked = rankQuestions(rows.map((r) => ({ ...r, current: r.priority, priority: priorityFor(r.probability) })));
+  const bands = calibratePriorities(ranked);
+  const changed = ranked.map((r, i) => ({ id: r.id, priority: bands[i], current: r.current })).filter((c) => c.priority !== c.current);
+  if (changed.length) await prisma.$transaction(changed.map((c) => prisma.prepQuestion.update({ where: { id: c.id }, data: { priority: c.priority } })));
+}
 
 export async function runPlan(planId: string) {
   const plan = await prisma.prepPlan.findUnique({ where: { id: planId }, include: { job: true } });
@@ -267,142 +309,145 @@ export async function runPlan(planId: string) {
   await prisma.prepPlan.update({ where: { id: plan.id }, data: { status: "RUNNING", error: null } });
 
   try {
-    // 1. Resume intelligence (cached per resume).
+    // 1. Resume intelligence (cached per resume). What was found is shown while the resume is read.
     progress.value.resume.state = "running";
     await progress.save();
     const intel = await ensureResumeIntelligence(plan.resumeId);
     const profile = buildProfile(intel, { job: plan.job, role: (plan.targetRole as TargetRoleKey | null) ?? null });
     progress.value.resume = { state: "done", chunks: intel.chunks.length };
-    progress.value.skills = { state: "done", count: profile.counts.skills };
-    progress.value.projects = { state: "done", count: profile.counts.projects };
+    progress.value.skills = { state: "done", count: profile.counts.skills, names: profile.found.skills };
+    progress.value.projects = { state: "done", count: profile.counts.projects, names: profile.found.projects };
+    progress.value.level = { band: profile.band, label: BAND_LABEL[profile.band], months: intel.parsed.totalExperienceMonths };
 
-    // 2. How many questions per category — decided by code from what the resume contains.
+    // 2. Questions per category (from what the resume contains), then per ladder stage (from experience).
     const allocation =
       Object.keys((plan.allocation ?? {}) as object).length > 0
         ? (plan.allocation as Record<PrepCategory, number>)
         : allocateQuestions({ projects: profile.counts.projects, claims: profile.counts.claims, achievements: profile.counts.achievements, gapSkills: profile.counts.gapSkills });
-    await prisma.prepPlan.update({ where: { id: plan.id }, data: { allocation, model: process.env.AI_MODEL ?? process.env.AI_PROVIDER ?? null } });
+    const matrix = stagePlan(allocation, profile.band);
+    await prisma.prepPlan.update({ where: { id: plan.id }, data: { allocation, band: profile.band, model: process.env.AI_MODEL ?? process.env.AI_PROVIDER ?? null } });
 
-    // Questions saved by an earlier (failed) run are kept and count towards their category.
-    const existing = await prisma.prepQuestion.findMany({ where: { planId: plan.id }, select: { question: true, category: true } });
+    // 3. A regenerated plan is a fresh set: earlier plans for the same resume + target are avoided.
+    const sameTarget = { userId: plan.userId, resumeId: plan.resumeId, jobId: plan.jobId, targetRole: plan.targetRole, id: { not: plan.id }, createdAt: { lt: plan.createdAt } };
+    const [earlier, variant] = await Promise.all([
+      prisma.prepPlan.findMany({ where: sameTarget, orderBy: { createdAt: "desc" }, take: 3, select: { id: true } }),
+      prisma.prepPlan.count({ where: sameTarget }),
+    ]);
+    const previousRows = earlier.length ? await prisma.prepQuestion.findMany({ where: { planId: { in: earlier.map((e) => e.id) }, rank: { gt: 0 } }, orderBy: [{ plan: { createdAt: "desc" } }, { rank: "asc" }], select: { question: true }, take: 300 }) : [];
+    const previous = previousRows.map((q) => ({ norm: normalize(q.question), tokens: contentTokens(q.question) }));
+    const previousText = rotate(previousRows.map((q) => q.question), variant * 7);
+
+    // Questions saved by an earlier (failed) run are kept. Unpublished candidates from before the ladder can't be placed in a stage.
+    if (!plan.band) await prisma.prepQuestion.deleteMany({ where: { planId: plan.id, rank: 0, stage: 0 } });
+    const existing = await prisma.prepQuestion.findMany({ where: { planId: plan.id }, select: { question: true, category: true, stage: true, rank: true } });
     const accepted = existing.map((q) => ({ norm: normalize(q.question), tokens: contentTokens(q.question) }));
     const avoid = existing.map((q) => q.question);
-    const have = Object.fromEntries(PREP_CATEGORIES.map((c) => [c, existing.filter((q) => q.category === c).length])) as Record<PrepCategory, number>;
-    for (const c of PREP_CATEGORIES) {
-      if (allocation[c] > 0) progress.value.categories[c] = { target: allocation[c], done: have[c], state: have[c] >= allocation[c] ? "done" : "pending" };
-    }
+    let nextRank = existing.reduce((m, q) => Math.max(m, q.rank), 0) + 1;
+
+    const stageTarget = (stage: number) => Object.values(matrix[stage as 1 | 2 | 3]).reduce((a, b) => a + b, 0);
+    progress.value.stages ??= STAGES.map((st) => ({ stage: st.stage, label: st.label, target: stageTarget(st.stage), done: 0, published: 0, state: "pending" as StepState }));
+    progress.value.fresh = { previousPlans: earlier.length, repeated: progress.value.fresh?.repeated ?? 0 };
     await progress.save();
 
     let stats: ValidationStats = (plan.validation as unknown as ValidationStats | null) ?? emptyStats();
     const limit = limiter(AI_CONCURRENCY);
     const aiErrors: unknown[] = [];
-    const ctx = { planId: plan.id, profile, resumeText: intel.resume.text, accepted, avoid, limit, aiErrors };
-    const total = () => Object.values(have).reduce((a, b) => a + b, 0);
+    const ctx = { planId: plan.id, profile, resumeText: intel.resume.text, accepted, avoid, limit, aiErrors, previousText };
 
-    /**
-     * Fills every category. With `overGenerate`, asks for ~30% extra candidates so the semantic
-     * de-dup pass and final selection have room to drop paraphrases without a refill round.
-     * Then tops up any overall shortfall with flexible categories.
-     */
-    const fill = async (topUps: number, overGenerate: boolean) => {
-      const runOne = async (category: PrepCategory) => {
-        const entry = (progress.value.categories[category] ??= { target: allocation[category], done: have[category], state: "pending" });
-        entry.state = "running";
-        await progress.save();
-        const r = await generateCategory({
-          ...ctx, category, have: have[category], topUps,
-          target: overGenerate ? Math.ceil(allocation[category] * OVER_GENERATE) : allocation[category],
-          minimum: allocation[category],
-          focus: profile.focus[category],
-          onAccepted: (n) => {
-            entry.done = Math.min(n, allocation[category]);
-            return progress.save();
-          },
-        });
-        have[category] = r.have;
-        entry.done = Math.min(r.have, allocation[category]);
-        stats = mergeStats(stats, r.stats);
-        entry.state = r.have > 0 ? "done" : "failed";
-        await progress.save();
-      };
-      await Promise.all(PREP_CATEGORIES.filter((c) => allocation[c] > have[c]).map(runOne));
-
-      // Shortfall: categories that couldn't fill (thin resume, validator drops) are topped up with skill/conceptual/general questions.
-      for (const category of ["SKILL", "CONCEPTUAL", "GENERAL", "SCENARIO"] as const) {
-        if (total() >= TOTAL_QUESTIONS) break;
-        const entry = (progress.value.categories[category] ??= { target: 0, done: have[category], state: "pending" });
-        const target = have[category] + TOTAL_QUESTIONS - total();
-        entry.target = target;
-        entry.state = "running";
-        await progress.save();
-        const r = await generateCategory({
-          ...ctx, category, target, have: have[category], topUps: 1,
-          onAccepted: (n) => {
-            entry.done = n;
-            return progress.save();
-          },
-        });
-        have[category] = r.have;
-        allocation[category] = r.have;
-        entry.target = r.have;
-        entry.done = r.have;
-        entry.state = "done";
-        stats = mergeStats(stats, r.stats);
-        await progress.save();
-      }
-    };
-
-    // 3. Generate the candidate bank (with headroom).
-    await fill(1, true);
-
-    // 4. Semantic de-duplication: paraphrases slip past word overlap ("compound index field order" asked
-    //    four ways). One model pass over the whole bank groups same-ask questions; the most likely of
-    //    each group survives. Refill only if that leaves fewer than 100.
-    if (!progress.value.dedupe || progress.value.dedupe.state !== "done") {
-      progress.value.dedupe = { state: "running" };
+    for (const st of STAGES) {
+      const entry = progress.value.stages.find((e) => e.stage === st.stage)!;
+      if (entry.state === "done") continue;
+      const cells = matrix[st.stage];
+      const target = stageTarget(st.stage);
+      const have = Object.fromEntries(PREP_CATEGORIES.map((c) => [c, existing.filter((q) => q.stage === st.stage && q.rank === 0 && q.category === c).length])) as Record<PrepCategory, number>;
+      const total = () => Object.values(have).reduce((a, b) => a + b, 0);
+      entry.state = "running";
+      entry.target = target;
+      entry.done = Math.min(total(), target);
       await progress.save();
-      const removed = await semanticDedupe(plan.id);
+
+      const run = async (category: PrepCategory, want: number, minimum: number, avoidEarlier: boolean) => {
+        const r = await generateCategory({
+          ...ctx, category, have: have[category], target: want, minimum, topUps: 1, stage: st,
+          previous: avoidEarlier ? previous : undefined,
+          previousText: avoidEarlier ? previousText : undefined,
+          // Each regeneration and each stage leads with different resume items.
+          focus: profile.focus[category] ? rotate(profile.focus[category]!, variant * 3 + st.stage) : undefined,
+          onAccepted: (n) => {
+            have[category] = n;
+            entry.done = Math.min(total(), target);
+            return progress.save();
+          },
+        });
+        have[category] = r.have;
+        stats = mergeStats(stats, r.stats);
+      };
+      // Shortfall (thin resume, validator drops) is filled by the flexible categories that suit this stage.
+      const flexible: PrepCategory[] = st.stage === 3 ? ["SCENARIO", "SKILL", "CONCEPTUAL"] : ["SKILL", "CONCEPTUAL", "GENERAL"];
+      const topUp = async (avoidEarlier: boolean) => {
+        for (const c of flexible) {
+          if (total() >= target) break;
+          const want = have[c] + target - total();
+          await run(c, want, want, avoidEarlier);
+        }
+      };
+
+      // 4a. The stage's candidates, with headroom for de-duplication.
+      await Promise.all(PREP_CATEGORIES.filter((c) => cells[c] > have[c]).map((c) => run(c, Math.ceil(cells[c] * OVER_GENERATE), cells[c], true)));
+      await topUp(true);
+      // A resume can only support so many distinct questions: rather than publish a thin stage,
+      // allow questions from earlier plans (the plan reports how many repeated).
+      if (total() < target && previous.length) await topUp(false);
+
+      // 4b. Semantic de-duplication within the stage and against what's already published.
+      progress.value.dedupe = { state: "running", removed: progress.value.dedupe?.removed ?? 0 };
+      await progress.save();
+      const removed = await semanticDedupe(plan.id, st.stage, previousRows.map((q) => q.question));
       for (const r of removed) {
         have[r.category]--;
         const i = accepted.findIndex((a) => a.norm === normalize(r.question));
         if (i >= 0) accepted.splice(i, 1);
-        const entry = progress.value.categories[r.category];
-        if (entry) entry.done = Math.min(have[r.category], allocation[r.category]);
       }
       stats = { ...stats, rejected: { ...stats.rejected, near_duplicate: (stats.rejected.near_duplicate ?? 0) + removed.length } };
-      progress.value.dedupe = { state: "done", removed: removed.length };
-      await progress.save();
-      if (total() < TOTAL_QUESTIONS) await fill(1, false);
-    }
-    await prisma.prepPlan.update({ where: { id: plan.id }, data: { validation: stats as unknown as Prisma.InputJsonValue } });
+      progress.value.dedupe = { state: "done", removed: (progress.value.dedupe.removed ?? 0) + removed.length };
+      if (total() < target) await topUp(true);
+      if (total() < target && previous.length) await topUp(false);
+      await prisma.prepPlan.update({ where: { id: plan.id }, data: { validation: stats as unknown as Prisma.InputJsonValue } });
 
-    if (total() < MIN_QUESTIONS) {
-      // Nothing came back from the model at all → it's an outage, quota or configuration problem, not validation.
-      const lastAiError = aiErrors.at(-1);
-      if (stats.generated === 0 && lastAiError instanceof AppError) {
-        throw new AppError(lastAiError.status, lastAiError.code, `${lastAiError.message} Your plan is saved — use Retry once the AI service is available.`);
+      if (total() < Math.ceil(target * MIN_STAGE_SHARE)) {
+        // Nothing came back from the model at all → it's an outage, quota or configuration problem, not validation.
+        const lastAiError = aiErrors.at(-1);
+        if (stats.generated === 0 && lastAiError instanceof AppError) {
+          throw new AppError(lastAiError.status, lastAiError.code, `${lastAiError.message} Your plan is saved — use Retry once the AI service is available.`);
+        }
+        throw new AppError(502, "AI_BAD_OUTPUT", `Only ${total()} ${st.label.toLowerCase()} questions passed quality checks. Retry to continue — the ones already generated are kept.`);
       }
-      throw new AppError(502, "AI_BAD_OUTPUT", `Only ${total()} questions passed quality checks. Retry to continue — the ones already generated are kept.`);
+
+      // 4c. Publish the stage: easier first, then most likely. It is visible as soon as this commits.
+      const rows = await prisma.prepQuestion.findMany({ where: { planId: plan.id, stage: st.stage, rank: 0 } });
+      const chosen = ladderOrder(selectTop(rows, cells, target));
+      const extras = rows.filter((r) => !chosen.includes(r)).map((r) => r.id);
+      await prisma.$transaction([
+        ...(extras.length ? [prisma.prepQuestion.deleteMany({ where: { id: { in: extras } } })] : []),
+        ...chosen.map((q, i) => prisma.prepQuestion.update({ where: { id: q.id }, data: { rank: nextRank + i } })),
+      ]);
+      nextRank += chosen.length;
+      await recalibrate(plan.id);
+      progress.value.fresh.repeated += previous.length ? chosen.filter((q) => isDuplicate(q.question, previous, PREVIOUS_THRESHOLD)).length : 0;
+      entry.state = "done";
+      entry.done = entry.published = chosen.length;
+      await progress.save();
+      await logEvent(plan.userId, "prep_stage_published", { meta: { planId: plan.id, stage: st.stage, questions: chosen.length } });
     }
 
-    // 5. Rank the validated bank into the final Top 100 and publish it.
-    progress.value.ranking.state = "running";
-    await progress.save();
-    const rows = await prisma.prepQuestion.findMany({ where: { planId: plan.id } });
-    const ranked = rankQuestions(selectTop(rows, allocation));
-    const priorities = calibratePriorities(ranked);
-    const extras = rows.filter((r) => !ranked.includes(r)).map((r) => r.id);
-    await prisma.$transaction([
-      ...(extras.length ? [prisma.prepQuestion.deleteMany({ where: { id: { in: extras } } })] : []),
-      ...ranked.map((q, i) => prisma.prepQuestion.update({ where: { id: q.id }, data: { rank: i + 1, priority: priorities[i] } })),
-    ]);
     progress.value.ranking.state = "done";
     await progress.save();
+    const published = nextRank - 1;
     await prisma.prepPlan.update({ where: { id: plan.id }, data: { status: "READY", completedAt: new Date() } });
-    await logEvent(plan.userId, "prep_plan_ready", { meta: { planId: plan.id, questions: ranked.length } });
+    await logEvent(plan.userId, "prep_plan_ready", { meta: { planId: plan.id, questions: published, band: profile.band } });
   } catch (e) {
     logger.error({ err: e, planId }, "Prep plan failed");
-    for (const step of [progress.value.resume, progress.value.dedupe, progress.value.ranking]) if (step?.state === "running") step.state = "failed";
+    for (const step of [progress.value.resume, progress.value.dedupe, progress.value.ranking, ...(progress.value.stages ?? [])]) if (step?.state === "running") step.state = "failed";
     await progress.save().catch(() => undefined);
     const message = e instanceof AppError ? e.message : "Generation stopped unexpectedly. Retry to continue.";
     await prisma.prepPlan.update({ where: { id: planId }, data: { status: "FAILED", error: message } });

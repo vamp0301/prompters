@@ -401,7 +401,7 @@ export async function runPack(packId: string) {
   if (!pack || pack.status === "READY") return;
   await prisma.prepPack.update({ where: { id: pack.id }, data: { status: "RUNNING", error: null } });
   try {
-    const questions = await prisma.prepQuestion.findMany({ where: { planId: pack.planId }, orderBy: { rank: "asc" }, include: { attempts: { select: { score: true } } } });
+    const questions = await prisma.prepQuestion.findMany({ where: { planId: pack.planId, rank: { gt: 0 } }, orderBy: { rank: "asc" }, include: { attempts: { select: { score: true } } } });
     const language = pack.language as PackLanguage;
     if (language !== "en") await ensureTranslations(questions, language);
     const parsed = resumeParsedSchema.safeParse(pack.plan.resume.parsed);

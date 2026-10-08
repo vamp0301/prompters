@@ -179,7 +179,7 @@ async function claimsFor(userId: string, skill: { key: string; name: string }) {
       : [];
   const all = [...claims, ...projectClaims].slice(0, 6);
   const questions = await prisma.prepQuestion.findMany({
-    where: { claimId: { in: all.map((c) => c.id) }, plan: { userId } },
+    where: { claimId: { in: all.map((c) => c.id) }, plan: { userId }, rank: { gt: 0 } },
     orderBy: [{ difficulty: "asc" }, { rank: "asc" }],
     select: { id: true, planId: true, claimId: true, question: true, difficulty: true, status: true },
   });

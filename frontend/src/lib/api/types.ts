@@ -1249,11 +1249,17 @@ export interface PrepPlanDetail {
   completedAt: string | null;
   allocation: Partial<Record<PrepCategory, number>>;
   validation: { generated: number; accepted: number; adjusted: number; rejected: Record<string, number> } | null;
+  /** Experience band the questions are pitched at (null for plans made before the ladder). */
+  band: PrepBand | null;
   progress: {
     resume: { state: StepState; chunks?: number };
-    skills: { state: StepState; count?: number };
-    projects: { state: StepState; count?: number };
+    /** Skill and project names found on the resume (shown while it is read). */
+    skills: { state: StepState; count?: number; names?: string[] };
+    projects: { state: StepState; count?: number; names?: string[] };
     categories: Partial<Record<PrepCategory, { target: number; done: number; state: StepState }>>;
+    level?: { band: PrepBand; label: string; months: number };
+    stages?: { stage: PrepStage; label: string; target: number; done: number; published: number; state: StepState }[];
+    fresh?: { previousPlans: number; repeated: number };
     dedupe?: { state: StepState; removed?: number };
     ranking: { state: StepState };
   };
@@ -1261,11 +1267,41 @@ export interface PrepPlanDetail {
   job: { id: string; title: string; company: string | null } | null;
   packs: PrepPackItem[];
   practice: Partial<Record<PrepPracticeStatus, number>>;
+  /** Questions visible so far (stages are published one by one). */
+  published: number;
+}
+
+export type PrepBand = "STUDENT" | "JUNIOR" | "MID" | "SENIOR";
+/** Ladder stage: 1 Basics, 2 Core, 3 Advanced (0 = plans made before stages). */
+export type PrepStage = 0 | 1 | 2 | 3;
+
+/** One card in the paged list (hint, key points and follow-ups load with the question). */
+export type PrepQuestionItem = Pick<
+  PrepQuestion,
+  "id" | "rank" | "stage" | "category" | "priority" | "question" | "skill" | "probability" | "difficulty" | "followUpDepth" | "why" | "sourceType" | "sourceLabel" | "status"
+>;
+
+export interface PrepQuestionPage {
+  items: PrepQuestionItem[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+  published: number;
+  generating: boolean;
+  facets: {
+    stages: Partial<Record<string, number>>;
+    priorities: Partial<Record<PrepPriority, number>>;
+    categories: Partial<Record<PrepCategory, number>>;
+    statuses: Partial<Record<PrepPracticeStatus, number>>;
+    skills: { skill: string; count: number }[];
+  };
 }
 
 export interface PrepQuestion {
   id: string;
   rank: number;
+  stage: PrepStage;
   category: PrepCategory;
   priority: PrepPriority;
   question: string;
@@ -1381,6 +1417,8 @@ export interface SkillGuide {
     alternatives: { name: string; whenBetter: string }[];
     mistakes: string[];
     interviewTips: string[];
+    /** How the skill works end to end (guides made before diagrams have none). */
+    flow?: Diagram;
   };
   usedIn: { name: string; description: string }[];
   planId: string | null;

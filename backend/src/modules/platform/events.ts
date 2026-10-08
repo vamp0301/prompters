@@ -32,6 +32,7 @@ export type EventType =
   | "career_analysis"
   | "prep_plan_requested"
   | "prep_plan_ready"
+  | "prep_stage_published"
   | "prep_practice"
   | "prep_pack_requested"
   | "interview_started"

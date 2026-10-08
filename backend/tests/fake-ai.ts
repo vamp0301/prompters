@@ -15,8 +15,15 @@ export class FakeAI implements AIProvider {
   /** Bad chapter drafts to return before good ones (exercises the validator + retry). */
   badChapters: ("mixed" | "no-visual" | "unrelated-code" | "missing-covers")[] = [];
 
+  /** While set, batches for the Advanced stage wait on it (lets tests see Basics published first). */
+  stageGate: Promise<void> | null = null;
+  /** Skill guides to return without a usable flow diagram before a good one. */
+  badGuides = 0;
+
   /** Distinct questions per call, plus a few the validator must reject. */
-  private prepBatch(category: string, count: number) {
+  private prepBatch(category: string, count: number, system = "", user = "") {
+    const band = system.match(/difficulty must be between (\d) and (\d)/);
+    const [lo, hi] = band ? [Number(band[1]), Number(band[2])] : [1, 5];
     const skills = ["Node.js", "MongoDB", "JWT", "Express"];
     const ref = { project: ["P1", "E1"], claim: ["C1"], achievement: ["A1"] }[category] ?? [null];
     const good = (i: number) => {
@@ -26,7 +33,7 @@ export class FakeAI implements AIProvider {
         skill: skills[n % 4],
         sourceRef: ref[i % ref.length],
         probability: ((n * 37) % 100) / 100,
-        difficulty: (n % 5) + 1,
+        difficulty: lo + (n % (hi - lo + 1)),
         followUpDepth: 4,
         why: "On your resume",
         evidence: i === 0 ? "Invented quote that is not in the resume at all" : null,
@@ -36,10 +43,14 @@ export class FakeAI implements AIProvider {
       };
     };
     if (this.prepBroken) return Array.from({ length: count }, () => ({ ...good(0), skill: "Kotlin Multiplatform", question: `How does Kotlin Multiplatform share code across zeta${++this.prepCounter} targets?` }));
-    if (count < 6) return Array.from({ length: count }, (_, i) => good(i));
+    // A model that repeats one of the candidate's previous-plan questions (the validator must reject it).
+    const asked = user.match(/previous plan[^\n]*\n- (.+)/)?.[1];
+    const repeat = asked ? [{ ...good(0), question: asked }] : [];
+    if (count < 6) return [...Array.from({ length: count }, (_, i) => good(i)), ...repeat];
     const qs = Array.from({ length: count - 4 }, (_, i) => good(i));
     return [
       ...qs,
+      ...repeat,
       { ...qs[0] }, // exact duplicate
       { ...good(0), question: "Tell me about yourself and your greatest strengths?" },
       { ...good(0), skill: "Kotlin Multiplatform", question: `How does Kotlin Multiplatform share code across omega${++this.prepCounter} targets?` },
@@ -72,7 +83,8 @@ export class FakeAI implements AIProvider {
           company: "Zeta",
           requiredSkills: ["Node.js", "Express", "MongoDB", "Redis", "AWS"],
           preferredSkills: ["Docker"],
-          requiredExperienceMonths: 0,
+          requiredExperienceMonths: /senior/i.test(user) ? 72 : 0,
+          seniority: /senior/i.test(user) ? "Senior" : null,
           responsibilities: ["Build APIs"],
           technologies: { languages: ["JavaScript"], frameworks: ["Express"], databases: ["MongoDB", "Redis"], cloud: ["AWS"], devops: ["Docker"] },
           systemDesign: false,
@@ -234,7 +246,8 @@ export class FakeAI implements AIProvider {
       case "prep_achievement":
       case "prep_conceptual":
       case "prep_scenario":
-        return JSON.stringify({ questions: this.prepBatch(task.slice(5), Number(system.match(/Write exactly (\d+)/)?.[1] ?? 5)) });
+        if (this.stageGate && /STAGE 3/.test(system)) await this.stageGate;
+        return JSON.stringify({ questions: this.prepBatch(task.slice(5), Number(system.match(/Write exactly (\d+)/)?.[1] ?? 5), system, user) });
       case "skill_guide":
         return JSON.stringify({
           summary: "A runtime for JavaScript on the server.",
@@ -248,6 +261,15 @@ export class FakeAI implements AIProvider {
           alternatives: [{ name: "Go", whenBetter: "CPU-heavy concurrency" }],
           mistakes: ["Blocking the event loop"],
           interviewTips: ["Explain the event loop phases"],
+          flow:
+            this.badGuides-- > 0
+              ? { kind: "flow", title: "Too small", objective: "x", alt: "x", steps: [{ label: "Request" }, { label: "Request" }] }
+              : {
+                  // No `kind`: real models sometimes omit it; the shape says it is a flow.
+                  title: "How a request is handled",
+                  objective: "Follow one request through the event loop",
+                  steps: [{ label: "Request arrives" }, { label: "Event loop picks it" }, { label: "I/O to thread pool", note: "libuv" }, { label: "Callback queued" }, { label: "Response sent" }],
+                },
         });
       case "prep_dedupe": {
         // Flags the first two questions as the same ask, plus a bogus id that must be ignored.

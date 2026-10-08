@@ -57,7 +57,8 @@ export function CodeEditor({ value, onChange, language, height = "100%", readOnl
 
 export function CodeBlock({ code, language }: { code: string; language?: string | null }) {
   return (
-    <pre className="overflow-x-auto rounded-lg border border-border bg-code p-4 font-mono text-[13px] leading-6" data-language={language ?? undefined}>
+    // Focusable so keyboard users can scroll long lines (it scrolls sideways on phones).
+    <pre tabIndex={0} className="overflow-x-auto rounded-lg border border-border bg-code p-4 font-mono text-[13px] leading-6 focus-visible:outline-2 focus-visible:outline-accent" data-language={language ?? undefined}>
       <code>{code}</code>
     </pre>
   );

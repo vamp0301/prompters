@@ -1,9 +1,12 @@
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { aiJson, fence } from "../../ai/json.js";
+import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
-import { badRequest, notFound } from "../../utils/errors.js";
+import { AppError, badRequest, notFound } from "../../utils/errors.js";
 import { canonicalSkill } from "../prep/text.js";
+import { lenientDiagram, type Diagram } from "./knowledge.schemas.js";
+import { keepDiagram } from "./knowledge.validate.js";
 import { resumeParsedSchema } from "./schemas.js";
 
 export const GUIDE_LOCALES = ["en", "hinglish", "hi"] as const;
@@ -27,10 +30,12 @@ export const skillGuideSchema = z.object({
   alternatives: z.array(z.object({ name: str(60), whenBetter: str(240) })).max(5).default([]),
   mistakes: list(6),
   interviewTips: list(5),
+  /** How the skill works end to end, as one diagram (validated like concept-chapter diagrams). */
+  flow: lenientDiagram.optional(),
 });
 export type SkillGuideContent = z.infer<typeof skillGuideSchema>;
 /** Bump when the guide contract changes: cached guides are rewritten on next open. */
-export const GUIDE_VERSION = 2;
+export const GUIDE_VERSION = 3;
 
 const LANGUAGE: Record<GuideLocale, string> = {
   en: "English",
@@ -47,7 +52,12 @@ function guidePrompt(skill: string, locale: GuideLocale) {
       "Be concrete and correct. No marketing language. Perks and drawbacks must be real engineering trade-offs (performance, cost, complexity, ecosystem, scaling, security, team skills).",
       "implementation.steps: how the skill is applied in a real web application, step by step. implementation.code: ONLY when the skill itself is a language, framework, library or tool you write code or configuration with — one short, correct example (≤ 25 lines) that uses THIS skill. For disciplines and broad subjects (System Design, DSA, Operating Systems, DBMS, Computer Networks, Agile…) code MUST be null. Never give code for a different technology.",
       "realWorld: 3-4 real kinds of software where it is used and how (e.g. 'Payments backend — idempotent order processing').",
-      'Shape: {summary, howItWorks[], realWorld:[{where,how}], implementation:{steps[], code:{language,snippet}|null}, perks[], drawbacks[], whenToUse[], whenNotToUse[], alternatives:[{name,whenBetter}], mistakes[], interviewTips[]}.',
+      "flow (MANDATORY): ONE diagram showing how this skill works end to end in a real application, so a student can picture it. Use one of:",
+      '  {kind:"flow", title, objective, alt, steps:[{label, note?, branches?:[{label, steps:[string]}]}]} — steps in order (most skills: e.g. Node.js: Request arrives → Event loop → libuv thread pool → Callback queued → Response sent);',
+      '  {kind:"timeline", title, objective, alt, actors:[...], events:[{from, to, label}]} — messages between parts (protocols, auth: JWT, OAuth, WebSockets); from/to must be listed actors;',
+      '  {kind:"architecture", title, objective, alt, layers:[{label?, nodes:[{label, note?}]}]} — components top→bottom (platforms: Docker, Kubernetes, AWS).',
+      "  3-8 parts, labels ≤ 4 words and specific to THIS skill, alt = one sentence describing the diagram for screen readers, objective = what it teaches. For broad disciplines (DSA, System Design), show the workflow of applying it (e.g. Understand problem → Pick structure → Analyse complexity → Code → Test). Never decorative.",
+      'Shape: {summary, howItWorks[], realWorld:[{where,how}], implementation:{steps[], code:{language,snippet}|null}, perks[], drawbacks[], whenToUse[], whenNotToUse[], alternatives:[{name,whenBetter}], mistakes[], interviewTips[], flow:{kind, title, objective, alt, ...}}.',
     ].join("\n"),
     user: fence("skill", skill),
   };
@@ -80,7 +90,7 @@ function codeFitsSkill(code: { language: string; snippet: string }, steps: strin
 export async function ownedSkills(userId: string) {
   const [resumes, questions] = await Promise.all([
     prisma.careerResume.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, select: { id: true, parsed: true } }),
-    prisma.prepQuestion.findMany({ where: { plan: { userId } }, distinct: ["skill"], select: { skill: true } }),
+    prisma.prepQuestion.findMany({ where: { plan: { userId }, rank: { gt: 0 } }, distinct: ["skill"], select: { skill: true } }),
   ]);
   const names = new Map<string, string>();
   for (const r of resumes) {
@@ -100,7 +110,7 @@ export async function resumeSkills(userId: string) {
   const parsed = resumeParsedSchema.safeParse(resume.parsed);
   if (!parsed.success) return { resume: { id: resume.id, label: resume.label }, groups: [] };
   const plan = await prisma.prepPlan.findFirst({ where: { userId, status: "READY" }, orderBy: { createdAt: "desc" }, select: { id: true } });
-  const qStats = plan ? await prisma.prepQuestion.groupBy({ by: ["skill", "status"], where: { planId: plan.id }, _count: true }) : [];
+  const qStats = plan ? await prisma.prepQuestion.groupBy({ by: ["skill", "status"], where: { planId: plan.id, rank: { gt: 0 } }, _count: true }) : [];
   const cached = new Set((await prisma.skillGuide.findMany({ select: { key: true } })).map((g) => g.key));
   const stat = (key: string) => {
     let total = 0;
@@ -138,7 +148,20 @@ export async function skillGuide(userId: string, name: string, locale: GuideLoca
   let guide = await prisma.skillGuide.findUnique({ where: { key_locale: { key, locale } } });
   if (!guide || (guide.content as { _v?: number })._v !== GUIDE_VERSION) {
     const p = guidePrompt(display, locale);
-    const content = { ...(await aiJson("skill_guide", p.system, p.user, skillGuideSchema, 6000, { timeoutMs: 60_000, fast: true })), _v: GUIDE_VERSION };
+    // The flow diagram is mandatory: one retry with the reason, then an honest error (nothing cached).
+    let content: (SkillGuideContent & { flow: Diagram; _v: number }) | null = null;
+    let feedback = "";
+    for (let attempt = 1; attempt <= 2 && !content; attempt++) {
+      const raw = await aiJson("skill_guide", p.system, p.user + feedback, skillGuideSchema, 7000, { timeoutMs: 60_000, fast: true });
+      const fixes: string[] = [];
+      const flow = raw.flow ? keepDiagram(raw.flow, fixes) : undefined;
+      if (flow) content = { ...raw, flow, _v: GUIDE_VERSION };
+      else {
+        logger.warn({ skill: key, attempt, fixes }, "Skill guide had no usable flow diagram");
+        feedback = `\nYour previous answer had no usable flow diagram${fixes.length ? ` (${fixes.join(" ")})` : ""}. Give "flow" as one diagram with 3+ distinct, consistently labelled parts showing how ${display} works.`;
+      }
+    }
+    if (!content) throw new AppError(502, "AI_BAD_OUTPUT", "We couldn't draw a clear diagram for this skill right now. Please try again in a minute.");
     // Code that doesn't use the skill (e.g. a caching snippet on a System Design overview) is dropped.
     if (content.implementation.code && !codeFitsSkill(content.implementation.code, content.implementation.steps, display, key)) content.implementation.code = null;
     guide = await prisma.skillGuide.upsert({
@@ -154,7 +177,7 @@ export async function skillGuide(userId: string, name: string, locale: GuideLoca
   const usedIn = parsed?.success ? parsed.data.projects.filter((p) => p.technologies.some((t) => canonicalSkill(t) === key)).map((p) => ({ name: p.name, description: p.description })) : [];
   const plan = await prisma.prepPlan.findFirst({ where: { userId, status: "READY" }, orderBy: { createdAt: "desc" }, select: { id: true } });
   const questions = plan
-    ? (await prisma.prepQuestion.findMany({ where: { planId: plan.id }, orderBy: { rank: "asc" }, select: { id: true, rank: true, question: true, priority: true, status: true, skill: true } })).filter((q) => canonicalSkill(q.skill) === key).slice(0, 8)
+    ? (await prisma.prepQuestion.findMany({ where: { planId: plan.id, rank: { gt: 0 } }, orderBy: { rank: "asc" }, select: { id: true, rank: true, question: true, priority: true, status: true, skill: true } })).filter((q) => canonicalSkill(q.skill) === key).slice(0, 8)
     : [];
   return { name: display, key, locale, content: skillGuideSchema.parse(guide.content), usedIn, planId: plan?.id ?? null, questions };
 }

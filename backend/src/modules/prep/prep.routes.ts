@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
@@ -6,7 +7,7 @@ import { aiLimiter, careerAnswerLimiter } from "../../middleware/rate-limit.js";
 import { notFound } from "../../utils/errors.js";
 import { handler, param, parse } from "../../utils/http.js";
 import { ensureAiInterviewEnabled } from "../career/career.routes.js";
-import { CATEGORY_LABEL, DEFAULT_ALLOCATION, TOTAL_QUESTIONS } from "./allocation.js";
+import { CATEGORY_LABEL, DEFAULT_ALLOCATION, PREP_CATEGORIES, TOTAL_QUESTIONS } from "./allocation.js";
 import { createPlan, generationUsage, retryPlan } from "./generation.service.js";
 import { deletePackFiles, PACK_LANGUAGES, PACK_VARIANTS, packFile, requestPack } from "./pack.service.js";
 import { practice, PRACTICE_STATUSES, questionDetail, setStatus } from "./practice.service.js";
@@ -14,8 +15,43 @@ import { roleOptions, TARGET_ROLE_KEYS } from "./roles.js";
 
 const QUESTION_LIST_FIELDS = {
   id: true, rank: true, category: true, priority: true, question: true, skill: true, probability: true, difficulty: true,
-  followUpDepth: true, why: true, evidence: true, sourceType: true, sourceLabel: true, hint: true, keyPoints: true, followUps: true, status: true,
+  followUpDepth: true, why: true, evidence: true, sourceType: true, sourceLabel: true, hint: true, keyPoints: true, followUps: true, status: true, stage: true,
 } as const;
+
+/** The paged list carries only what a question card shows; hints, key points and follow-ups load with the question. */
+const PAGE_FIELDS = {
+  id: true, rank: true, stage: true, category: true, priority: true, question: true, skill: true, probability: true, difficulty: true,
+  followUpDepth: true, why: true, sourceType: true, sourceLabel: true, status: true,
+} as const;
+
+const PRIORITIES = ["INTENSE", "IMPORTANT", "GOOD", "MAY_BE_ASKED"] as const;
+const csv = <T extends string>(values: readonly [T, ...T[]]) =>
+  z
+    .string()
+    .max(200)
+    .optional()
+    .transform((v) => (v ? v.split(",").map((x) => x.trim()).filter(Boolean) : []))
+    .pipe(z.array(z.enum(values)));
+
+const pageQuery = z.object({
+  page: z.coerce.number().int().min(1).max(100).default(1),
+  size: z.coerce.number().int().min(5).max(50).default(20),
+  stage: z.coerce.number().int().min(1).max(3).optional(),
+  priority: csv(PRIORITIES),
+  category: csv(PREP_CATEGORIES),
+  skill: z.string().trim().max(80).optional(),
+  status: z.enum(PRACTICE_STATUSES).optional(),
+  q: z.string().trim().max(100).optional(),
+  /** ladder = the plan's order (easier first); likely = most likely to be asked first. */
+  sort: z.enum(["ladder", "likely"]).default("ladder"),
+});
+
+/** Counts by value, in first-seen order. */
+const countBy = <T,>(rows: T[], key: (r: T) => string | number) => {
+  const out: Record<string, number> = {};
+  for (const r of rows) out[key(r)] = (out[key(r)] ?? 0) + 1;
+  return out;
+};
 
 /** Personalised Top-100 preparation: plans, questions, practice and downloadable packs. */
 export function prepRoutes() {
@@ -49,8 +85,9 @@ export function prepRoutes() {
       include: { resume: { select: { id: true, label: true } }, job: { select: { id: true, title: true, company: true } }, packs: { orderBy: { createdAt: "desc" }, take: 20, select: { id: true, variant: true, language: true, status: true, error: true, createdAt: true } } },
     });
     if (!plan) throw notFound("Preparation plan");
-    const counts = await prisma.prepQuestion.groupBy({ by: ["status"], where: { planId: plan.id }, _count: true });
-    return { ...plan, practice: Object.fromEntries(counts.map((c) => [c.status, c._count])) };
+    // Only published questions count: candidates still being checked are invisible.
+    const counts = await prisma.prepQuestion.groupBy({ by: ["status"], where: { planId: plan.id, rank: { gt: 0 } }, _count: true });
+    return { ...plan, published: counts.reduce((a, c) => a + c._count, 0), practice: Object.fromEntries(counts.map((c) => [c.status, c._count])) };
   }));
 
   r.post("/:id/retry", ai, handler(async (req) => {
@@ -67,12 +104,51 @@ export function prepRoutes() {
     return { deleted: true };
   }));
 
-  // Questions only become visible once the whole bank has passed validation and been ranked.
+  // A question becomes visible once its whole stage has passed validation and been published:
+  // Basics are available while Core and Advanced are still being written.
   r.get("/:id/questions", handler(async (req) => {
+    const plan = await prisma.prepPlan.findFirst({ where: { id: param(req, "id"), userId: currentUser(req).id }, select: { id: true } });
+    if (!plan) throw notFound("Preparation plan");
+    return prisma.prepQuestion.findMany({ where: { planId: plan.id, rank: { gt: 0 } }, orderBy: { rank: "asc" }, select: QUESTION_LIST_FIELDS });
+  }));
+
+  // One page of published questions, filtered and sorted by the database, plus counts for the filters.
+  r.get("/:id/questions/page", handler(async (req) => {
     const plan = await prisma.prepPlan.findFirst({ where: { id: param(req, "id"), userId: currentUser(req).id }, select: { id: true, status: true } });
     if (!plan) throw notFound("Preparation plan");
-    if (plan.status !== "READY") return [];
-    return prisma.prepQuestion.findMany({ where: { planId: plan.id }, orderBy: { rank: "asc" }, select: QUESTION_LIST_FIELDS });
+    const f = parse(pageQuery, req.query);
+    const where: Prisma.PrepQuestionWhereInput = {
+      planId: plan.id,
+      rank: { gt: 0 },
+      ...(f.stage ? { stage: f.stage } : {}),
+      ...(f.priority.length ? { priority: { in: f.priority } } : {}),
+      ...(f.category.length ? { category: { in: f.category } } : {}),
+      ...(f.skill ? { skill: f.skill } : {}),
+      ...(f.status ? { status: f.status } : {}),
+      ...(f.q ? { OR: (["question", "skill", "sourceLabel"] as const).map((k) => ({ [k]: { contains: f.q, mode: "insensitive" as const } })) } : {}),
+    };
+    const [items, total, all] = await Promise.all([
+      prisma.prepQuestion.findMany({ where, orderBy: f.sort === "likely" ? [{ probability: "desc" }, { rank: "asc" }] : { rank: "asc" }, skip: (f.page - 1) * f.size, take: f.size, select: PAGE_FIELDS }),
+      prisma.prepQuestion.count({ where }),
+      prisma.prepQuestion.findMany({ where: { planId: plan.id, rank: { gt: 0 } }, select: { stage: true, priority: true, category: true, status: true, skill: true } }),
+    ]);
+    const skills = countBy(all, (q) => q.skill);
+    return {
+      items,
+      total,
+      page: f.page,
+      size: f.size,
+      pages: Math.max(1, Math.ceil(total / f.size)),
+      published: all.length,
+      generating: plan.status === "QUEUED" || plan.status === "RUNNING",
+      facets: {
+        stages: countBy(all, (q) => q.stage),
+        priorities: countBy(all, (q) => q.priority),
+        categories: countBy(all, (q) => q.category),
+        statuses: countBy(all, (q) => q.status),
+        skills: Object.entries(skills).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([skill, count]) => ({ skill, count })),
+      },
+    };
   }));
 
   r.get("/:id/questions/:qid", handler(async (req) => questionDetail(currentUser(req).id, param(req, "id"), param(req, "qid"))));

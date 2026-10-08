@@ -44,11 +44,11 @@ export async function careerOverview(userId: string) {
     const ready = plan.status === "READY";
     const [byPriority, byCategory, byStatus, intense, skills] = ready
       ? await Promise.all([
-          prisma.prepQuestion.groupBy({ by: ["priority"], where: { planId: plan.id }, _count: true }),
-          prisma.prepQuestion.groupBy({ by: ["category"], where: { planId: plan.id }, _count: true }),
-          prisma.prepQuestion.groupBy({ by: ["status"], where: { planId: plan.id }, _count: true }),
-          prisma.prepQuestion.findMany({ where: { planId: plan.id, priority: "INTENSE" }, orderBy: { rank: "asc" }, take: 5, select: { id: true, rank: true, question: true, skill: true, category: true } }),
-          prisma.prepQuestion.groupBy({ by: ["skill", "status"], where: { planId: plan.id }, _count: true }),
+          prisma.prepQuestion.groupBy({ by: ["priority"], where: { planId: plan.id, rank: { gt: 0 } }, _count: true }),
+          prisma.prepQuestion.groupBy({ by: ["category"], where: { planId: plan.id, rank: { gt: 0 } }, _count: true }),
+          prisma.prepQuestion.groupBy({ by: ["status"], where: { planId: plan.id, rank: { gt: 0 } }, _count: true }),
+          prisma.prepQuestion.findMany({ where: { planId: plan.id, rank: { gt: 0 }, priority: "INTENSE" }, orderBy: { rank: "asc" }, take: 5, select: { id: true, rank: true, question: true, skill: true, category: true } }),
+          prisma.prepQuestion.groupBy({ by: ["skill", "status"], where: { planId: plan.id, rank: { gt: 0 } }, _count: true }),
         ])
       : [[], [], [], [], []];
     const topics = new Map<string, { topic: string; total: number; confident: number }>();

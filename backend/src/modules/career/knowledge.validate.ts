@@ -96,7 +96,7 @@ export function repairDiagram(d: Diagram): Diagram {
 }
 
 /** Repairs, then keeps the diagram only if it teaches something; records why one was dropped. */
-function keepDiagram(d: Diagram, fixes: string[]): Diagram | undefined {
+export function keepDiagram(d: Diagram, fixes: string[]): Diagram | undefined {
   const fixed = repairDiagram(d);
   const fault = diagramFault(fixed);
   if (fault) {

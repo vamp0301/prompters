@@ -1,15 +1,16 @@
 "use client";
 import Link from "next/link";
-import { useDeferredValue, useId, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Download, Loader2, RefreshCw, RotateCcw, Search, ShieldCheck, X } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Check, Download, Loader2, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
 import { EmptyState, ErrorState, PageHeader, PageSkeleton, Tabs } from "@/components/ui/misc";
+import { Pagination } from "@/components/ui/pagination";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
-import type { PrepCategory, PrepPlanDetail, PrepPracticeStatus, PrepPriority, PrepQuestion } from "@/lib/api/types";
+import type { PrepCategory, PrepPlanDetail, PrepPracticeStatus, PrepPriority, PrepQuestion, PrepQuestionItem, PrepQuestionPage } from "@/lib/api/types";
 import { cn, formatDate } from "@/lib/utils";
 import { useRouter, useSearchParams } from "next/navigation";
 import { careerKeys, ConfirmButton, InlineError } from "../shared";
@@ -18,6 +19,16 @@ import { PackDialog } from "./pack-dialog";
 import { groupByTopic, PREP_CATEGORY, PREP_CATEGORY_ORDER, PRIORITY, PRIORITY_ORDER, QuestionBadges } from "./prep-shared";
 import { IndexCard, InkAnnotation, StudyStamp } from "@/components/ui/paper";
 import { QuestionDialog } from "./question-dialog";
+import { ResumeReader } from "./resume-reader";
+
+const PAGE_SIZE = 20;
+
+/** The difficulty ladder: each stage is written, checked and published before the next. */
+export const STAGE_INFO: Record<1 | 2 | 3, { label: string; range: string; copy: string }> = {
+  1: { label: "Basics", range: "Difficulty 1–2", copy: "Fundamentals and how-to" },
+  2: { label: "Core", range: "Difficulty 3", copy: "How it works under the hood" },
+  3: { label: "Advanced", range: "Difficulty 4–5", copy: "Scenarios, scaling, design" },
+};
 
 export function PrepView({ id }: { id: string }) {
   const plan = useQuery({
@@ -49,6 +60,41 @@ function StepIcon({ state }: { state: StepState }) {
   return <span className="inline-block size-3.5 text-center font-mono text-[10px] text-subtle" aria-hidden>·</span>;
 }
 
+function levelText(plan: PrepPlanDetail) {
+  const l = plan.progress.level;
+  if (!l) return undefined;
+  const exp = l.months <= 0 ? "no work experience yet" : l.months < 12 ? `${l.months} months of experience` : `~${Math.round(l.months / 12)} years of experience`;
+  return `${l.label} · ${exp}`;
+}
+
+/** Basics → Core → Advanced, with how far each stage is and whether it can be practised yet. */
+function Ladder({ plan }: { plan: PrepPlanDetail }) {
+  const stages = plan.progress.stages ?? [];
+  return (
+    <ol className="grid gap-3 sm:grid-cols-3" aria-label="Question ladder">
+      {stages.map((s) => {
+        const info = STAGE_INFO[s.stage as 1 | 2 | 3];
+        return (
+          <li key={s.stage} className={cn("rounded-lg border p-3", s.state === "done" ? "border-accent/40 bg-accent-soft/50" : s.state === "running" ? "border-accent" : "border-border")}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[10px] tracking-widest text-subtle uppercase">Step {s.stage}</span>
+              <StepIcon state={s.state} />
+            </div>
+            <p className="mt-1 font-display text-lg font-semibold">{info.label}</p>
+            <p className="text-[11px] text-muted">
+              {info.range} · {info.copy}
+            </p>
+            <Progress className="mt-2" value={s.target ? (Math.min(s.done, s.target) / s.target) * 100 : 0} label={`${info.label}: ${Math.min(s.done, s.target)} of ${s.target}`} />
+            <p className="mt-1 font-mono text-[11px] text-muted tabular-nums">
+              {s.state === "done" ? `${s.published} ready to practise` : s.state === "running" ? `writing & checking · ${Math.min(s.done, s.target)}/${s.target}` : s.state === "failed" ? "stopped" : `${s.target} questions`}
+            </p>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function GeneratingView({ plan }: { plan: PrepPlanDetail }) {
   const qc = useQueryClient();
   const retry = useMutation({
@@ -58,66 +104,93 @@ function GeneratingView({ plan }: { plan: PrepPlanDetail }) {
   });
   const pr = plan.progress;
   const failed = plan.status === "FAILED";
-  const steps: { label: string; state: StepState; detail?: string }[] = [
-    { label: "Resume analyzed", state: pr.resume.state, detail: pr.resume.chunks ? `${pr.resume.chunks} chunks` : undefined },
-    { label: "Skills extracted", state: pr.skills.state, detail: pr.skills.count !== undefined ? `${pr.skills.count} skills` : undefined },
-    { label: "Projects analyzed", state: pr.projects.state, detail: pr.projects.count !== undefined ? `${pr.projects.count} projects & roles` : undefined },
-    ...PREP_CATEGORY_ORDER.filter((c) => pr.categories[c]).map((c) => {
-      const e = pr.categories[c]!;
-      return { label: PREP_CATEGORY[c].label, state: e.state, detail: `${e.done}/${e.target}` };
-    }),
-    { label: "Removing near-duplicates", state: pr.dedupe?.state ?? "pending", detail: pr.dedupe?.removed !== undefined ? `${pr.dedupe.removed} removed` : undefined },
-    { label: "Ranking your Top 100", state: pr.ranking.state },
-  ];
-  const target = Object.values(pr.categories).reduce((a, e) => a + (e?.target ?? 0), 0);
-  const done = Object.values(pr.categories).reduce((a, e) => a + (e?.done ?? 0), 0);
+  const reading = !failed && pr.resume.state !== "done";
+  const staged = !!pr.stages?.length;
+  // Only plans made before the ladder show the original per-category step list.
+  const legacy = !staged && Object.keys(pr.categories).length > 0;
+  const steps: { label: string; state: StepState; detail?: string }[] = !legacy
+    ? []
+    : [
+        ...PREP_CATEGORY_ORDER.filter((c) => pr.categories[c]).map((c) => {
+          const e = pr.categories[c]!;
+          return { label: PREP_CATEGORY[c].label, state: e.state, detail: `${e.done}/${e.target}` };
+        }),
+        { label: "Ranking your Top 100", state: pr.ranking.state },
+      ];
 
   return (
     <>
       <PageHeader eyebrow="Preparing your interview" title={plan.title} description={`Resume: ${plan.resume.label} · started ${formatDate(plan.createdAt)}`} />
-      <Card className="max-w-xl">
-        <CardBody className="space-y-4">
+      <Card>
+        <CardBody className="space-y-5">
+          <ResumeReader reading={reading} label={plan.resume.label} skills={pr.skills.names} projects={pr.projects.names} level={levelText(plan)} />
           {failed ? (
             <div role="alert" className="space-y-3">
               <p className="text-sm font-medium text-danger">Generation stopped.</p>
               <p className="text-sm text-muted">{plan.error ?? "Something went wrong."}</p>
+              {plan.published > 0 && <p className="text-sm text-muted">The {plan.published} questions already published stay available below.</p>}
               <InlineError error={retry.error} />
               <Button onClick={() => retry.mutate()} loading={retry.isPending}>
                 <RotateCcw className="size-4" aria-hidden /> Retry — keep what&apos;s done
               </Button>
             </div>
           ) : (
-            <p className="text-sm text-muted" role="status" aria-live="polite">
-              Analysing your resume and writing questions category by category. Every question is checked for duplicates, resume evidence and technical quality before it&apos;s saved.
+            !reading && (
+              <p className="text-sm text-muted" role="status" aria-live="polite">
+                Writing your questions step by step — Basics first, then Core, then Advanced. Every question is checked for duplicates, resume evidence and level before it&apos;s published.
+              </p>
+            )
+          )}
+          {staged ? (
+            <Ladder plan={plan} />
+          ) : (
+            steps.length > 0 && (
+              <ol className="space-y-1.5 font-mono text-xs">
+                {steps.map((s) => (
+                  <li key={s.label} className={cn("flex items-center gap-2", s.state === "pending" ? "text-subtle" : "text-text")}>
+                    <StepIcon state={s.state} />
+                    <span className="flex-1">{s.label}</span>
+                    {s.detail && <span className="tabular-nums text-muted">{s.detail}</span>}
+                  </li>
+                ))}
+              </ol>
+            )
+          )}
+          {pr.fresh && pr.fresh.previousPlans > 0 && (
+            <p className="flex items-start gap-2 text-xs text-muted">
+              <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent" aria-hidden />
+              Fresh set: questions from your previous plan for this target are being avoided.
             </p>
           )}
-          {target > 0 && <Progress value={Math.min(100, (done / target) * 100)} label={`${done} of ${target} questions`} />}
-          <ol className="space-y-1.5 font-mono text-xs">
-            {steps.map((s) => (
-              <li key={s.label} className={cn("flex items-center gap-2", s.state === "pending" ? "text-subtle" : "text-text")}>
-                <StepIcon state={s.state} />
-                <span className="flex-1">{s.label}</span>
-                {s.detail && <span className="tabular-nums text-muted">{s.detail}</span>}
-              </li>
-            ))}
-          </ol>
-          {!failed && <p className="text-xs text-subtle">Usually 2–4 minutes. You can leave this page; your plan keeps generating.</p>}
+          {!failed && <p className="text-xs text-subtle">Usually 2–4 minutes in total. You can leave this page; your plan keeps generating.</p>}
         </CardBody>
       </Card>
+
+      {plan.published > 0 && (
+        <section aria-labelledby="ready-now-h" className="space-y-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 id="ready-now-h" className="font-display text-2xl font-semibold">
+              Start practising
+            </h2>
+            {!failed && <p className="text-xs text-muted">{plan.published} published — harder steps appear here as they finish.</p>}
+          </div>
+          <QuestionBrowser plan={plan} />
+        </section>
+      )}
     </>
   );
 }
 
 // ───────────────────────── ready ─────────────────────────
 
-/** A Top-100 question as a collectible index card: TOP 01, the question, topic, priority, practice state. */
-function QuestionCard({ q, onOpen }: { q: PrepQuestion; onOpen: () => void }) {
+/** A question as a collectible index card: TOP 01, the question, topic, priority, practice state. */
+function QuestionCard({ q, onOpen }: { q: PrepQuestionItem; onOpen: () => void }) {
   return (
     <button type="button" onClick={onOpen} className="paper-lift group block h-full w-full rounded-lg text-left focus-visible:outline-offset-4">
       <IndexCard
         hole
         className="h-full"
-        label={`TOP ${String(q.rank).padStart(2, "0")}`}
+        label={`TOP ${String(q.rank).padStart(2, "0")}${q.stage ? ` · ${STAGE_INFO[q.stage as 1 | 2 | 3].label.toUpperCase()}` : ""}`}
         aside={
           q.status === "CONFIDENT" ? (
             <StudyStamp>✓ CONFIDENT</StudyStamp>
@@ -159,13 +232,13 @@ function RegenerateButton({ plan }: { plan: PrepPlanDetail }) {
         size="md"
         icon={<RefreshCw className="size-4" aria-hidden />}
         label="Regenerate"
-        title="Generate a fresh Top 100?"
+        title="Generate a fresh set?"
         confirmLabel="Regenerate"
         disabled={left === 0}
         loading={regen.isPending}
         body={
           <p>
-            Creates a new plan for the same resume and target. This plan, its practice history and its PDFs stay available.
+            Creates a new plan for the same resume and target with different questions — the ones in this plan are avoided. This plan, its practice history and its PDFs stay available.
             {left !== undefined && ` Uses 1 of your ${left} remaining generation${left === 1 ? "" : "s"} today.`}
           </p>
         }
@@ -176,49 +249,27 @@ function RegenerateButton({ plan }: { plan: PrepPlanDetail }) {
   );
 }
 
-const STATUS_LABEL: Record<PrepPracticeStatus, string> = { NEW: "Not practised", PRACTICED: "Practised", CONFIDENT: "Confident" };
-
 function ReadyView({ plan }: { plan: PrepPlanDetail }) {
-  const uid = useId();
-  const questions = useQuery({ queryKey: careerKeys.prepQuestions(plan.id), queryFn: () => api.get<PrepQuestion[]>(`/career/prep/${plan.id}/questions`) });
-  // Dashboard bars link here pre-filtered (?priority=INTENSE or ?category=PROJECT).
-  const params = useSearchParams();
-  const [priorities, setPriorities] = useState<PrepPriority[]>(() => (PRIORITY_ORDER.includes(params.get("priority") as PrepPriority) ? [params.get("priority") as PrepPriority] : []));
-  const [categories, setCategories] = useState<PrepCategory[]>(() => (PREP_CATEGORY_ORDER.includes(params.get("category") as PrepCategory) ? [params.get("category") as PrepCategory] : []));
-  const [skill, setSkill] = useState("");
-  const [status, setStatus] = useState<PrepPracticeStatus | "">("");
-  const [search, setSearch] = useState("");
-  const query = useDeferredValue(search.trim().toLowerCase());
-  const [openId, setOpenId] = useState<string | null>(null);
   const [packOpen, setPackOpen] = useState(false);
-  const [view, setView] = useState<"ranked" | "topics">("ranked");
-
-  const all = useMemo(() => questions.data ?? [], [questions.data]);
-  const skills = useMemo(() => [...new Set(all.map((q) => q.skill))].sort((a, b) => a.localeCompare(b)), [all]);
-  const presentCategories = PREP_CATEGORY_ORDER.filter((c) => all.some((q) => q.category === c));
-  const filtered = all.filter(
-    (q) =>
-      (!priorities.length || priorities.includes(q.priority)) &&
-      (!categories.length || categories.includes(q.category)) &&
-      (!skill || q.skill === skill) &&
-      (!status || q.status === status) &&
-      (!query || `${q.question} ${q.skill} ${q.sourceLabel}`.toLowerCase().includes(query)),
-  );
-  const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
-  const confident = all.filter((q) => q.status === "CONFIDENT").length;
-  const practised = all.filter((q) => q.status !== "NEW").length;
-  const anyFilter = priorities.length || categories.length || skill || status || query;
   const v = plan.validation;
   const rejected = v ? Object.values(v.rejected).reduce((a, b) => a + b, 0) : 0;
+  const fresh = plan.progress.fresh;
+  const level = levelText(plan);
 
   return (
     <>
       <PageHeader
         eyebrow={plan.job ? "Prepared for this job" : "Prepared for your target role"}
-        title={`Your Top ${all.length || 100} Interview Questions`}
+        title={`Your Top ${plan.published || 100} Interview Questions`}
         description={
           <>
             {plan.title} · Resume: {plan.resume.label} · {formatDate(plan.completedAt ?? plan.createdAt)}
+            {level && (
+              <>
+                <br />
+                Pitched at: {level}
+              </>
+            )}
           </>
         }
         actions={
@@ -231,15 +282,141 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
         }
       />
 
-      {questions.data && all.length > 0 && all.length < 100 && (
+      {plan.published > 0 && plan.published < 100 && (
         <p role="status" className="rounded-md border border-warn/30 bg-warn-soft px-3 py-2 text-sm text-warn">
-          Partial plan: {all.length} questions passed our quality checks for this resume and target. We don&apos;t pad the list with weaker questions — you can Regenerate later for a fresh set.
+          Partial plan: {plan.published} questions passed our quality checks for this resume and target. We don&apos;t pad the list with weaker questions — you can Regenerate later for a fresh set.
+        </p>
+      )}
+      {fresh && fresh.previousPlans > 0 && (
+        <p className="flex items-start gap-2 text-sm text-muted">
+          <Sparkles className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
+          {fresh.repeated === 0
+            ? "Fresh set: none of these questions were in your previous plan for this target."
+            : `Mostly fresh: ${fresh.repeated} question${fresh.repeated === 1 ? "" : "s"} repeat from your previous plan — your resume didn't support enough new ones.`}
         </p>
       )}
 
+      <QuestionBrowser plan={plan} />
+
+      {v && (
+        <p className="flex items-start gap-2 text-xs text-subtle">
+          <ShieldCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          Quality checked: {v.generated} questions generated, {rejected} rejected (duplicates and paraphrases, asked before, wrong level, not grounded in your resume, unknown skills or non-technical) before your Top {plan.published} was published.
+        </p>
+      )}
+
+      <PackDialog open={packOpen} onClose={() => setPackOpen(false)} plan={plan} />
+    </>
+  );
+}
+
+// ───────────────────────── browsing (paged on the server) ─────────────────────────
+
+const STATUS_LABEL: Record<PrepPracticeStatus, string> = { NEW: "Not practised", PRACTICED: "Practised", CONFIDENT: "Confident" };
+
+/** Waits until typing pauses before searching (one request per pause, not per keystroke). */
+function useDebounced<T>(value: T, ms: number) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+type PageParams = { page: number; size: number; stage?: number; priority: string; category: string; skill: string; status: string; q: string; sort: "ladder" | "likely" };
+
+const pagePath = (planId: string, p: PageParams) => {
+  const qs = new URLSearchParams();
+  for (const [k, val] of Object.entries(p)) if (val !== undefined && val !== "") qs.set(k, String(val));
+  return `/career/prep/${planId}/questions/page?${qs}`;
+};
+
+function QuestionBrowser({ plan }: { plan: PrepPlanDetail }) {
+  const uid = useId();
+  const qc = useQueryClient();
+  // Dashboard bars link here pre-filtered (?priority=INTENSE or ?category=PROJECT).
+  const params = useSearchParams();
+  const [page, setPage] = useState(1);
+  /** Any filter change starts again from page 1. */
+  const resetting =
+    <A,>(set: (a: A) => void) =>
+    (a: A) => {
+      set(a);
+      setPage(1);
+    };
+  const [priorities, setPrioritiesRaw] = useState<PrepPriority[]>(() => (PRIORITY_ORDER.includes(params.get("priority") as PrepPriority) ? [params.get("priority") as PrepPriority] : []));
+  const [categories, setCategoriesRaw] = useState<PrepCategory[]>(() => (PREP_CATEGORY_ORDER.includes(params.get("category") as PrepCategory) ? [params.get("category") as PrepCategory] : []));
+  const [stage, setStageRaw] = useState<"all" | "1" | "2" | "3">("all");
+  const [skill, setSkillRaw] = useState("");
+  const [status, setStatusRaw] = useState<PrepPracticeStatus | "">("");
+  const [sort, setSortRaw] = useState<"ladder" | "likely">("ladder");
+  const [search, setSearchRaw] = useState("");
+  const setPriorities = resetting(setPrioritiesRaw);
+  const setCategories = resetting(setCategoriesRaw);
+  const setStage = resetting(setStageRaw);
+  const setSkill = resetting(setSkillRaw);
+  const setStatus = resetting(setStatusRaw);
+  const setSort = resetting(setSortRaw);
+  const setSearch = resetting(setSearchRaw);
+  const q = useDebounced(search.trim(), 300);
+  const [view, setView] = useState<"list" | "topics">("list");
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const filters = { stage: stage === "all" ? undefined : Number(stage), priority: priorities.join(","), category: categories.join(","), skill, status, q, sort };
+
+  const pageParams: PageParams = { ...filters, page, size: PAGE_SIZE };
+  // `published` is in the key: when the next stage is published, the list refreshes by itself.
+  const keyFor = (p: PageParams) => [...careerKeys.prepQuestions(plan.id), "page", p, plan.published] as const;
+  const list = useQuery({
+    queryKey: keyFor(pageParams),
+    queryFn: () => api.get<PrepQuestionPage>(pagePath(plan.id, pageParams)),
+    placeholderData: keepPreviousData,
+    enabled: view === "list",
+  });
+  const data = list.data;
+  // Prefetch the next page so "Next" is instant.
+  const nextParams: PageParams | null = data && page < data.pages ? { ...pageParams, page: page + 1 } : null;
+  const nextKey = nextParams ? JSON.stringify(nextParams) : "";
+  useEffect(() => {
+    if (!nextParams) return;
+    void qc.prefetchQuery({ queryKey: keyFor(nextParams), queryFn: () => api.get<PrepQuestionPage>(pagePath(plan.id, nextParams)), staleTime: 30_000 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by the serialised params
+  }, [nextKey, plan.id, plan.published, qc]);
+
+  // "By topic" groups the whole list, so it loads the full (small) list only when opened.
+  const all = useQuery({
+    queryKey: [...careerKeys.prepQuestions(plan.id), "all", plan.published],
+    queryFn: () => api.get<PrepQuestion[]>(`/career/prep/${plan.id}/questions`),
+    enabled: view === "topics",
+  });
+  const topicRows = useMemo(() => {
+    const needle = q.toLowerCase();
+    return (all.data ?? []).filter(
+      (x) =>
+        (stage === "all" || x.stage === Number(stage)) &&
+        (!priorities.length || priorities.includes(x.priority)) &&
+        (!categories.length || categories.includes(x.category)) &&
+        (!skill || x.skill === skill) &&
+        (!status || x.status === status) &&
+        (!needle || `${x.question} ${x.skill} ${x.sourceLabel}`.toLowerCase().includes(needle)),
+    );
+  }, [all.data, stage, priorities, categories, skill, status, q]);
+
+  const facets = data?.facets;
+  const toggle = <T,>(l: T[], val: T) => (l.includes(val) ? l.filter((x) => x !== val) : [...l, val]);
+  const anyFilter = priorities.length || categories.length || stage !== "all" || skill || status || search;
+  const total = plan.published;
+  const confident = plan.practice.CONFIDENT ?? 0;
+  const practised = (plan.practice.PRACTICED ?? 0) + confident;
+  const items = data?.items ?? [];
+  const stagesPresent = ([1, 2, 3] as const).filter((s) => (facets?.stages[String(s)] ?? 0) > 0);
+
+  return (
+    <>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {PRIORITY_ORDER.map((p) => {
-          const n = all.filter((q) => q.priority === p).length;
+          const n = facets?.priorities[p] ?? 0;
           const on = priorities.includes(p);
           return (
             <button
@@ -261,17 +438,42 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
           <div className="text-xs text-muted">Practice</div>
           <div className="font-mono text-2xl font-semibold tabular-nums">
             {confident}
-            <span className="text-sm text-subtle">/{all.length}</span>
+            <span className="text-sm text-subtle">/{total}</span>
           </div>
-          <Progress value={all.length ? (confident / all.length) * 100 : 0} label={`${confident} confident of ${all.length}`} />
-          <div className="mt-1 text-[11px] text-subtle">{practised} practised · {confident} confident</div>
+          <Progress value={total ? (confident / total) * 100 : 0} label={`${confident} confident of ${total}`} />
+          <div className="mt-1 text-[11px] text-subtle">
+            {practised} practised · {confident} confident
+          </div>
         </div>
       </div>
 
       <Card>
         <CardBody className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Tabs
+              value={stage}
+              onChange={setStage}
+              items={[
+                { value: "all", label: <>All steps <span className="font-mono text-subtle tabular-nums">{total}</span></> },
+                ...stagesPresent.map((s) => ({
+                  value: String(s) as "1" | "2" | "3",
+                  label: (
+                    <>
+                      {s}. {STAGE_INFO[s].label} <span className="font-mono text-subtle tabular-nums">{facets?.stages[String(s)] ?? 0}</span>
+                    </>
+                  ),
+                })),
+              ]}
+            />
+            <Field label="Order" htmlFor={`${uid}-sort`} className="w-full sm:w-60">
+              <Select id={`${uid}-sort`} value={sort} onChange={(e) => setSort(e.target.value as "ladder" | "likely")}>
+                <option value="ladder">Step by step (easy → hard)</option>
+                <option value="likely">Most likely to be asked</option>
+              </Select>
+            </Field>
+          </div>
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by category">
-            {presentCategories.map((c) => {
+            {PREP_CATEGORY_ORDER.filter((c) => (facets?.categories[c] ?? 0) > 0 || categories.includes(c)).map((c) => {
               const on = categories.includes(c);
               return (
                 <button
@@ -281,7 +483,7 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
                   onClick={() => setCategories((l) => toggle(l, c))}
                   className={cn("rounded-md border px-2 py-1 text-xs transition-colors", on ? "border-accent bg-accent-soft text-accent" : "border-border text-muted hover:text-text")}
                 >
-                  {PREP_CATEGORY[c].emoji} {PREP_CATEGORY[c].short} <span className="font-mono tabular-nums text-subtle">{all.filter((q) => q.category === c).length}</span>
+                  {PREP_CATEGORY[c].emoji} {PREP_CATEGORY[c].short} <span className="font-mono tabular-nums text-subtle">{facets?.categories[c] ?? 0}</span>
                 </button>
               );
             })}
@@ -296,9 +498,9 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
             <Field label="Skill" htmlFor={`${uid}-k`}>
               <Select id={`${uid}-k`} value={skill} onChange={(e) => setSkill(e.target.value)}>
                 <option value="">All skills</option>
-                {skills.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+                {(facets?.skills ?? []).map((s) => (
+                  <option key={s.skill} value={s.skill}>
+                    {s.skill} ({s.count})
                   </option>
                 ))}
               </Select>
@@ -315,7 +517,17 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
             </Field>
           </div>
           <div className="flex items-center justify-between text-xs text-muted">
-            <span aria-live="polite">{questions.data ? `Showing ${filtered.length} of ${all.length}` : "Loading questions…"}</span>
+            <span aria-live="polite">
+              {view === "topics"
+                ? all.data
+                  ? `Showing ${topicRows.length} of ${total}`
+                  : "Loading questions…"
+                : data
+                  ? data.total
+                    ? `Showing ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, data.total)} of ${data.total}${data.total !== total ? ` (filtered from ${total})` : ""}`
+                    : `Showing 0 of ${total}`
+                  : "Loading questions…"}
+            </span>
             {anyFilter ? (
               <button
                 type="button"
@@ -323,6 +535,7 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
                 onClick={() => {
                   setPriorities([]);
                   setCategories([]);
+                  setStage("all");
                   setSkill("");
                   setStatus("");
                   setSearch("");
@@ -335,71 +548,93 @@ function ReadyView({ plan }: { plan: PrepPlanDetail }) {
         </CardBody>
       </Card>
 
-      {questions.isLoading ? (
-        <PageSkeleton />
-      ) : questions.error ? (
-        <ErrorState error={questions.error} retry={() => questions.refetch()} />
-      ) : !filtered.length ? (
-        <EmptyState icon={<Search className="size-4" />} title="No questions match these filters" description="Try removing a filter." />
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <Tabs
-              value={view}
-              onChange={setView}
-              items={[
-                { value: "ranked", label: "Ranked" },
-                { value: "topics", label: "By topic" },
-              ]}
-            />
-            {view === "topics" && <InkAnnotation className="text-xl">one topic at a time →</InkAnnotation>}
-          </div>
-          {view === "ranked" ? (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Tabs
+          value={view}
+          onChange={setView}
+          items={[
+            { value: "list", label: "Step by step" },
+            { value: "topics", label: "By topic" },
+          ]}
+        />
+        {view === "topics" && <InkAnnotation className="text-xl">one topic at a time →</InkAnnotation>}
+      </div>
+
+      {view === "list" ? (
+        list.isLoading ? (
+          <PageSkeleton />
+        ) : list.error ? (
+          <ErrorState error={list.error} retry={() => list.refetch()} />
+        ) : !items.length ? (
+          <EmptyState icon={<Search className="size-4" />} title="No questions match these filters" description="Try removing a filter." />
+        ) : (
+          <div className={cn("space-y-4 transition-opacity", list.isPlaceholderData && "opacity-60")} aria-busy={list.isFetching}>
             <ol className="grid gap-3 md:grid-cols-2">
-              {filtered.map((q) => (
-                <li key={q.id}>
-                  <QuestionCard q={q} onOpen={() => setOpenId(q.id)} />
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <div className="space-y-8">
-              {groupByTopic(filtered).map((g) => {
-                const confidentHere = g.questions.filter((q) => q.status === "CONFIDENT").length;
-                const intenseHere = g.questions.filter((q) => q.priority === "INTENSE").length;
+              {items.map((x, i) => {
+                // Step headings mark where the ladder moves up a level.
+                const startsStage = sort === "ladder" && x.stage > 0 && (i === 0 || items[i - 1].stage !== x.stage);
                 return (
-                  <section key={g.topic} aria-label={`${g.topic}: ${g.questions.length} questions`}>
-                    <div className="mb-3 flex flex-wrap items-end justify-between gap-2 border-b border-border pb-2">
-                      <h3 className="font-display text-xl font-semibold">{g.topic}</h3>
-                      <p className="font-mono text-xs text-muted">
-                        {g.questions.length} question{g.questions.length === 1 ? "" : "s"}
-                        {intenseHere ? ` · ${intenseHere} intense` : ""} · {confidentHere}/{g.questions.length} confident
-                      </p>
+                  <li key={x.id} className={cn(startsStage && "md:col-span-2")}>
+                    {startsStage && (
+                      <div className="mb-3 flex items-baseline justify-between gap-2 border-b border-border pb-2">
+                        <h3 className="font-display text-xl font-semibold">
+                          Step {x.stage} · {STAGE_INFO[x.stage as 1 | 2 | 3].label}
+                        </h3>
+                        <span className="font-mono text-xs text-muted">{STAGE_INFO[x.stage as 1 | 2 | 3].range}</span>
+                      </div>
+                    )}
+                    <div className={cn(startsStage && "md:w-[calc(50%-0.375rem)]")}>
+                      <QuestionCard q={x} onOpen={() => setOpenId(x.id)} />
                     </div>
-                    <ol className="grid gap-3 md:grid-cols-2">
-                      {g.questions.map((q) => (
-                        <li key={q.id}>
-                          <QuestionCard q={q} onOpen={() => setOpenId(q.id)} />
-                        </li>
-                      ))}
-                    </ol>
-                  </section>
+                  </li>
                 );
               })}
-            </div>
-          )}
-        </>
+            </ol>
+            <Pagination page={page} pages={data?.pages ?? 1} onChange={setPage} label="Question pages" />
+          </div>
+        )
+      ) : all.isLoading ? (
+        <PageSkeleton />
+      ) : all.error ? (
+        <ErrorState error={all.error} retry={() => all.refetch()} />
+      ) : !topicRows.length ? (
+        <EmptyState icon={<Search className="size-4" />} title="No questions match these filters" description="Try removing a filter." />
+      ) : (
+        <div className="space-y-8">
+          {groupByTopic(topicRows).map((g) => {
+            const confidentHere = g.questions.filter((x) => x.status === "CONFIDENT").length;
+            const intenseHere = g.questions.filter((x) => x.priority === "INTENSE").length;
+            return (
+              <section key={g.topic} aria-label={`${g.topic}: ${g.questions.length} questions`}>
+                <div className="mb-3 flex flex-wrap items-end justify-between gap-2 border-b border-border pb-2">
+                  <h3 className="font-display text-xl font-semibold">{g.topic}</h3>
+                  <p className="font-mono text-xs text-muted">
+                    {g.questions.length} question{g.questions.length === 1 ? "" : "s"}
+                    {intenseHere ? ` · ${intenseHere} intense` : ""} · {confidentHere}/{g.questions.length} confident
+                  </p>
+                </div>
+                <ol className="grid gap-3 md:grid-cols-2">
+                  {g.questions.map((x) => (
+                    <li key={x.id}>
+                      <QuestionCard q={x} onOpen={() => setOpenId(x.id)} />
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            );
+          })}
+        </div>
       )}
 
-      {v && (
-        <p className="flex items-start gap-2 text-xs text-subtle">
-          <ShieldCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          Quality checked: {v.generated} questions generated, {rejected} rejected (duplicates and paraphrases, not grounded in your resume, unknown skills or non-technical) before your Top {all.length} was ranked.
-        </p>
+      {openId && (
+        <QuestionDialog
+          planId={plan.id}
+          questionId={openId}
+          list={view === "topics" ? groupByTopic(topicRows).flatMap((g) => g.questions.map((x) => x.id)) : items.map((x) => x.id)}
+          onNavigate={setOpenId}
+          onClose={() => setOpenId(null)}
+        />
       )}
-
-      {openId && <QuestionDialog planId={plan.id} questionId={openId} list={filtered.map((q) => q.id)} onNavigate={setOpenId} onClose={() => setOpenId(null)} />}
-      <PackDialog open={packOpen} onClose={() => setPackOpen(false)} plan={plan} />
     </>
   );
 }

@@ -149,7 +149,7 @@ async function roleBank(userId: string, resumeId: string, role: TargetRoleKey, f
   const plan = await prisma.prepPlan.findFirst({ where: { userId, resumeId, status: "READY", jobId: null, targetRole: role }, orderBy: { createdAt: "desc" }, select: { id: true } })
     ?? (await prisma.prepPlan.findFirst({ where: { userId, resumeId, status: "READY" }, orderBy: { createdAt: "desc" }, select: { id: true } }));
   if (plan) {
-    const qs = await prisma.prepQuestion.findMany({ where: { planId: plan.id }, orderBy: { rank: "asc" }, take: 100, select: { id: true, question: true, skill: true, category: true, difficulty: true, claimId: true, why: true } });
+    const qs = await prisma.prepQuestion.findMany({ where: { planId: plan.id, rank: { gt: 0 } }, orderBy: { rank: "asc" }, take: 100, select: { id: true, question: true, skill: true, category: true, difficulty: true, claimId: true, why: true } });
     if (qs.length >= 10) return { bank: fromPrepPlan(qs, claimMap), aiCalls: 0 };
   }
   const resume = await prisma.careerResume.findUniqueOrThrow({ where: { id: resumeId }, select: { parsed: true } });

@@ -11,6 +11,8 @@ import { canonicalSkill, evidenceInResume, sectionize, skillMatcher, verbatimEvi
 import { validateBatch, type Source, type ValidationContext } from "../src/modules/prep/validator.js";
 import { startPrepWorker } from "../src/workers/prep-worker.js";
 import { selectTop } from "../src/modules/prep/generation.service.js";
+import { bandFor, bandFromSeniority, effectiveBand, ladderOrder, rotate, STAGE_MIX, stagePlan } from "../src/modules/prep/ladder.js";
+import { contentTokens, normalize } from "../src/modules/prep/text.js";
 
 const fake = new FakeAI();
 const RESUME = [
@@ -197,8 +199,76 @@ describe("question validator", () => {
   });
 });
 
+describe("difficulty ladder", () => {
+  it("bands experience, and a more senior job raises the level the candidate prepares for", () => {
+    expect([0, 6, 7, 24, 25, 60, 61].map(bandFor)).toEqual(["STUDENT", "STUDENT", "JUNIOR", "JUNIOR", "MID", "MID", "SENIOR"]);
+    expect(["SDE-2", "Senior Backend Engineer", "3+ years", "Intern", "Associate Engineer", "Engineer"].map(bandFromSeniority)).toEqual(["MID", "SENIOR", "MID", "STUDENT", "JUNIOR", null]);
+    expect(effectiveBand(4, { seniority: "Senior" })).toBe("SENIOR");
+    expect(effectiveBand(4, { requiredExperienceMonths: 36 })).toBe("MID");
+    // A job never lowers the level: a senior engineer applying to a junior role is still drilled as senior.
+    expect(effectiveBand(80, { seniority: "Junior" })).toBe("SENIOR");
+  });
+
+  it("splits every band into Basics → Core → Advanced (100 total); experienced bands get more depth", () => {
+    for (const [band, mix] of Object.entries(STAGE_MIX)) {
+      expect(mix.reduce((a, b) => a + b, 0), band).toBe(100);
+      const plan = stagePlan(DEFAULT_ALLOCATION, band as keyof typeof STAGE_MIX);
+      ([1, 2, 3] as const).forEach((stage, i) => expect(Object.values(plan[stage]).reduce((a, b) => a + b, 0)).toBe(mix[i]));
+      // Scenarios (system design, incidents) are never Basics.
+      expect(plan[1].SCENARIO).toBe(0);
+    }
+    expect(STAGE_MIX.STUDENT[0]).toBeGreaterThan(STAGE_MIX.SENIOR[0]);
+    expect(STAGE_MIX.SENIOR[2]).toBeGreaterThan(STAGE_MIX.STUDENT[2]);
+    // No projects on the resume → no project questions at any stage.
+    const noProjects = stagePlan(allocateQuestions({ projects: 0, claims: 0, achievements: 0, gapSkills: 0 }), "JUNIOR");
+    expect([1, 2, 3].map((st) => noProjects[st as 1 | 2 | 3].PROJECT)).toEqual([0, 0, 0]);
+  });
+
+  it("orders a stage easier-first and rotates focus between regenerations", () => {
+    const qs = [
+      { id: "a", difficulty: 2, probability: 0.9, priority: "INTENSE" as const, category: "SKILL" as const },
+      { id: "b", difficulty: 1, probability: 0.4, priority: "GOOD" as const, category: "SKILL" as const },
+      { id: "c", difficulty: 1, probability: 0.8, priority: "INTENSE" as const, category: "SKILL" as const },
+    ];
+    expect(ladderOrder(qs).map((q) => q.id)).toEqual(["c", "b", "a"]);
+    expect(rotate(["a", "b", "c", "d"], 1)).toEqual(["b", "c", "d", "a"]);
+    expect(rotate(["a", "b", "c"], 4)).toEqual(["b", "c", "a"]);
+  });
+
+  it("keeps difficulty inside the stage, rejects off-level questions and ones asked in a previous plan", () => {
+    const base = {
+      category: "SKILL" as const,
+      resumeText: RESUME,
+      sources: new Map<string, Source>(),
+      matchSkill: skillMatcher(["Node.js", "MongoDB"]),
+      accepted: [],
+      fallbackSource: { type: "ROLE" as const, label: "Backend Developer", evidence: "" },
+    };
+    const item = (question: string, difficulty: number) => ({ question, skill: "Node.js", sourceRef: null, probability: 0.7, difficulty, followUpDepth: 3, why: "Core skill", evidence: null, hint: "Think it through.", keyPoints: ["a"], followUps: [] });
+    const asked = "How does the Node.js event loop handle a slow database call?";
+    const basics = validateBatch(
+      [
+        item("How do you read a JSON request body in a Node.js API?", 4),
+        item("Design a Node.js service that handles a million connections?", 2),
+        item(asked, 1),
+        // A close rewording of a previous-plan question is still "asked before".
+        item("How does the Node.js event loop deal with a slow database call?", 1),
+        // Basics ask one short thing: no second question, no essay.
+        item("How do you structure Node.js error middleware for sync errors, and how do you catch async rejections?", 2),
+        item("When your Node.js API receives a request with a large JSON body from a mobile client over a slow network connection, which built-in options and middleware settings would you change first to keep it fast and reliable for users?", 2),
+      ],
+      { ...base, accepted: [], stage: { stage: 1, min: 1, max: 2 }, previous: [{ norm: normalize(asked), tokens: contentTokens(asked) }] },
+    );
+    expect(basics.questions.map((q) => [q.difficulty, q.stage])).toEqual([[2, 1]]);
+    expect(basics.stats.rejected).toEqual({ wrong_level: 3, asked_before: 2 });
+    const advanced = validateBatch([item("What is MongoDB in a Node.js API?", 5), item("How would your Node.js API survive a MongoDB primary failover mid-request?", 2)], { ...base, accepted: [], stage: { stage: 3, min: 4, max: 5 } });
+    expect(advanced.questions.map((q) => q.difficulty)).toEqual([4]);
+    expect(advanced.stats.rejected).toEqual({ wrong_level: 1 });
+  });
+});
+
 describe("topic-wise grouping", () => {
-  const base = { id: "", planId: "", question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", followUps: [], translations: {}, status: "NEW", createdAt: new Date(), category: "SKILL" as const };
+  const base = { id: "", planId: "", stage: 0, question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", followUps: [], translations: {}, status: "NEW", createdAt: new Date(), category: "SKILL" as const };
   it("groups by topic, most important first, gathers single-question topics, keeps rank order inside", () => {
     const qs = [
       { ...base, rank: 3, skill: "JWT", priority: "INTENSE" as const, keyPoints: ["Expiry", "Signature"], bestScore: 40 },
@@ -219,7 +289,7 @@ describe("topic-wise grouping", () => {
 
 describe("pack planning helpers", () => {
   it("orders skills by importance and splits the bank across a 7-day plan", () => {
-    const base = { id: "", planId: "", question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", keyPoints: [], followUps: [], translations: {}, status: "NEW", createdAt: new Date() };
+    const base = { id: "", planId: "", stage: 0, question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", keyPoints: [], followUps: [], translations: {}, status: "NEW", createdAt: new Date() };
     const qs = Array.from({ length: 20 }, (_, i) => ({
       ...base,
       rank: i + 1,
@@ -273,9 +343,28 @@ describe("Top-100 preparation plan", () => {
     const p = await prisma.prepPlan.findUniqueOrThrow({ where: { id: plan.id } });
     expect(p.allocation).toMatchObject({ PROJECT: 20, CLAIM: 4, ACHIEVEMENT: 2 });
     const v = p.validation as { rejected: Record<string, number>; accepted: number };
-    // Semantic de-dup removed one paraphrase and the slot was refilled back to 100.
-    expect(v.rejected.near_duplicate).toBe(1);
-    expect((p.progress as { dedupe: { removed: number } }).dedupe.removed).toBe(1);
+    // Semantic de-dup removed one paraphrase per stage and each slot was refilled.
+    expect(v.rejected.near_duplicate).toBe(3);
+    expect((p.progress as { dedupe: { removed: number } }).dedupe.removed).toBe(3);
+
+    // Difficulty ladder: a 6-month intern is a student → 50 Basics, 35 Core, 15 Advanced, in that order,
+    // each question's difficulty inside its stage, and the list never gets easier as it goes.
+    expect(p.band).toBe("STUDENT");
+    const full = await prisma.prepQuestion.findMany({ where: { planId: plan.id }, orderBy: { rank: "asc" } });
+    expect([1, 2, 3].map((st) => full.filter((q) => q.stage === st).length)).toEqual([50, 35, 15]);
+    const bands: Record<number, [number, number]> = { 1: [1, 2], 2: [3, 3], 3: [4, 5] };
+    for (const q of full) {
+      expect(q.difficulty).toBeGreaterThanOrEqual(bands[q.stage][0]);
+      expect(q.difficulty).toBeLessThanOrEqual(bands[q.stage][1]);
+    }
+    for (let i = 1; i < full.length; i++) expect(full[i].stage * 10 + full[i].difficulty).toBeGreaterThanOrEqual(full[i - 1].stage * 10 + full[i - 1].difficulty);
+    expect((p.progress as { level: { band: string } }).level.band).toBe("STUDENT");
+    const prog = p.progress as { skills: { names: string[] }; projects: { names: string[] } };
+    expect(prog.skills.names).toContain("Node.js");
+    expect(prog.projects.names.length).toBeGreaterThan(0);
+    // The model was told the stage and the band.
+    const prepCalls = fake.calls.filter((c) => c.task.startsWith("prep_") && c.task !== "prep_dedupe");
+    expect(prepCalls.some((c) => /STAGE 1 · BASICS/.test(c.system) && /ENTRY-LEVEL/.test(c.system))).toBe(true);
     expect(v.rejected.duplicate).toBeGreaterThan(0);
     expect(v.rejected.not_technical).toBeGreaterThan(0);
     expect(v.rejected.unknown_skill).toBeGreaterThan(0);
@@ -469,5 +558,128 @@ describe("Top-100 preparation plan", () => {
     } finally {
       fake.prepBroken = false;
     }
+  });
+
+  it("publishes Basics first: they can be practised while Advanced is still being written", async () => {
+    const { agent } = await login();
+    const resumeId = await resumeFor(agent);
+    let release!: () => void;
+    fake.stageGate = new Promise<void>((r) => (release = r));
+    try {
+      const id = (await agent.post("/api/career/prep").send({ resumeId, targetRole: "fullstack" })).body.data.id as string;
+      const mid = await waitFor(() => agent.get(`/api/career/prep/${id}`).then((r) => r.body.data), (p) => p.published >= 85);
+      expect(mid.status).toBe("RUNNING");
+      expect(mid.progress.stages.map((x: { state: string }) => x.state)).toEqual(["done", "done", "running"]);
+      const page = (await agent.get(`/api/career/prep/${id}/questions/page`)).body.data;
+      expect(page).toMatchObject({ total: 85, generating: true, published: 85 });
+      expect(page.items[0]).toMatchObject({ rank: 1, stage: 1 });
+      // Practising a published question works mid-generation; candidates still being checked are invisible.
+      expect((await agent.get(`/api/career/prep/${id}/questions/${page.items[0].id}`)).status).toBe(200);
+      const hidden = await prisma.prepQuestion.findFirst({ where: { planId: id, rank: 0 } });
+      if (hidden) expect((await agent.get(`/api/career/prep/${id}/questions/${hidden.id}`)).status).toBe(404);
+      release();
+      const done = await planStatus(agent, id);
+      expect(done.status).toBe("READY");
+      expect(done.published).toBe(100);
+    } finally {
+      release?.();
+      fake.stageGate = null;
+    }
+  });
+
+  it("regenerating gives a fresh set: earlier questions are avoided and repeats are reported", async () => {
+    const { agent } = await login();
+    const resumeId = await resumeFor(agent);
+    const first = await planStatus(agent, (await agent.post("/api/career/prep").send({ resumeId, targetRole: "sde" })).body.data.id);
+    const before = fake.calls.length;
+    const second = await planStatus(agent, (await agent.post("/api/career/prep").send({ resumeId, targetRole: "sde", regenerate: true })).body.data.id);
+    expect(second.status).toBe("READY");
+    // The model saw the previous plan's questions, and the one it repeated anyway was rejected.
+    expect(fake.calls.slice(before).some((c) => /previous plan/.test(c.user))).toBe(true);
+    const p2 = await prisma.prepPlan.findUniqueOrThrow({ where: { id: second.id } });
+    expect((p2.validation as { rejected: Record<string, number> }).rejected.asked_before).toBeGreaterThan(0);
+    expect(p2.progress).toMatchObject({ fresh: { previousPlans: 1, repeated: 0 } });
+    const a = await prisma.prepQuestion.findMany({ where: { planId: first.id, rank: { gt: 0 } }, select: { question: true } });
+    const b = await prisma.prepQuestion.findMany({ where: { planId: second.id, rank: { gt: 0 } }, select: { question: true } });
+    expect(b).toHaveLength(100);
+    const old = new Set(a.map((q) => normalize(q.question)));
+    expect(b.filter((q) => old.has(normalize(q.question)))).toHaveLength(0);
+    // A different target is not "the same plan again": nothing to avoid.
+    const other = await planStatus(agent, (await agent.post("/api/career/prep").send({ resumeId, targetRole: "devops" })).body.data.id);
+    expect((await prisma.prepPlan.findUniqueOrThrow({ where: { id: other.id } })).progress).toMatchObject({ fresh: { previousPlans: 0 } });
+  });
+
+  it("a senior job drills a student as senior: the superset with far more Advanced questions", async () => {
+    const { agent } = await login();
+    const resumeId = await resumeFor(agent);
+    const job = await agent.post("/api/career/jobs").send({ text: `Senior ${JD}` });
+    const plan = await planStatus(agent, (await agent.post("/api/career/prep").send({ resumeId, jobId: job.body.data.id })).body.data.id);
+    expect(plan.status).toBe("READY");
+    expect(plan.band).toBe("SENIOR");
+    const qs = await prisma.prepQuestion.findMany({ where: { planId: plan.id } });
+    expect([1, 2, 3].map((st) => qs.filter((q) => q.stage === st).length)).toEqual([15, 35, 50]);
+    const calls = fake.calls.filter((c) => c.task.startsWith("prep_") && c.task !== "prep_dedupe" && c.user.includes("Senior"));
+    expect(calls.some((c) => /SUPERSET/.test(c.system))).toBe(true);
+  });
+
+  it("pages, filters and sorts questions on the server, with counts for every filter", async () => {
+    const { agent } = await login();
+    const other = await login();
+    const resumeId = await resumeFor(agent);
+    const plan = await planStatus(agent, (await agent.post("/api/career/prep").send({ resumeId, targetRole: "backend" })).body.data.id);
+    const get = (q: Record<string, string | number>) => agent.get(`/api/career/prep/${plan.id}/questions/page`).query(q).then((r) => r.body.data);
+
+    const p1 = await get({});
+    expect(p1).toMatchObject({ total: 100, page: 1, size: 20, pages: 5, published: 100, generating: false });
+    expect(p1.items).toHaveLength(20);
+    expect(p1.items.map((q: { rank: number }) => q.rank)).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
+    // List items are light: the hint and key points load with the question.
+    expect(p1.items[0].hint).toBeUndefined();
+    expect(p1.items[0].keyPoints).toBeUndefined();
+    expect(p1.facets.stages).toEqual({ 1: 50, 2: 35, 3: 15 });
+    expect(Object.values(p1.facets.priorities as Record<string, number>).reduce((a, b) => a + b, 0)).toBe(100);
+
+    const last = await get({ page: 5 });
+    expect(last.items.map((q: { rank: number }) => q.rank).at(-1)).toBe(100);
+    const advanced = await get({ stage: 3, size: 50 });
+    expect(advanced.total).toBe(15);
+    expect(advanced.items.every((q: { stage: number; difficulty: number }) => q.stage === 3 && q.difficulty >= 4)).toBe(true);
+    const skill = p1.facets.skills[0].skill as string;
+    const bySkill = await get({ skill, size: 50 });
+    expect(bySkill.total).toBe(p1.facets.skills[0].count);
+    const likely = await get({ sort: "likely", size: 50 });
+    const probs = likely.items.map((q: { probability: number }) => q.probability);
+    expect(probs).toEqual([...probs].sort((a: number, b: number) => b - a));
+    const search = await get({ q: "MONGODB" });
+    expect(search.total).toBeGreaterThan(0);
+    expect(search.items.every((q: { question: string; skill: string; sourceLabel: string }) => /mongodb/i.test(`${q.question} ${q.skill} ${q.sourceLabel}`))).toBe(true);
+    const multi = await get({ priority: "INTENSE,IMPORTANT", category: "PROJECT" });
+    expect(multi.items.every((q: { priority: string; category: string }) => ["INTENSE", "IMPORTANT"].includes(q.priority) && q.category === "PROJECT")).toBe(true);
+    expect((await agent.get(`/api/career/prep/${plan.id}/questions/page`).query({ priority: "NOPE" })).status).toBe(400);
+    expect((await agent.get(`/api/career/prep/${plan.id}/questions/page`).query({ size: 500 })).status).toBe(400);
+    expect((await other.agent.get(`/api/career/prep/${plan.id}/questions/page`)).status).toBe(404);
+  });
+
+  it("every skill overview has a validated flow diagram; a missing one is retried, never cached broken", async () => {
+    const { agent } = await login();
+    const resumeId = await resumeFor(agent);
+    await planStatus(agent, (await agent.post("/api/career/prep").send({ resumeId, targetRole: "backend" })).body.data.id);
+    await prisma.skillGuide.deleteMany({ where: { key: "express" } });
+
+    fake.badGuides = 1;
+    const ok = await agent.get("/api/career/skills/guide").query({ name: "Express", lang: "en" });
+    expect(ok.status).toBe(200);
+    const flow = ok.body.data.content.flow;
+    expect(flow.kind).toBe("flow"); // inferred from its shape
+    expect(flow.steps.length).toBeGreaterThanOrEqual(3);
+    expect(flow.alt).toMatch(/How a request is handled/); // screen-reader text built from the labels
+    expect(fake.calls.filter((c) => c.task === "skill_guide").at(-1)!.user).toMatch(/no usable flow diagram/);
+
+    await prisma.skillGuide.deleteMany({ where: { key: "mongodb" } });
+    fake.badGuides = 2;
+    const failed = await agent.get("/api/career/skills/guide").query({ name: "MongoDB", lang: "en" });
+    expect(failed.status).toBe(502);
+    expect(await prisma.skillGuide.count({ where: { key: "mongodb" } })).toBe(0);
+    fake.badGuides = 0;
   });
 });

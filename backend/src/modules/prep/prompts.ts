@@ -43,7 +43,19 @@ export const prepPrompts = {
     };
   },
 
-  questions(input: { category: PrepCategory; count: number; profile: string; target: string; avoid: string[]; level: string; focus?: string[] }) {
+  questions(input: {
+    category: PrepCategory;
+    count: number;
+    profile: string;
+    target: string;
+    avoid: string[];
+    level: string;
+    focus?: string[];
+    /** The ladder stage this batch belongs to. */
+    stage?: { brief: string; min: number; max: number };
+    /** Questions from the candidate's earlier plans — this plan must ask different ones. */
+    previous?: string[];
+  }) {
     return {
       system: [
         "You are a senior technical interviewer at an Indian product company preparing ONE candidate for THEIR interview. You write the questions an interviewer who has read THIS resume is most likely to ask.",
@@ -54,7 +66,10 @@ export const prepPrompts = {
         "- Only about technologies, projects, claims and achievements in the candidate profile, or skills the target role/job requires. Never about unrelated technology.",
         "- Each question must be different from the others and from the 'already generated' list — not a rephrasing.",
         "- No yes/no questions ('Do you know X?'). Ask how/why/what-happens.",
-        `- Pitch them at the candidate's level (${input.level}); difficulty 1 fundamental, 2 practical, 3 deep technical, 4 scenario, 5 architecture. Spread difficulties.`,
+        `- The candidate is ${input.level}`,
+        input.stage
+          ? `- ${input.stage.brief} Every question's difficulty must be between ${input.stage.min} and ${input.stage.max} (1 fundamental, 2 practical, 3 deep technical, 4 scenario, 5 architecture).`
+          : "- Difficulty: 1 fundamental, 2 practical, 3 deep technical, 4 scenario, 5 architecture. Spread difficulties.",
         "- probability 0-1: how likely a real interviewer asks this exact line of questioning for this candidate (core-stack and high-risk resume claims ≥ 0.8; niche follow-ups ≤ 0.4). Be honest — not everything is 0.9.",
         "- followUpDepth 1-7: how many levels an interviewer could keep drilling (definition → understanding → implementation → debugging → trade-off → real-world → architecture).",
         "- why: one line on why THIS candidate will face it, citing their resume or the job (e.g. 'You list JWT auth in WhatsApp CRM').",
@@ -72,6 +87,7 @@ export const prepPrompts = {
         "CANDIDATE PROFILE (refs: P# project, E# experience, C# claim, A# achievement/certification):",
         fence("candidate_profile", input.profile),
         input.avoid.length ? `\nAlready generated (do not repeat or rephrase):\n${input.avoid.map((q) => `- ${q}`).join("\n")}` : "",
+        input.previous?.length ? `\nAlready asked in the candidate's previous plan — ask DIFFERENT questions (other aspects, other subtopics):\n${input.previous.map((q) => `- ${q}`).join("\n")}` : "",
       ].join("\n"),
     };
   },

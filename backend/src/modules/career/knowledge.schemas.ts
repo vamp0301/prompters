@@ -70,7 +70,7 @@ function withKind(v: unknown) {
   }
   return { ...o, kind };
 }
-const lenientDiagram = z.unknown().transform((v) => {
+export const lenientDiagram = z.unknown().transform((v) => {
   const r = diagramSchema.safeParse(withKind(v));
   return r.success ? r.data : undefined;
 });

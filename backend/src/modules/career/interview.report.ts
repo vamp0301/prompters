@@ -122,7 +122,7 @@ export async function buildReport(session: InterviewSession & { turns: Turn[] },
   const recommendedQuestions =
     plan && weakSkills.length
       ? await prisma.prepQuestion.findMany({
-          where: { planId: plan.id, OR: weakSkills.map((s) => ({ skill: { contains: s, mode: "insensitive" as const } })) },
+          where: { planId: plan.id, rank: { gt: 0 }, OR: weakSkills.map((s) => ({ skill: { contains: s, mode: "insensitive" as const } })) },
           orderBy: { rank: "asc" },
           take: 6,
           select: { id: true, question: true, skill: true, priority: true },

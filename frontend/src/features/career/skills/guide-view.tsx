@@ -12,6 +12,7 @@ import { useMe } from "@/features/auth/use-me";
 import { api } from "@/lib/api/client";
 import type { SkillGuide } from "@/lib/api/types";
 import { PRIORITY } from "@/features/career/prep/prep-shared";
+import { DiagramView } from "@/features/knowledge/diagram";
 import { friendlyError } from "@/features/career/shared";
 
 type Lang = SkillGuide["locale"];
@@ -108,6 +109,15 @@ export function GuideView({ name }: { name: string }) {
               </ul>
             </Section>
           </div>
+
+          {g.flow && (
+            <section aria-labelledby="skill-flow-h" className="space-y-2">
+              <h2 id="skill-flow-h" className="font-mono text-[11px] tracking-widest text-muted uppercase">
+                How it flows
+              </h2>
+              <DiagramView diagram={g.flow} />
+            </section>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Section title="How it works">

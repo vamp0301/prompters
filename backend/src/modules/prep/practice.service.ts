@@ -11,7 +11,7 @@ export const PRACTICE_STATUSES = ["NEW", "PRACTICED", "CONFIDENT"] as const;
 const CONFIDENT_SCORE = 70;
 
 async function ownedQuestion(userId: string, planId: string, questionId: string) {
-  const q = await prisma.prepQuestion.findFirst({ where: { id: questionId, planId, plan: { userId } } });
+  const q = await prisma.prepQuestion.findFirst({ where: { id: questionId, planId, rank: { gt: 0 }, plan: { userId } } });
   if (!q) throw notFound("Question");
   return q;
 }

@@ -5,8 +5,8 @@ import { contentTokens, jaccard, normalize, verbatimEvidence } from "./text.js";
 
 /**
  * Question-quality gate. Every generated question passes, in order:
- * schema → technical quality → duplicate → category/source → resume evidence →
- * skill mapping → difficulty. Nothing is saved unless it passes all of them.
+ * schema → technical quality → duplicate → asked before → category/source → resume evidence →
+ * skill mapping → difficulty (within the stage's band). Nothing is saved unless it passes all of them.
  */
 
 export type SourceType = "PROJECT" | "EXPERIENCE" | "CLAIM" | "ACHIEVEMENT" | "CERTIFICATION" | "ROLE" | "JOB" | "SKILL";
@@ -36,9 +36,11 @@ export interface ValidQuestion {
   hint: string;
   keyPoints: string[];
   followUps: string[];
+  /** Ladder stage the question was written for (0 when generated outside a stage). */
+  stage: number;
 }
 
-export type RejectReason = "schema" | "not_technical" | "malformed" | "duplicate" | "near_duplicate" | "no_source" | "not_anchored" | "unknown_skill";
+export type RejectReason = "schema" | "not_technical" | "malformed" | "duplicate" | "near_duplicate" | "asked_before" | "wrong_level" | "no_source" | "not_anchored" | "unknown_skill";
 
 export interface ValidationStats {
   generated: number;
@@ -58,6 +60,10 @@ export interface ValidationContext {
   accepted: { norm: string; tokens: Set<string> }[];
   /** What a question falls back to when it needs no resume anchor (the JD or target role). */
   fallbackSource: Source;
+  /** The ladder stage being written: difficulty is kept inside [min, max]. */
+  stage?: { stage: number; min: number; max: number };
+  /** Questions from the candidate's earlier plans for the same target: a regenerated plan asks new ones. */
+  previous?: { norm: string; tokens: Set<string> }[];
 }
 
 const REQUIRED_SOURCES: Partial<Record<PrepCategory, SourceType[]>> = {
@@ -71,13 +77,23 @@ const NON_TECHNICAL =
 const TRIVIAL = /^(do|did|have|are|is|can|were|would) you (know|use|used|familiar|heard|worked|aware|comfortable|like)\b/i;
 const QUESTION_FORM = /\?\s*$|^(explain|describe|walk|design|how|what|why|write|compare|implement|debug|suppose|imagine|given|tell|discuss|outline|differentiate|list|show|consider|if|when|which|where)\b/i;
 const DEFINITION = /^(what is|what are|define|what does)\b/i;
+/** Design/architecture prompts are never a Basics question. */
+const DESIGN = /^(design|architect|how would you (design|architect|scale))\b|\bdesign (a|an|the) (robust|scalable|system|architecture|service)/i;
+/** Two questions in one ("…? How…", "…, and how do you…") — a Basics question asks one thing. */
+const MULTI_PART = /\?.+\?|[,;]\s*and (how|why|what|when|which)\b/i;
+const BASICS_MAX_WORDS = 35;
 
 export const DUPLICATE_THRESHOLD = 0.6;
+/**
+ * Stricter for questions from the candidate's earlier plans: a regenerated plan should ask
+ * something different, so a close rewording of an old question counts as asked before.
+ */
+export const PREVIOUS_THRESHOLD = 0.45;
 
-export function isDuplicate(question: string, accepted: ValidationContext["accepted"]) {
+export function isDuplicate(question: string, accepted: ValidationContext["accepted"], threshold = DUPLICATE_THRESHOLD) {
   const norm = normalize(question);
   const tokens = contentTokens(question);
-  return accepted.some((a) => a.norm === norm || jaccard(a.tokens, tokens) >= DUPLICATE_THRESHOLD);
+  return accepted.some((a) => a.norm === norm || jaccard(a.tokens, tokens) >= threshold);
 }
 
 function anchored(question: string, source: Source) {
@@ -118,6 +134,10 @@ export function validateBatch(items: unknown[], ctx: ValidationContext) {
       reject("duplicate");
       continue;
     }
+    if (ctx.previous?.length && isDuplicate(question, ctx.previous, PREVIOUS_THRESHOLD)) {
+      reject("asked_before");
+      continue;
+    }
 
     // 4. Category / source: resume-anchored categories must point at a real project, claim or achievement.
     const ref = g.sourceRef?.trim().toUpperCase();
@@ -147,9 +167,21 @@ export function validateBatch(items: unknown[], ctx: ValidationContext) {
     }
 
     // 7. Difficulty: definition questions can't be architecture-level; follow-up depth ≥ difficulty.
+    //    Inside a stage, a definition can't be Advanced; a Basics question asks one short thing (no design,
+    //    no second question, at most 35 words);
+    //    otherwise the model's rating is kept within the stage's band.
     let difficulty = g.difficulty;
+    const basics = ctx.stage && ctx.stage.max <= 2;
+    if (ctx.stage && ((ctx.stage.min >= 4 && DEFINITION.test(question)) || (basics && (DESIGN.test(question) || MULTI_PART.test(question) || words > BASICS_MAX_WORDS)))) {
+      reject("wrong_level");
+      continue;
+    }
     if (DEFINITION.test(question) && difficulty > 2) {
       difficulty = 2;
+      stats.adjusted++;
+    }
+    if (ctx.stage && (difficulty < ctx.stage.min || difficulty > ctx.stage.max)) {
+      difficulty = Math.min(ctx.stage.max, Math.max(ctx.stage.min, difficulty));
       stats.adjusted++;
     }
     const followUpDepth = Math.min(7, Math.max(g.followUpDepth, difficulty));
@@ -173,6 +205,7 @@ export function validateBatch(items: unknown[], ctx: ValidationContext) {
       hint: g.hint,
       keyPoints: g.keyPoints.filter(Boolean),
       followUps: g.followUps.filter(Boolean),
+      stage: ctx.stage?.stage ?? 0,
     });
     stats.accepted++;
   }
