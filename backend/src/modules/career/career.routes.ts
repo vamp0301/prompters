@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { logEvent } from "../platform/events.js";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
 import { aiLimiter, careerAnswerLimiter, skillGuideLimiter } from "../../middleware/rate-limit.js";
@@ -80,6 +81,7 @@ export function careerRoutes() {
     await ensureAiInterviewEnabled(me.id);
     const body = parse(docSchema.extend({ label: z.string().max(120).optional() }), req.body);
     const resume = await createResume(me.id, body);
+    await logEvent(me.id, "resume_uploaded", { meta: { resumeId: resume.id } });
     res.status(201);
     return { id: resume.id, label: resume.label, parsed: resume.parsed, createdAt: resume.createdAt };
   }));

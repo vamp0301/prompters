@@ -22,6 +22,20 @@ import { QuestionDialog } from "./question-dialog";
 import { ResumeReader } from "./resume-reader";
 
 const PAGE_SIZE = 20;
+type SortOrder = "ladder" | "likely" | "personal";
+
+/** Why a question is high in "For you" order (from the personalization engine's reason codes). */
+const PERSONAL_REASON: Record<string, string> = {
+  weak_skill: "Weak skill",
+  interview_weakness: "Weak in interview",
+  in_job_description: "In the JD",
+  high_role_relevance: "Core for your role",
+  on_your_resume: "On your resume",
+  often_asked: "Often asked",
+  needs_retry: "Retry — scored low",
+  not_yet_practised: "Not practised",
+  matches_your_level: "Your level",
+};
 
 /** The difficulty ladder: each stage is written, checked and published before the next. */
 export const STAGE_INFO: Record<1 | 2 | 3, { label: string; range: string; copy: string }> = {
@@ -201,6 +215,15 @@ function QuestionCard({ q, onOpen }: { q: PrepQuestionItem; onOpen: () => void }
       >
         <p className="font-display text-[1.05rem] font-semibold leading-snug group-hover:text-accent">{q.question}</p>
         <p className="mt-2 line-clamp-2 text-xs text-muted">{q.why}</p>
+        {q.personal && q.personal.reasons.length > 0 && (
+          <ul className="mt-2 flex flex-wrap gap-1" aria-label="Why it's suggested for you">
+            {q.personal.reasons.slice(0, 3).map((r) => (
+              <li key={r} className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] text-accent">
+                {PERSONAL_REASON[r] ?? r}
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="mt-3">
           <QuestionBadges q={q} compact />
         </div>
@@ -324,7 +347,7 @@ function useDebounced<T>(value: T, ms: number) {
   return v;
 }
 
-type PageParams = { page: number; size: number; stage?: number; priority: string; category: string; skill: string; status: string; q: string; sort: "ladder" | "likely" };
+type PageParams = { page: number; size: number; stage?: number; priority: string; category: string; skill: string; status: string; q: string; sort: SortOrder };
 
 const pagePath = (planId: string, p: PageParams) => {
   const qs = new URLSearchParams();
@@ -348,9 +371,10 @@ function QuestionBrowser({ plan }: { plan: PrepPlanDetail }) {
   const [priorities, setPrioritiesRaw] = useState<PrepPriority[]>(() => (PRIORITY_ORDER.includes(params.get("priority") as PrepPriority) ? [params.get("priority") as PrepPriority] : []));
   const [categories, setCategoriesRaw] = useState<PrepCategory[]>(() => (PREP_CATEGORY_ORDER.includes(params.get("category") as PrepCategory) ? [params.get("category") as PrepCategory] : []));
   const [stage, setStageRaw] = useState<"all" | "1" | "2" | "3">("all");
-  const [skill, setSkillRaw] = useState("");
+  // Recommendations link here pre-filtered by skill (?skill=Caching).
+  const [skill, setSkillRaw] = useState(() => params.get("skill") ?? "");
   const [status, setStatusRaw] = useState<PrepPracticeStatus | "">("");
-  const [sort, setSortRaw] = useState<"ladder" | "likely">("ladder");
+  const [sort, setSortRaw] = useState<SortOrder>(() => (params.get("sort") === "personal" ? "personal" : "ladder"));
   const [search, setSearchRaw] = useState("");
   const setPriorities = resetting(setPrioritiesRaw);
   const setCategories = resetting(setCategoriesRaw);
@@ -466,9 +490,10 @@ function QuestionBrowser({ plan }: { plan: PrepPlanDetail }) {
               ]}
             />
             <Field label="Order" htmlFor={`${uid}-sort`} className="w-full sm:w-60">
-              <Select id={`${uid}-sort`} value={sort} onChange={(e) => setSort(e.target.value as "ladder" | "likely")}>
+              <Select id={`${uid}-sort`} value={sort} onChange={(e) => setSort(e.target.value as SortOrder)}>
                 <option value="ladder">Step by step (easy → hard)</option>
                 <option value="likely">Most likely to be asked</option>
+                <option value="personal">For you (weak spots first)</option>
               </Select>
             </Field>
           </div>

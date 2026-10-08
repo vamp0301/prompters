@@ -74,6 +74,10 @@ model User {
   prepAttempts       PrepAttempt[]
   prepPacks          PrepPack[]
   conceptProgress    ConceptProgress[]
+  skillStates        StudentSkillState[]
+  recommendations    Recommendation[]
+  recFeedback        RecommendationFeedback[]
+  mlPredictions      MLPrediction[]
 
   @@index([role])
   @@index([createdAt])
@@ -613,17 +617,25 @@ model ReadinessSnapshot {
   @@index([userId, createdAt])
 }
 
+/// The student event log (also the personalization "StudentEvent" store — no second events table).
 model LearningEvent {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String
-  topicId   String?
-  meta      Json?
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String
+  topicId    String?
+  meta       Json?
+  /// Normalized name for personalization: TOPIC_STARTED, QUIZ_COMPLETED, BUILD_FAILED…
+  eventType  String?
+  /// What the event is about (TOPIC, QUIZ_ATTEMPT, BUILD_TASK, PREP_QUESTION, INTERVIEW_SESSION…) and its id.
+  entityType String?
+  entityId   String?
+  createdAt  DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([type, createdAt])
+  @@index([userId, eventType, createdAt])
+  @@index([entityId])
 }
 
 model Achievement {
@@ -1108,4 +1120,132 @@ model SkillGuide {
   createdAt DateTime @default(now())
 
   @@unique([key, locale])
+}
+
+// ───────────────────────── Personalization engine ─────────────────────────
+
+/// A student's estimated state on one concept, from many signals (never one quiz).
+/// conceptId is namespaced: "topic:<slug>" (curriculum) or "skill:<canonical key>" (resume/job/interview skills).
+model StudentSkillState {
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conceptId       String
+  label           String
+  /// 0–1 estimate of how well the student knows it.
+  mastery         Float
+  /// 0–1: how much real evidence the estimate rests on.
+  confidence      Float
+  /// 0–1 chance it has been forgotten by now.
+  forgettingRisk  Float
+  attempts        Int       @default(0)
+  correctAttempts Int       @default(0)
+  averageTimeSec  Float?
+  lastSeen        DateTime?
+  nextReview      DateTime?
+  /// Evidence counts per source: { quiz, review, build, prep, interview, explain, resumePrior }.
+  signals         Json
+  modelVersion    String
+  updatedAt       DateTime  @updatedAt
+
+  @@id([userId, conceptId])
+  @@index([userId, mastery])
+  @@index([conceptId])
+}
+
+/// One "next best action" shown to a student, with the features and model that scored it.
+model Recommendation {
+  id           String                   @id @default(cuid())
+  userId       String
+  user         User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// LEARN_TOPIC | REVISE_TOPIC | REVISIT_PREREQUISITE | PRACTICE_SKILL | PRACTICE_QUESTION | FINISH_BUILD | LEARN_CONCEPT
+  action       String
+  /// TOPIC | SKILL | PREP_QUESTION | BUILD_TASK | CONCEPT
+  itemType     String
+  itemId       String
+  title        String
+  href         String
+  score        Float
+  rank         Int
+  /// easy | medium | hard
+  difficulty   String?
+  /// HIGH | MEDIUM | LOW
+  priority     String
+  /// Machine-readable reasons (low_mastery, high_role_relevance, interview_weakness…).
+  reasons      String[]
+  /// Feature values the score came from — for audit and as training rows.
+  features     Json
+  modelName    String
+  modelVersion String
+  /// ACTIVE | DONE | SUPERSEDED | EXPIRED | DISMISSED
+  status       String                   @default("ACTIVE")
+  /// SUCCESS | FAILURE, resolved from later activity (the training label).
+  outcome      String?
+  shownAt      DateTime?
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  expiresAt    DateTime
+  resolvedAt   DateTime?
+  feedback     RecommendationFeedback[]
+  predictions  MLPrediction[]
+
+  @@index([userId, status, rank])
+  @@index([itemType, itemId])
+  @@index([status, expiresAt])
+}
+
+model RecommendationFeedback {
+  id               String         @id @default(cuid())
+  recommendationId String
+  recommendation   Recommendation @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  userId           String
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SHOWN | ACCEPTED | IGNORED | STARTED | COMPLETED | SKIPPED | SUCCESSFUL | UNSUCCESSFUL
+  action           String
+  /// USER (the student did it) or SYSTEM (resolved from their activity).
+  source           String         @default("USER")
+  createdAt        DateTime       @default(now())
+
+  @@index([recommendationId, action])
+  @@index([userId, createdAt])
+}
+
+/// Every score or estimate a model produced, with the model that produced it.
+model MLPrediction {
+  id               String          @id @default(cuid())
+  userId           String
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recommendationId String?
+  recommendation   Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  modelName        String
+  modelVersion     String
+  /// RECOMMENDATION_SCORE | OPTIMAL_DIFFICULTY
+  target           String
+  prediction       Float
+  confidence       Float?
+  meta             Json?
+  createdAt        DateTime        @default(now())
+
+  @@index([userId, createdAt])
+  @@index([modelName, modelVersion])
+}
+
+/// One training attempt of the recommendation model, including attempts refused for lack of data.
+model MLTrainingRun {
+  id           String    @id @default(cuid())
+  modelName    String
+  modelVersion String?
+  /// TRAINED | INSUFFICIENT_DATA | FAILED
+  status       String
+  datasetSize  Int
+  positives    Int       @default(0)
+  negatives    Int       @default(0)
+  features     String[]  @default([])
+  /// ROC-AUC, PR-AUC, precision, recall, calibration… (null when not trained).
+  metrics      Json?
+  library      String?
+  notes        String?
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+
+  @@index([modelName, startedAt])
 }

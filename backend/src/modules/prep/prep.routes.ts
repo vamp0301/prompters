@@ -12,6 +12,7 @@ import { createPlan, generationUsage, retryPlan } from "./generation.service.js"
 import { deletePackFiles, PACK_LANGUAGES, PACK_VARIANTS, packFile, requestPack } from "./pack.service.js";
 import { practice, PRACTICE_STATUSES, questionDetail, setStatus } from "./practice.service.js";
 import { roleOptions, TARGET_ROLE_KEYS } from "./roles.js";
+import { personalScores } from "../personalization/top100.js";
 
 const QUESTION_LIST_FIELDS = {
   id: true, rank: true, category: true, priority: true, question: true, skill: true, probability: true, difficulty: true,
@@ -42,8 +43,8 @@ const pageQuery = z.object({
   skill: z.string().trim().max(80).optional(),
   status: z.enum(PRACTICE_STATUSES).optional(),
   q: z.string().trim().max(100).optional(),
-  /** ladder = the plan's order (easier first); likely = most likely to be asked first. */
-  sort: z.enum(["ladder", "likely"]).default("ladder"),
+  /** ladder = the plan's order (easier first); likely = most likely to be asked first; personal = re-ranked for this student. */
+  sort: z.enum(["ladder", "likely", "personal"]).default("ladder"),
 });
 
 /** Counts by value, in first-seen order. */
@@ -127,11 +128,21 @@ export function prepRoutes() {
       ...(f.status ? { status: f.status } : {}),
       ...(f.q ? { OR: (["question", "skill", "sourceLabel"] as const).map((k) => ({ [k]: { contains: f.q, mode: "insensitive" as const } })) } : {}),
     };
-    const [items, total, all] = await Promise.all([
-      prisma.prepQuestion.findMany({ where, orderBy: f.sort === "likely" ? [{ probability: "desc" }, { rank: "asc" }] : { rank: "asc" }, skip: (f.page - 1) * f.size, take: f.size, select: PAGE_FIELDS }),
+    const personal = f.sort === "personal";
+    const [rows, total, all] = await Promise.all([
+      // Personal order needs the whole (≤100) filtered list to rank; the others page in the database.
+      prisma.prepQuestion.findMany({ where, orderBy: f.sort === "likely" ? [{ probability: "desc" }, { rank: "asc" }] : { rank: "asc" }, ...(personal ? {} : { skip: (f.page - 1) * f.size, take: f.size }), select: PAGE_FIELDS }),
       prisma.prepQuestion.count({ where }),
       prisma.prepQuestion.findMany({ where: { planId: plan.id, rank: { gt: 0 } }, select: { stage: true, priority: true, category: true, status: true, skill: true } }),
     ]);
+    let items: (typeof rows[number] & { personal?: { score: number; reasons: string[] } })[] = rows;
+    if (personal) {
+      const scores = await personalScores(currentUser(req).id, rows);
+      items = rows
+        .map((q) => ({ ...q, personal: scores.get(q.id) }))
+        .sort((a, b) => (b.personal?.score ?? 0) - (a.personal?.score ?? 0) || a.rank - b.rank)
+        .slice((f.page - 1) * f.size, f.page * f.size);
+    }
     const skills = countBy(all, (q) => q.skill);
     return {
       items,

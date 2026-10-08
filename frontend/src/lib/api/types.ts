@@ -1279,7 +1279,10 @@ export type PrepStage = 0 | 1 | 2 | 3;
 export type PrepQuestionItem = Pick<
   PrepQuestion,
   "id" | "rank" | "stage" | "category" | "priority" | "question" | "skill" | "probability" | "difficulty" | "followUpDepth" | "why" | "sourceType" | "sourceLabel" | "status"
->;
+> & {
+  /** Present with sort=personal: this student's score and machine-readable reasons. */
+  personal?: { score: number; reasons: string[] };
+};
 
 export interface PrepQuestionPage {
   items: PrepQuestionItem[];
@@ -1514,4 +1517,60 @@ export interface ExplainResult {
   masteryScore: number;
   evaluation: { correctness: number; completeness: number; depth: number; clarity: number; covered: string[]; missing: string[]; incorrect: string[]; unnecessary: string[]; feedback: string };
   progress: { status: ConceptStatus; explainScore: number | null; explainAttempts: number };
+}
+
+// ───────────────────────── Personalization engine ─────────────────────────
+
+export interface PersonalRec {
+  id: string;
+  action: "LEARN_TOPIC" | "TAKE_QUIZ" | "REVISE_TOPIC" | "REVISIT_PREREQUISITE" | "PRACTICE_SKILL" | "PRACTICE_QUESTION" | "FINISH_BUILD" | "LEARN_CONCEPT";
+  actionLabel: string;
+  itemType: string;
+  itemId: string;
+  title: string;
+  subject: string;
+  href: string;
+  score: number;
+  rank: number;
+  priority: "HIGH" | "MEDIUM" | "LOW";
+  difficulty: "easy" | "medium" | "hard" | null;
+  reasons: { code: string; label: string }[];
+  /** Built from the reasons and real numbers — never model-written. */
+  why: string;
+  modelName: string;
+  modelVersion: string;
+}
+
+export interface PersonalSkillState {
+  conceptId: string;
+  label: string;
+  kind: "topic" | "skill";
+  mastery: number;
+  confidence: number;
+  forgettingRisk: number;
+  attempts: number;
+  correctAttempts: number;
+  lastSeen: string | null;
+  nextReview: string | null;
+  interviewAverage: number | null;
+  jobRelevance: number | null;
+}
+
+export interface PersonalEngine {
+  mode: "ml" | "baseline";
+  modelStatus: string;
+  modelName: string;
+  modelVersion: string;
+}
+
+export interface PersonalNext {
+  next: PersonalRec | null;
+  engine: PersonalEngine | null;
+  coldStart: boolean;
+  evidence: number;
+  difficulty: { level: "easy" | "medium" | "hard"; status: "learned" | "cold_start"; trend: "increase" | "decrease" | "hold"; confidence: number | null } | null;
+  skillGaps: PersonalSkillState[];
+  dueRevisions: PersonalSkillState[];
+  interviewWeaknesses: PersonalSkillState[];
+  recommendedPractice: PersonalRec[];
 }

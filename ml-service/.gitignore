@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+.pytest_cache/
+# Trained models are build artifacts produced from real data by train.py — never committed.
+models/*
+!models/.gitkeep

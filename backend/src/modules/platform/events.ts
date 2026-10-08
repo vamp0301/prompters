@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
+import { normalizeEvent } from "../personalization/events.js";
 
 export type EventType =
   | "signup"
@@ -36,12 +37,14 @@ export type EventType =
   | "prep_practice"
   | "prep_pack_requested"
   | "interview_started"
-  | "interview_completed";
+  | "interview_completed"
+  | "resume_uploaded";
 
 export async function logEvent(
   userId: string,
   type: EventType,
   opts: { topicId?: string | null; meta?: Prisma.InputJsonValue } = {},
 ) {
-  await prisma.learningEvent.create({ data: { userId, type, topicId: opts.topicId ?? null, meta: opts.meta } });
+  // Also stamped with the normalized personalization name and entity (see personalization/events.ts).
+  await prisma.learningEvent.create({ data: { userId, type, topicId: opts.topicId ?? null, meta: opts.meta, ...normalizeEvent(type, opts.topicId, opts.meta) } });
 }

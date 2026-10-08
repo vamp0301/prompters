@@ -9,6 +9,7 @@ import { workerAlive } from "../lib/heartbeat.js";
 import { redis } from "../lib/redis.js";
 import { logger } from "../lib/logger.js";
 import { loadUser, requireAuth } from "../middleware/auth.js";
+import { personalizationRoutes } from "../modules/personalization/personalization.routes.js";
 import { csrfGuard } from "../middleware/csrf.js";
 import { errorHandler, notFoundHandler } from "../middleware/error-handler.js";
 import { globalLimiter } from "../middleware/rate-limit.js";
@@ -83,6 +84,7 @@ export function createApp() {
   api.use("/profile", requireAuth, profileRoutes());
   api.use("/dashboard", requireAuth, dashboardRoutes());
   api.use("/readiness", requireAuth, readinessRoutes());
+  api.use("/personalization", requireAuth, personalizationRoutes());
   api.use("/journey", requireAuth, journeyRoutes());
   api.use("/build-tasks", requireAuth, buildRoutes());
   api.use("/projects", requireAuth, projectRoutes());
