@@ -146,7 +146,7 @@ export function careerRoutes() {
           language: z.enum(["hinglish", "en", "hi"]).optional(),
           durationMinutes: z.union([z.literal(15), z.literal(20), z.literal(30), z.literal(45)]).default(30),
           questionTarget: z.number().int().min(5).max(25).optional(),
-          consent: z.object({ recording: z.boolean(), integrity: z.boolean(), preparationOnly: z.boolean(), storeAudio: z.boolean().default(true) }),
+          consent: z.object({ analysis: z.boolean().optional(), recording: z.boolean().optional(), integrity: z.boolean(), preparationOnly: z.boolean(), storeAudio: z.boolean().default(true) }),
         })
         .refine((b) => !!b.matchId || (!!b.resumeId && !!b.targetRole), { message: "Choose a resume and a target role, or a job-match analysis.", path: ["targetRole"] }),
       req.body,
@@ -185,6 +185,10 @@ export function careerRoutes() {
   }));
 
   r.post("/sessions/:id/end", handler(async (req) => interview.endSession(currentUser(req).id, param(req, "id"))));
+  r.post("/sessions/:id/recording", handler(async (req) => {
+    const { allow } = parse(z.object({ allow: z.boolean() }), req.body);
+    return interview.setRecordingConsent(currentUser(req).id, param(req, "id"), allow);
+  }));
   r.post("/sessions/:id/pause", handler(async (req) => interview.pauseSession(currentUser(req).id, param(req, "id"))));
   r.post("/sessions/:id/resume", handler(async (req) => interview.resumeSession(currentUser(req).id, param(req, "id"))));
 

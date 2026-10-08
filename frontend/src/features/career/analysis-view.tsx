@@ -202,7 +202,7 @@ export function AnalysisView({ id }: { id: string }) {
         </CardBody>
       </Card>
 
-      <StartInterviewDialog open={startOpen} onClose={() => setStartOpen(false)} matchId={m.id} interviewer={status.data?.interviewer} />
+      <StartInterviewDialog open={startOpen} onClose={() => setStartOpen(false)} source={{ matchId: m.id }} interviewer={status.data?.interviewer} />
     </div>
   );
 }

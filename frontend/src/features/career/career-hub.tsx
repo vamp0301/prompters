@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowRight, BriefcaseBusiness, ChevronRight, FileText, Loader2, Mic, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,8 @@ import { ScoreHistoryChart } from "@/features/readiness/score-history-chart";
 import { DocumentForm } from "./document-form";
 import { PrepPlansCard, PrepStartCard } from "./prep/prep-start-card";
 import { AI_UNAVAILABLE_COPY, careerKeys, ConfirmButton, InlineError, ResultBadge, scoreTone } from "./shared";
+import { StartInterviewDialog } from "./start-interview-dialog";
+import { TARGET_ROLES } from "@/features/marketing/start-preparing";
 
 
 export function useCareerStatus() {
@@ -37,7 +39,9 @@ export function AiUnavailableNotice({ reason }: { reason?: "NO_PROVIDER" | "FEAT
 export function CareerHub() {
   const status = useCareerStatus();
   const disabled = !status.data?.available;
-  const [tab, setTab] = useState<"prep" | "match">("prep");
+  const params = useSearchParams();
+  const initial = params.get("tab");
+  const [tab, setTab] = useState<"prep" | "interview" | "match">(initial === "interview" || initial === "match" ? initial : "prep");
 
   return (
     <div className="space-y-6">
@@ -52,7 +56,8 @@ export function CareerHub() {
         onChange={setTab}
         items={[
           { value: "prep", label: "Top 100 prep" },
-          { value: "match", label: "Job match & interview" },
+          { value: "interview", label: "AI interview" },
+          { value: "match", label: "Job match" },
         ]}
       />
 
@@ -63,16 +68,20 @@ export function CareerHub() {
           <PrepStartCard disabled={disabled} />
           <PrepPlansCard />
         </div>
+      ) : tab === "interview" ? (
+        <div className="space-y-6">
+          <InterviewStartCard disabled={disabled} onNeedResume={() => setTab("match")} />
+          <SessionsCard />
+        </div>
       ) : (
         <div className="space-y-6">
-          <p className="text-sm text-muted">Match a resume to a real job description, then take a live technical interview with Manisha (conducted in English).</p>
+          <p className="text-sm text-muted">Match a resume to a real job description. From an analysis you can take an interview built around that exact job.</p>
           <div className="grid gap-4 lg:grid-cols-2">
             <ResumesCard disabled={disabled} />
             <JobsCard disabled={disabled} />
           </div>
           <AnalyseCard disabled={disabled} />
           <AnalysesCard />
-          <SessionsCard />
         </div>
       )}
     </div>
@@ -327,21 +336,84 @@ function AnalysesCard() {
   );
 }
 
+function InterviewStartCard({ disabled, onNeedResume }: { disabled: boolean; onNeedResume: () => void }) {
+  const uid = useId();
+  const status = useCareerStatus();
+  const { data: resumes, isLoading } = useQuery({ queryKey: careerKeys.resumes, queryFn: () => api.get<CareerResume[]>("/career/resumes") });
+  const [resumeId, setResumeId] = useState("");
+  const [role, setRole] = useState("fullstack");
+  const [open, setOpen] = useState(false);
+  const chosen = resumeId || resumes?.[0]?.id || "";
+  const roleLabel = TARGET_ROLES.find((r) => r.key === role)?.label ?? role;
+
+  return (
+    <Card className="border-accent/30">
+      <CardHeader
+        title={
+          <span className="inline-flex items-center gap-2">
+            <Mic className="size-4 text-accent" aria-hidden /> Interview with Manisha
+          </span>
+        }
+        description="A realistic technical interview built from your resume and target role — one question at a time, follow-ups on what you say, and a detailed report at the end. No job description needed."
+      />
+      <CardBody>
+        {isLoading ? (
+          <Skeleton className="h-16" />
+        ) : !resumes?.length ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <span className="text-muted">Add your resume first — Manisha asks about your own projects and claims.</span>
+            <Button variant="secondary" size="sm" onClick={onNeedResume}>
+              Add a resume
+            </Button>
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+            <Field label="Resume" htmlFor={`${uid}-resume`}>
+              <Select id={`${uid}-resume`} value={chosen} onChange={(e) => setResumeId(e.target.value)}>
+                {resumes.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Target role" htmlFor={`${uid}-role`}>
+              <Select id={`${uid}-role`} value={role} onChange={(e) => setRole(e.target.value)}>
+                {TARGET_ROLES.map((r) => (
+                  <option key={r.key} value={r.key}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Button onClick={() => setOpen(true)} disabled={disabled || !chosen}>
+              <Mic className="size-4" aria-hidden /> Set up interview
+            </Button>
+          </div>
+        )}
+      </CardBody>
+      {chosen && (
+        <StartInterviewDialog open={open} onClose={() => setOpen(false)} source={{ resumeId: chosen, targetRole: role, roleLabel }} interviewer={status.data?.interviewer} />
+      )}
+    </Card>
+  );
+}
+
 function SessionsCard() {
   const { data, error, isLoading, refetch } = useQuery({ queryKey: careerKeys.sessions, queryFn: () => api.get<CareerSessionItem[]>("/career/sessions") });
-  const completed = (data ?? []).filter((s) => s.status !== "IN_PROGRESS" && s.readinessScore !== null).reverse();
+  const completed = (data ?? []).filter((s) => s.status !== "IN_PROGRESS" && s.status !== "PAUSED" && s.readinessScore !== null).reverse();
   const points = completed.map((s) => ({ score: s.readinessScore!, createdAt: s.endedAt ?? s.startedAt }));
 
   return (
     <Card id="interviews" className="scroll-mt-20">
-      <CardHeader title="5 · My interviews" description="Every AI technical interview you've taken, with its readiness score." />
+      <CardHeader title="My interviews" description="Every AI technical interview you've taken. Compare how each dimension moves over time." />
       <CardBody className="space-y-4">
         {isLoading ? (
           <Skeleton className="h-32" />
         ) : error ? (
           <ErrorState error={error} retry={() => refetch()} />
         ) : !data?.length ? (
-          <EmptyState icon={<Mic className="size-4" />} title="No interviews yet" description="Run an analysis, then start an AI technical interview from it." />
+          <EmptyState icon={<Mic className="size-4" />} title="No interviews yet" description="Start one above for your target role, or from a job-match analysis." />
         ) : (
           <>
             {points.length > 0 && (
@@ -365,54 +437,74 @@ function SessionsCard() {
               </div>
             )}
             <div className="-mx-5 overflow-x-auto px-5">
-              <table className="w-full min-w-[520px] text-sm">
-                <caption className="sr-only">Interview history</caption>
+              <table className="w-full min-w-[900px] text-sm">
+                <caption className="sr-only">Interview history with scores by dimension</caption>
                 <thead>
                   <tr className="border-b border-border text-left text-xs text-muted">
                     <th scope="col" className="py-2 pr-3 font-medium">Date</th>
                     <th scope="col" className="py-2 pr-3 font-medium">Role</th>
-                    <th scope="col" className="py-2 pr-3 font-medium">Score</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Duration</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Status</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Overall</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Technical</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Projects</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Problem solving</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Communication</th>
                     <th scope="col" className="py-2 font-medium">Result</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {data.map((s) => (
-                    <tr key={s.id} className="hover:bg-surface-2/50">
-                      <td className="py-2.5 pr-3 font-mono text-xs whitespace-nowrap text-muted">{formatDate(s.startedAt)}</td>
-                      <td className="max-w-[220px] py-2.5 pr-3">
-                        {s.status === "IN_PROGRESS" ? (
-                          <span className="block truncate">{s.match.job.title}</span>
-                        ) : (
-                          <Link href={`/career/interview/${s.id}`} className="block truncate hover:text-accent">
-                            {s.match.job.title}
-                            {s.match.job.company && <span className="text-muted"> · {s.match.job.company}</span>}
-                          </Link>
-                        )}
-                      </td>
-                      <td className="py-2.5 pr-3">
-                        {s.readinessScore !== null ? (
-                          <div className="flex items-center gap-2">
-                            <span className="w-7 font-mono tabular-nums">{s.readinessScore}</span>
-                            <Progress value={s.readinessScore} tone={scoreTone(s.readinessScore)} className="w-14" label={`Readiness ${s.readinessScore}`} />
-                          </div>
-                        ) : (
-                          <span className="text-subtle">—</span>
-                        )}
-                      </td>
-                      <td className="py-2.5">
-                        {s.status === "IN_PROGRESS" ? (
-                          <Link href={`/career/live/${s.id}`} className={buttonClass("primary", "sm")}>
-                            Resume
-                          </Link>
-                        ) : (
-                          <Link href={`/career/interview/${s.id}`} className="inline-flex items-center gap-1" aria-label={`View report for ${s.match.job.title}`}>
-                            <ResultBadge result={s.result} status={s.status} />
-                            <ChevronRight className="size-3.5 text-subtle" aria-hidden />
-                          </Link>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {data.map((s) => {
+                    const live = s.status === "IN_PROGRESS" || s.status === "PAUSED";
+                    const d = s.dimensions;
+                    const cell = (v: number | null | undefined) => (v === null || v === undefined ? <span className="text-subtle">—</span> : <span className={`font-mono tabular-nums ${v >= 75 ? "text-accent" : v >= 55 ? "text-warn" : "text-danger"}`}>{v}</span>);
+                    return (
+                      <tr key={s.id} className="hover:bg-surface-2/50">
+                        <td className="py-2.5 pr-3 font-mono text-xs whitespace-nowrap text-muted">{formatDate(s.startedAt)}</td>
+                        <td className="max-w-[220px] py-2.5 pr-3">
+                          {live ? (
+                            <span className="block truncate">{s.role}</span>
+                          ) : (
+                            <Link href={`/career/interview/${s.id}`} className="block truncate hover:text-accent">
+                              {s.role}
+                              {s.match?.job.company && <span className="text-muted"> · {s.match.job.company}</span>}
+                            </Link>
+                          )}
+                          <span className="text-[11px] text-subtle">{s.difficulty === "HARD" ? "Hard" : "Standard"}{s.matchId ? " · job match" : " · role"}</span>
+                        </td>
+                        <td className="py-2.5 pr-3 font-mono text-xs whitespace-nowrap text-muted">{s.durationMinutes} min</td>
+                        <td className="py-2.5 pr-3 text-xs whitespace-nowrap">
+                          {({ IN_PROGRESS: "In progress", PAUSED: "Paused", COMPLETED: "Completed", ENDED_INTEGRITY: "Ended early", ABANDONED: "Not finished" } as Record<string, string>)[s.status] ?? s.status}
+                        </td>
+                        <td className="py-2.5 pr-3">
+                          {s.readinessScore !== null ? (
+                            <div className="flex items-center gap-2">
+                              <span className="w-7 font-mono tabular-nums">{s.readinessScore}</span>
+                              <Progress value={s.readinessScore} tone={scoreTone(s.readinessScore)} className="w-12" label={`Overall ${s.readinessScore}`} />
+                            </div>
+                          ) : (
+                            <span className="text-subtle">—</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 pr-3">{cell(d?.technical)}</td>
+                        <td className="py-2.5 pr-3">{cell(d?.projectUnderstanding)}</td>
+                        <td className="py-2.5 pr-3">{cell(d?.problemSolving)}</td>
+                        <td className="py-2.5 pr-3">{cell(d?.communication)}</td>
+                        <td className="py-2.5">
+                          {live ? (
+                            <Link href={`/career/live/${s.id}`} className={buttonClass("primary", "sm")}>
+                              {s.status === "PAUSED" ? "Continue" : "Resume"}
+                            </Link>
+                          ) : (
+                            <Link href={`/career/interview/${s.id}`} className="inline-flex items-center gap-1" aria-label={`View report for ${s.role}`}>
+                              <ResultBadge result={s.result} status={s.status} />
+                              <ChevronRight className="size-3.5 text-subtle" aria-hidden />
+                            </Link>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

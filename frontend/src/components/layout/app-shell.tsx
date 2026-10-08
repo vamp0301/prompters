@@ -107,7 +107,7 @@ function UserBlock() {
   const { data: me } = useMe();
   return (
     <div className="mt-auto flex items-center gap-2.5 border-t border-border px-2 pt-4">
-      <div className="grid size-[31px] shrink-0 place-items-center rounded-full bg-accent-2 font-mono text-[10px] font-medium uppercase text-white">{me?.name?.slice(0, 2) ?? "··"}</div>
+      <div className="grid size-[31px] shrink-0 place-items-center rounded-full bg-accent-2 font-mono text-[10px] font-medium uppercase text-ink-fg">{me?.name?.slice(0, 2) ?? "··"}</div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-[12px] font-bold">{me?.name ?? " "}</div>
         <div className="truncate text-[10px] text-muted">{me?.email ?? " "}</div>

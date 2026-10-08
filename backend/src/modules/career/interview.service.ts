@@ -58,8 +58,15 @@ export type InterviewIntegrityType = (typeof INTERVIEW_INTEGRITY_EVENTS)[number]
 const PROMPT_MANIPULATION = "PROMPT_MANIPULATION";
 const MANIPULATION_RE = /(ignore|disregard|forget)\s+(all\s+|your\s+|the\s+|previous\s+|prior\s+)*(instructions|rules|prompt)|system prompt|reveal (your|the) (instructions|prompt|rubric|scoring)|give me (the )?(correct )?answer|tell me the (correct )?answer|(give|award) (me )?(full|maximum|10\/10) marks|you are now|act as (an?|the) /i;
 
-/** recording = consent to recording + AI analysis (required); storeAudio = keep answer audio afterwards (optional). */
-type Consent = { recording: boolean; integrity: boolean; preparationOnly: boolean; storeAudio?: boolean; at: string };
+/**
+ * analysis = consent to AI analysis of the answers (required). Audio recording is separate and optional:
+ * recordAudio is the candidate's in-interview choice ("Allow recording" / "Continue without recording").
+ * Older clients sent recording=true to mean analysis + recording, with storeAudio to keep the audio.
+ */
+type Consent = { analysis?: boolean; recording?: boolean; integrity: boolean; preparationOnly: boolean; storeAudio?: boolean; recordAudio?: boolean; recordAudioAt?: string; at: string };
+const analysisConsented = (c: Pick<Consent, "analysis" | "recording">) => c.analysis ?? c.recording === true;
+/** Audio is kept only when the candidate explicitly allowed it. */
+export const audioAllowed = (c: Consent) => (c.recordAudio !== undefined ? c.recordAudio : c.analysis === undefined && c.recording === true && c.storeAudio !== false);
 type CodeResult = { passed: number; total: number; review?: CodeReview; tests?: { name: string; passed: boolean; hidden: boolean }[] };
 
 /** Interviews are conducted strictly in English (questions, Manisha's voice, expected answers). */
@@ -281,7 +288,7 @@ export interface StartInput {
 
 export async function startSession(userId: string, input: StartInput) {
   requireAI();
-  if (!input.consent.recording || !input.consent.integrity || !input.consent.preparationOnly) throw badRequest("Please accept all three consent statements to start the interview.");
+  if (!analysisConsented(input.consent) || !input.consent.integrity || !input.consent.preparationOnly) throw badRequest("Please accept all three consent statements to start the interview.");
 
   const active = await prisma.interviewSession.findFirst({ where: { userId, status: { in: ["IN_PROGRESS", "PAUSED"] } }, include: sessionInclude });
   if (active && !(await expireIfNeeded(active))) {
@@ -392,6 +399,8 @@ async function sessionView(session: FullSession) {
     job: titleOf(session),
     matchId: session.matchId,
     resumeId: session.resumeId,
+    /** null = not asked yet; the room asks before the first voice answer. */
+    recordAudio: (session.consent as Consent).recordAudio ?? ((session.consent as Consent).analysis === undefined ? audioAllowed(session.consent as Consent) : null),
     progress: { answered: answered.length, target: session.questionTarget },
     current: live ? await currentTurnView(session.turns) : null,
     readinessScore: session.readinessScore,
@@ -421,6 +430,15 @@ async function sessionView(session: FullSession) {
           score: turnScore(t),
         })),
   };
+}
+
+/** The candidate's answer to "Your answer audio may be recorded…" — recording is never required. */
+export async function setRecordingConsent(userId: string, sessionId: string, allow: boolean) {
+  const session = await ownedSession(userId, sessionId);
+  if (session.status !== "IN_PROGRESS" && session.status !== "PAUSED") throw conflict("This interview has ended.");
+  const consent = { ...(session.consent as Consent), recordAudio: allow, recordAudioAt: new Date().toISOString() };
+  await prisma.interviewSession.update({ where: { id: sessionId }, data: { consent: consent as unknown as Prisma.InputJsonValue } });
+  return { recordAudio: allow };
 }
 
 export async function pauseSession(userId: string, sessionId: string) {
@@ -512,7 +530,7 @@ export async function submitAnswer(userId: string, sessionId: string, input: Ans
 
   // Audio is stored only with recording consent; never required.
   let audioKey: string | null = turn.audioKey;
-  if (input.audioBase64 && consent.recording && consent.storeAudio !== false) {
+  if (input.audioBase64 && audioAllowed(consent)) {
     const audio = Buffer.from(input.audioBase64, "base64");
     const mime = (input.audioMime ?? "audio/webm").split(";")[0];
     if (audio.length > MAX_AUDIO_BYTES || !AUDIO_TYPES.includes(mime)) {
@@ -663,7 +681,7 @@ export async function interviewHistory(userId: string) {
     where: { userId },
     orderBy: { startedAt: "desc" },
     select: {
-      id: true, status: true, readinessScore: true, result: true, startedAt: true, endedAt: true, matchId: true, targetRole: true, difficulty: true, report: true,
+      id: true, status: true, readinessScore: true, result: true, startedAt: true, endedAt: true, matchId: true, targetRole: true, difficulty: true, durationMinutes: true, report: true,
       match: { select: { job: { select: { title: true, company: true } } } },
     },
   });

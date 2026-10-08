@@ -252,6 +252,37 @@ describe("Manisha: privacy", () => {
   });
 });
 
+describe("Manisha: recording consent", () => {
+  it("recording is optional: declining never blocks the interview, and audio is kept only after 'Allow recording'", async () => {
+    const { agent } = await login();
+    const { matchId } = await matchFor(agent);
+    // AI analysis consent is required; recording is not asked for up front.
+    expect((await agent.post("/api/career/sessions").send({ matchId, durationMinutes: 15, consent: { integrity: true, preparationOnly: true } })).status).toBe(400);
+    const start = await agent.post("/api/career/sessions").send({ matchId, durationMinutes: 15, consent: { analysis: true, integrity: true, preparationOnly: true } });
+    expect(start.status).toBe(201);
+    const sessionId = start.body.data.id;
+    expect((await agent.get(`/api/career/sessions/${sessionId}`)).body.data.recordAudio).toBeNull();
+    const audio = Buffer.from("fake-opus-audio").toString("base64");
+
+    // Not decided yet → audio is not stored, the answer still counts.
+    let res = await agent.post(`/api/career/sessions/${sessionId}/answer`).send({ turnId: start.body.data.current.id, answerText: GOOD, audioBase64: audio, audioMime: "audio/webm" });
+    expect(res.status).toBe(200);
+    // Declined → still not stored.
+    expect((await agent.post(`/api/career/sessions/${sessionId}/recording`).send({ allow: false })).body.data.recordAudio).toBe(false);
+    res = await agent.post(`/api/career/sessions/${sessionId}/answer`).send({ turnId: res.body.data.current.id, answerText: GOOD, audioBase64: audio, audioMime: "audio/webm" });
+    expect(res.status).toBe(200);
+    // Allowed → stored from now on.
+    await agent.post(`/api/career/sessions/${sessionId}/recording`).send({ allow: true });
+    res = await agent.post(`/api/career/sessions/${sessionId}/answer`).send({ turnId: res.body.data.current.id, answerText: GOOD, audioBase64: audio, audioMime: "audio/webm" });
+    expect(res.status).toBe(200);
+    const turns = await prisma.interviewTurn.findMany({ where: { sessionId }, orderBy: { order: "asc" } });
+    expect(turns.slice(0, 3).map((t) => !!t.audioKey)).toEqual([false, false, true]);
+    // Someone else can't change my recording choice.
+    const other = await login();
+    expect((await other.agent.post(`/api/career/sessions/${sessionId}/recording`).send({ allow: true })).status).toBe(404);
+  });
+});
+
 describe("Manisha: report, readiness and retakes", () => {
   it("the report is built only from this interview; a retake focuses on earlier gaps without repeating questions", async () => {
     const { agent } = await login();
@@ -290,5 +321,6 @@ describe("Manisha: report, readiness and retakes", () => {
     expect(history[1].id).toBe(sessionId);
     expect(history[1].dimensions.overall).toBe(s.readinessScore);
     expect(history[1].role).toBeTruthy();
+    expect(history[1].durationMinutes).toBe(20);
   });
 });

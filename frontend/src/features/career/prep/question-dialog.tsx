@@ -52,7 +52,7 @@ function QuestionBody({ planId, questionId }: { planId: string; questionId: stri
   const [result, setResult] = useState<PrepPracticeResult | null>(null);
   const append = useCallback((t: string) => setAnswer((a) => (a ? `${a} ${t}` : t)), []);
   // Practice mirrors the interview: English only.
-  const dictation = useDictation("en", append);
+  const dictation = useDictation(append);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: careerKeys.prepQuestions(planId) });
@@ -63,7 +63,7 @@ function QuestionBody({ planId, questionId }: { planId: string; questionId: stri
     meta: { silent: true },
     mutationFn: () => api.post<PrepPracticeResult>(`/career/prep/${planId}/questions/${questionId}/attempts`, { answer: [answer, dictation.interim].filter(Boolean).join(" ").trim() }),
     onSuccess: (r) => {
-      dictation.stop();
+      void dictation.stop();
       setResult(r);
       setShowKeyPoints(true);
       refresh();
@@ -147,13 +147,21 @@ function QuestionBody({ planId, questionId }: { planId: string; questionId: stri
             disabled={submit.isPending}
           />
         </Field>
-        {dictation.error && <p className="text-xs text-warn">{dictation.error}</p>}
+        {dictation.error && (
+          <p className="text-xs text-warn">
+            {dictation.error === "mic-denied"
+              ? "Microphone permission is blocked — allow it from the site settings next to the address bar, or type your answer."
+              : dictation.error === "no-microphone"
+                ? "No microphone found — you can type your answer."
+                : "Voice input stopped working — you can type your answer."}
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => submit.mutate()} loading={submit.isPending} disabled={answer.trim().length < 10}>
             Get feedback
           </Button>
           {dictation.supported && (
-            <Button variant="secondary" onClick={() => (dictation.listening ? dictation.stop() : dictation.start())} aria-pressed={dictation.listening} disabled={submit.isPending}>
+            <Button variant="secondary" onClick={() => (dictation.listening ? void dictation.stop() : dictation.start())} aria-pressed={dictation.listening} disabled={submit.isPending}>
               {dictation.listening ? <MicOff className="size-4" aria-hidden /> : <Mic className="size-4" aria-hidden />}
               {dictation.listening ? "Stop" : "Speak"}
             </Button>

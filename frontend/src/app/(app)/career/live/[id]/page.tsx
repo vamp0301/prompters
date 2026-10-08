@@ -16,7 +16,7 @@ export default function LiveInterviewPage({ params }: { params: Promise<{ id: st
     staleTime: Infinity,
     refetchOnMount: "always",
   });
-  const finished = data && data.status !== "IN_PROGRESS";
+  const finished = data && data.status !== "IN_PROGRESS" && data.status !== "PAUSED";
   useEffect(() => {
     if (finished) router.replace(`/career/interview/${id}`);
   }, [finished, id, router]);

@@ -103,6 +103,8 @@ export class FakeAI implements AIProvider {
           throw new Error("simulated provider timeout");
         }
         const answer = user.match(/<candidate_answer>\n([\s\S]*?)\n<\/candidate_answer>/)?.[1] ?? "";
+        // Lets browser tests trigger an AI outage from the UI.
+        if (answer.includes("[simulate-ai-failure]")) throw new Error("simulated provider timeout");
         if (/\[unclear\]/i.test(answer)) {
           return JSON.stringify({ correctness: 0, completeness: 0, depth: 0, reasoning: 0, understanding: 0, practical: 0, communication: 0, verdict: "UNCLEAR", conceptsMentioned: [], missingConcepts: [], unsupportedClaims: [], followUp: { needed: false }, lead: "Okay." });
         }

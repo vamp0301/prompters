@@ -27,13 +27,33 @@ const SIGNAL_LABEL: Record<string, string> = {
   PASTE: "Clipboard actions (paste)",
   CUT: "Clipboard actions (cut)",
   LARGE_PASTE: "Large paste",
+  PROMPT_MANIPULATION: "Attempts to change the interviewer's instructions",
 };
+
+const AREA_LABEL: Record<string, string> = {
+  RESUME: "Resume & background",
+  PROJECTS: "Projects",
+  FUNDAMENTALS: "Core fundamentals",
+  ROLE: "Role-specific",
+  PRACTICAL: "Practical engineering",
+  PROBLEM_SOLVING: "Problem solving",
+  SYSTEM_DESIGN: "System design",
+};
+
+const DIMENSIONS: { key: "technical" | "projectUnderstanding" | "problemSolving" | "practicalEngineering" | "communication"; label: string }[] = [
+  { key: "technical", label: "Technical" },
+  { key: "projectUnderstanding", label: "Project understanding" },
+  { key: "problemSolving", label: "Problem solving" },
+  { key: "practicalEngineering", label: "Practical engineering" },
+  { key: "communication", label: "Communication" },
+];
 
 const VERDICT: Record<string, { label: string; tone: "accent" | "warn" | "danger" | "neutral" }> = {
   CORRECT: { label: "Correct", tone: "accent" },
   PARTIAL: { label: "Partially correct", tone: "warn" },
   INCORRECT: { label: "Incorrect", tone: "danger" },
   NO_ANSWER: { label: "No answer", tone: "neutral" },
+  UNCLEAR: { label: "Unclear transcript — not scored", tone: "neutral" },
   SKIPPED: { label: "Skipped", tone: "neutral" },
 };
 
@@ -75,13 +95,14 @@ export function ReportView({ id }: { id: string }) {
     </Link>
   );
 
-  if (s.status === "IN_PROGRESS") {
+  const retakeHref = s.matchId ? `/career/analysis/${s.matchId}` : "/career?tab=interview";
+  if (s.status === "IN_PROGRESS" || s.status === "PAUSED") {
     return (
       <div className="space-y-6">
         {back}
-        <PageHeader eyebrow="Technical interview" title="Interview in progress" description={`${s.job.title} · ${s.progress.answered}/${s.progress.target} answered. The report is ready once the interview ends.`} />
+        <PageHeader eyebrow="Technical interview" title={s.status === "PAUSED" ? "Interview paused" : "Interview in progress"} description={`${s.job.title} · ${s.progress.answered}/${s.progress.target} answered. The report is ready once the interview ends.`} />
         <Link href={`/career/live/${s.id}`} className={buttonClass("primary", "md")}>
-          Return to the interview <ArrowRight className="size-4" aria-hidden />
+          {s.status === "PAUSED" ? "Continue the interview" : "Return to the interview"} <ArrowRight className="size-4" aria-hidden />
         </Link>
       </div>
     );
@@ -96,10 +117,10 @@ export function ReportView({ id }: { id: string }) {
       <PageHeader
         eyebrow="Technical Readiness Report"
         title={s.job.title}
-        description={`${s.job.company ? `${s.job.company} · ` : ""}${formatDate(s.startedAt)} · ${LANGUAGE_LABEL[s.language] ?? s.language} · with ${s.interviewer.name}`}
+        description={`${s.job.company ? `${s.job.company} · ` : ""}${formatDate(s.startedAt)} · ${s.difficulty === "HARD" ? "Hard · " : ""}${LANGUAGE_LABEL[s.language] ?? s.language} · with ${s.interviewer.name}`}
         actions={
-          <Link href={`/career/analysis/${s.matchId}`} className={buttonClass("secondary", "md")}>
-            <RotateCcw className="size-4" aria-hidden /> Retake interview
+          <Link href={retakeHref} className={buttonClass("secondary", "md")}>
+            <RotateCcw className="size-4" aria-hidden /> Start another interview
           </Link>
         }
       />
@@ -162,8 +183,8 @@ export function ReportView({ id }: { id: string }) {
       )}
 
       <div className="flex justify-center">
-        <Link href={`/career/analysis/${s.matchId}`} className={buttonClass("primary", "lg")}>
-          <RotateCcw className="size-4" aria-hidden /> Retake interview
+        <Link href={retakeHref} className={buttonClass("primary", "lg")}>
+          <RotateCcw className="size-4" aria-hidden /> Start another interview
         </Link>
       </div>
     </div>
@@ -209,20 +230,213 @@ function ReportBody({ report }: { report: InterviewReport }) {
             <Stat label="Incorrect" value={<span className="text-danger">{report.counts.incorrect}</span>} />
             <Stat label="Skipped" value={report.counts.skipped} />
           </div>
-          <Card>
-            <CardBody className="flex items-center gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-xs text-muted">Communication</div>
-                <div className="font-mono text-lg font-semibold tabular-nums">{report.communication !== null ? `${report.communication}/100` : "—"}</div>
-              </div>
-              {report.communication !== null && <Progress value={report.communication} tone={scoreTone(report.communication)} className="w-1/2" label="Communication score" />}
-            </CardBody>
-          </Card>
+          {report.dimensions ? (
+            <Card>
+              <CardBody className="space-y-2.5">
+                {DIMENSIONS.map((d) => {
+                  const v = report.dimensions![d.key];
+                  return (
+                    <div key={d.key} className="grid grid-cols-[150px_1fr_44px] items-center gap-3 text-sm">
+                      <span className="text-muted">{d.label}</span>
+                      {v === null ? <span className="text-xs text-subtle">Not tested in this interview</span> : <Progress value={v} tone={scoreTone(v)} label={`${d.label} ${v}`} />}
+                      <span className="text-right font-mono tabular-nums">{v ?? "—"}</span>
+                    </div>
+                  );
+                })}
+              </CardBody>
+            </Card>
+          ) : (
+            <Card>
+              <CardBody className="flex items-center gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs text-muted">Communication</div>
+                  <div className="font-mono text-lg font-semibold tabular-nums">{report.communication !== null ? `${report.communication}/100` : "—"}</div>
+                </div>
+                {report.communication !== null && <Progress value={report.communication} tone={scoreTone(report.communication)} className="w-1/2" label="Communication score" />}
+              </CardBody>
+            </Card>
+          )}
           <p className="text-xs text-subtle">
-            {report.counts.total} question{report.counts.total === 1 ? "" : "s"} answered in total.
+            {report.counts.total} question{report.counts.total === 1 ? "" : "s"} scored{report.counts.unclear ? ` · ${report.counts.unclear} not scored (unclear transcript, asked again)` : ""}.
           </p>
         </div>
       </div>
+
+      {(report.assessment || report.readinessChange) && (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          {report.assessment && (
+            <Card>
+              <CardHeader title="Interviewer's assessment" description="Written from your answers in this interview only." />
+              <CardBody>
+                <p className="text-[15px] leading-relaxed">{report.assessment}</p>
+              </CardBody>
+            </Card>
+          )}
+          {report.readinessChange && (
+            <Card>
+              <CardHeader title="Your readiness" description="Your Prompters Readiness Score before and after this interview." />
+              <CardBody className="space-y-3">
+                <div className="flex items-baseline gap-3 font-mono tabular-nums">
+                  <span className="text-2xl text-muted">{report.readinessChange.before ?? "—"}</span>
+                  <ArrowRight className="size-4 text-subtle" aria-hidden />
+                  <span className="text-3xl text-text">{report.readinessChange.after ?? "—"}</span>
+                  {report.readinessChange.before !== null && report.readinessChange.after !== null && (
+                    <span className={cn("text-sm", report.readinessChange.after - report.readinessChange.before >= 0 ? "text-accent" : "text-danger")}>
+                      {report.readinessChange.after - report.readinessChange.before >= 0 ? "+" : ""}
+                      {report.readinessChange.after - report.readinessChange.before}
+                    </span>
+                  )}
+                </div>
+                {report.readinessChange.improved.length > 0 && (
+                  <p className="text-sm">
+                    <span className="text-accent">Improved since your last interview:</span> {report.readinessChange.improved.join(", ")}
+                  </p>
+                )}
+                {report.readinessChange.declined.length > 0 && (
+                  <p className="text-sm">
+                    <span className="text-warn">Needs work:</span> {report.readinessChange.declined.join(", ")}
+                  </p>
+                )}
+              </CardBody>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {!!report.coverage?.length && (
+        <Card>
+          <CardHeader title="What this interview covered" description="The plan Manisha followed so no single topic took over, and how you did in each area." />
+          <CardBody className="grid gap-x-8 gap-y-3 sm:grid-cols-2">
+            {report.coverage.map((c) => (
+              <div key={c.area} className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 text-sm">
+                <span>{c.label}</span>
+                <span className="font-mono text-xs text-muted tabular-nums">
+                  {c.asked}/{c.planned} asked · {c.score ?? "—"}
+                </span>
+                {c.score !== null && <Progress value={c.score} tone={scoreTone(c.score)} className="col-span-2" label={`${c.label} ${c.score}`} />}
+              </div>
+            ))}
+          </CardBody>
+        </Card>
+      )}
+
+      {(!!report.strongQuestions?.length || !!report.needsWork?.length) && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader title="Answered strongly" />
+            <CardBody>
+              {report.strongQuestions?.length ? (
+                <ul className="space-y-2.5 text-sm">
+                  {report.strongQuestions.map((q) => (
+                    <li key={q.question} className="flex gap-2">
+                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
+                      <span>
+                        {q.question} <span className="font-mono text-xs text-muted">· {q.score}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted">No answer reached a strong score this time.</p>
+              )}
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader title="Needs improvement" />
+            <CardBody>
+              {report.needsWork?.length ? (
+                <ul className="space-y-2.5 text-sm">
+                  {report.needsWork.map((q) => (
+                    <li key={q.question} className="flex gap-2">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden />
+                      <span>
+                        {q.question} <span className="font-mono text-xs text-muted">· {q.score}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted">Nothing scored below the bar.</p>
+              )}
+            </CardBody>
+          </Card>
+        </div>
+      )}
+
+      {(!!report.claimsDefended?.length || !!report.claimsToStrengthen?.length) && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader title="Resume claims you defended" />
+            <CardBody>
+              {report.claimsDefended?.length ? (
+                <ul className="space-y-2 text-sm">
+                  {report.claimsDefended.map((c) => (
+                    <li key={c} className="flex gap-2"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />&ldquo;{c}&rdquo;</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted">None of the claims that came up were fully defended yet.</p>
+              )}
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader title="Claims to explain better" description="An interviewer will dig into these — rehearse what you did and why." />
+            <CardBody>
+              {report.claimsToStrengthen?.length ? (
+                <ul className="space-y-2 text-sm">
+                  {report.claimsToStrengthen.map((c) => (
+                    <li key={c} className="flex gap-2"><AlertTriangle className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden />&ldquo;{c}&rdquo;</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted">No claim needed a stronger explanation.</p>
+              )}
+            </CardBody>
+          </Card>
+        </div>
+      )}
+
+      {!!report.revisionPlan?.length && (
+        <Card>
+          <CardHeader title="Your revision plan" description="Built from the gaps in this interview, one focus a day." />
+          <CardBody>
+            <ol className="divide-y divide-border">
+              {report.revisionPlan.map((d) => (
+                <li key={d.day} className="grid grid-cols-[64px_1fr] gap-3 py-3 text-sm sm:grid-cols-[80px_200px_1fr]">
+                  <span className="eyebrow pt-0.5 text-accent">Day {d.day}</span>
+                  <span className="font-semibold">{d.focus}</span>
+                  <span className="col-span-2 text-muted sm:col-span-1">{d.detail}</span>
+                </li>
+              ))}
+            </ol>
+          </CardBody>
+        </Card>
+      )}
+
+      {!!report.recommendedQuestions?.length && (
+        <Card>
+          <CardHeader
+            title="Practise these from your Top 100"
+            action={
+              <Link href={`/career/prep/${report.recommendedQuestions[0].planId}`} className="text-xs text-muted hover:text-text">
+                Open plan →
+              </Link>
+            }
+          />
+          <CardBody>
+            <ul className="space-y-2 text-sm">
+              {report.recommendedQuestions.map((q) => (
+                <li key={q.id} className="flex flex-wrap items-baseline gap-2">
+                  <Badge>{q.skill}</Badge>
+                  <Link href={`/career/prep/${q.planId}`} className="hover:text-accent">
+                    {q.question}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      )}
 
       {report.areas.length > 0 && (
         <Card>
@@ -353,7 +567,9 @@ function TurnReview({ sessionId, turn: t, index }: { sessionId: string; turn: In
           <p className="line-clamp-2 text-sm">{t.kind === "CODING" ? t.question.split("\n")[0].replace(/\*\*/g, "") : t.question}</p>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {t.kind === "FOLLOW_UP" && <Badge tone="info">Follow-up</Badge>}
+            {t.kind === "REPEAT" && <Badge tone="info">Asked again</Badge>}
             {t.kind === "CODING" && <Badge tone="info">Coding</Badge>}
+            {t.kind === "PROBLEM" && <Badge tone="info">Problem solving</Badge>}
             <Badge tone={v.tone}>{v.label}</Badge>
             <Badge>{t.skill}</Badge>
           </div>
@@ -365,7 +581,7 @@ function TurnReview({ sessionId, turn: t, index }: { sessionId: string; turn: In
         <div className="space-y-2">
           {t.kind === "CODING" ? <Markdown className="text-sm">{t.question}</Markdown> : <p>{t.question}</p>}
           <div className="flex flex-wrap gap-1.5">
-            <Badge tone={CATEGORY[t.category]?.tone ?? "neutral"}>{CATEGORY[t.category]?.label ?? t.category}</Badge>
+            {t.area ? <Badge>{AREA_LABEL[t.area] ?? t.area}</Badge> : <Badge tone={(CATEGORY as Record<string, { label: string; tone: "neutral" }>)[t.category]?.tone ?? "neutral"}>{(CATEGORY as Record<string, { label: string }>)[t.category]?.label ?? t.category}</Badge>}
             <Badge tone="info">{LEVEL_LABEL[t.level] ?? `L${t.level}`}</Badge>
             {t.durationSec !== null && <Badge>{Math.round(t.durationSec)}s</Badge>}
           </div>

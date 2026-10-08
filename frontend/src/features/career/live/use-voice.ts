@@ -1,117 +1,108 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { InterviewLanguage } from "@/lib/api/types";
+import { addChunk, chooseVoice, speakable, type VoiceChoice } from "./voice-core";
 
-/** Strips Markdown so the voice doesn't read out asterisks and backticks. */
-export function speakable(text: string) {
-  return text
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/[#*_>]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+export { speakable } from "./voice-core";
 
-const speechLang = (l: InterviewLanguage) => (l === "hi" ? "hi-IN" : "en-IN");
+const LANG = "en-IN";
 
-// Browsers don't expose a voice's gender, so we rank by known voice names across macOS/iOS, Windows/Edge, Chrome and Android.
-const FEMALE_VOICES = /\b(tara|veena|isha|lekha|kiyara|neerja|swara|heera|kalpana|aarohi|ananya|priya|aditi|raveena|kajal|sangeeta|vani|pallavi|shruti|samantha|karen|moira|tessa|serena|victoria|allison|ava|susan|zira|hazel|catherine|libby|sonia|natasha|jenny|aria|female|frau|femme)\b|google हिन्दी|google us english|google uk english female/i;
-const MALE_VOICES = /\b(aman|rishi|prabhat|madhur|ravi|hemant|kunal|aarav|daniel|alex|fred|aaron|arthur|oliver|thomas|george|david|mark|james|guy|ryan|tom|male)\b/i;
+export type SpeakResult = { ok: true } | { ok: false; reason: "muted" | "unsupported" | "error" | "empty" };
 
 /**
- * Manisha is a female Indian interviewer. Ranking:
- *   1. female + Indian locale matching the interview (en-IN / hi-IN)
- *   2. female + any Indian locale (an Indian accent matters more than the language: a hi-IN voice reads Hinglish naturally)
- *   3. female + same language elsewhere (e.g. en-US)
- * Known male voices are never chosen.
+ * Manisha's voice through the browser's own speech synthesis. Voices often load after the page
+ * (Chrome fires `voiceschanged` later), so the choice is re-made whenever the list changes.
  */
-export type VoiceQuality = "female-indian" | "female" | "fallback";
-
-export function pickFemaleVoice(voices: SpeechSynthesisVoice[], lang: string): { voice: SpeechSynthesisVoice; female: boolean; quality: VoiceQuality } | null {
-  const norm = (v: SpeechSynthesisVoice) => v.lang.replace("_", "-").toLowerCase();
-  const score = (v: SpeechSynthesisVoice) => {
-    const female = FEMALE_VOICES.test(v.name);
-    const male = MALE_VOICES.test(v.name) && !female;
-    if (male) return -1;
-    let s = female ? 100 : 10;
-    if (norm(v) === lang.toLowerCase()) s += 50;
-    else if (/-in$/.test(norm(v))) s += 30;
-    else if (norm(v).startsWith(lang.slice(0, 2).toLowerCase())) s += 10;
-    if (/natural|neural|enhanced|premium|online/i.test(v.name)) s += 5;
-    return s;
-  };
-  const ranked = voices.map((v) => ({ v, s: score(v) })).filter((x) => x.s >= 0).sort((a, b) => b.s - a.s);
-  const best = ranked[0]?.v ?? null;
-  if (!best) return null;
-  const female = FEMALE_VOICES.test(best.name);
-  return { voice: best, female, quality: female && /-in$/.test(norm(best)) ? "female-indian" : female ? "female" : "fallback" };
-}
-
-/**
- * Manisha's voice via the browser's built-in speech synthesis.
- * Prefers an Indian voice (en-IN / hi-IN); falls back to any English voice.
- */
-export function useManishaVoice(language: InterviewLanguage) {
+export function useManishaVoice() {
+  const supported = typeof window !== "undefined" && !!window.speechSynthesis && typeof SpeechSynthesisUtterance !== "undefined";
+  const [choice, setChoice] = useState<VoiceChoice<SpeechSynthesisVoice> | null>(null);
+  const [voicesLoaded, setVoicesLoaded] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [voiceName, setVoiceName] = useState<string | null>(null);
-  const [quality, setQuality] = useState<VoiceQuality>("fallback");
-  const supported = typeof window !== "undefined" && "speechSynthesis" in window;
-  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
-  const femaleRef = useRef(true);
+  const [muted, setMutedState] = useState(false);
+  const mutedRef = useRef(false);
+  const settleRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!supported) return;
+    const synth = window.speechSynthesis;
     const pick = () => {
-      const chosen = pickFemaleVoice(window.speechSynthesis.getVoices(), speechLang(language));
-      voiceRef.current = chosen?.voice ?? null;
-      femaleRef.current = !!chosen?.female;
-      setVoiceName(chosen ? `${chosen.voice.name} (${chosen.voice.lang})` : null);
-      setQuality(chosen?.quality ?? "fallback");
+      const voices = synth.getVoices() ?? [];
+      setVoicesLoaded(voices.length > 0);
+      setChoice(chooseVoice(voices));
     };
     pick();
-    window.speechSynthesis.addEventListener("voiceschanged", pick);
-    return () => window.speechSynthesis.removeEventListener("voiceschanged", pick);
-  }, [language, supported]);
-
-  const speak = useCallback(
-    (text: string) =>
-      new Promise<void>((resolve) => {
-        if (!supported || muted || !text.trim()) return resolve();
-        window.speechSynthesis.cancel();
-        const clean = speakable(text);
-        const u = new SpeechSynthesisUtterance(clean);
-        // Some browsers never fire `end` (no voices, background tab): never let the interview hang on it.
-        let settled = false;
-        const settle = () => {
-          if (settled) return;
-          settled = true;
-          setSpeaking(false);
-          resolve();
-        };
-        setTimeout(settle, 2500 + clean.split(/\s+/).length * 450);
-        u.lang = speechLang(language);
-        if (voiceRef.current) u.voice = voiceRef.current;
-        u.rate = 0.97;
-        // Known female voice: natural pitch. Unknown/neutral fallback: lift the pitch so Manisha still sounds female.
-        u.pitch = femaleRef.current ? 1.05 : 1.3;
-        u.onstart = () => setSpeaking(true);
-        u.onend = u.onerror = settle;
-        window.speechSynthesis.speak(u);
-      }),
-    [language, muted, supported],
-  );
+    synth.addEventListener?.("voiceschanged", pick);
+    // Some browsers never fire voiceschanged; check once more shortly after load.
+    const t = window.setTimeout(pick, 1500);
+    return () => {
+      synth.removeEventListener?.("voiceschanged", pick);
+      window.clearTimeout(t);
+      synth.cancel();
+    };
+  }, [supported]);
 
   const stop = useCallback(() => {
     if (supported) window.speechSynthesis.cancel();
+    settleRef.current?.();
     setSpeaking(false);
   }, [supported]);
 
-  return { speak, stop, speaking, muted, setMuted, supported, voiceName, quality };
+  const speak = useCallback(
+    (text: string) =>
+      new Promise<SpeakResult>((resolve) => {
+        if (!supported) return resolve({ ok: false, reason: "unsupported" });
+        if (mutedRef.current) return resolve({ ok: false, reason: "muted" });
+        const clean = speakable(text);
+        if (!clean) return resolve({ ok: false, reason: "empty" });
+        const synth = window.speechSynthesis;
+        synth.cancel();
+        let done = false;
+        const settle = (r: SpeakResult = { ok: true }) => {
+          if (done) return;
+          done = true;
+          window.clearTimeout(timer);
+          settleRef.current = null;
+          setSpeaking(false);
+          resolve(r);
+        };
+        settleRef.current = () => settle({ ok: false, reason: "muted" });
+        // Some engines never fire `end` (no voices, background tab): never let the interview hang on it.
+        const timer = window.setTimeout(() => settle(), 3000 + clean.split(/\s+/).length * 450);
+        try {
+          const u = new SpeechSynthesisUtterance(clean);
+          u.lang = choice?.voice.lang ?? LANG;
+          try {
+            if (choice) u.voice = choice.voice;
+          } catch {
+            /* the browser rejected the voice object — the language alone still picks a sensible voice */
+          }
+          u.rate = 0.97;
+          u.onstart = () => setSpeaking(true);
+          u.onend = () => settle();
+          u.onerror = (e) => settle(e.error === "interrupted" || e.error === "canceled" ? { ok: true } : { ok: false, reason: "error" });
+          synth.speak(u);
+        } catch {
+          settle({ ok: false, reason: "error" });
+        }
+      }),
+    [supported, choice],
+  );
+
+  /** Mutes Manisha only — the microphone, speech-to-text and typing are unaffected. */
+  const setMuted = useCallback(
+    (m: boolean) => {
+      mutedRef.current = m;
+      setMutedState(m);
+      if (m) stop();
+    },
+    [stop],
+  );
+
+  return { supported, voicesLoaded, choice, speaking, muted, setMuted, speak, stop };
 }
 
-type RecognitionCtor = new () => {
+// ───────────────────────── speech-to-text ─────────────────────────
+
+interface RecognitionLike {
   lang: string;
   continuous: boolean;
   interimResults: boolean;
@@ -120,25 +111,32 @@ type RecognitionCtor = new () => {
   onerror: ((e: { error: string }) => void) | null;
   start(): void;
   stop(): void;
-};
+  abort?(): void;
+}
+type RecognitionCtor = new () => RecognitionLike;
 
-function recognitionCtor(): RecognitionCtor | null {
+export function recognitionCtor(): RecognitionCtor | null {
   if (typeof window === "undefined") return null;
   const w = window as unknown as { SpeechRecognition?: RecognitionCtor; webkitSpeechRecognition?: RecognitionCtor };
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+export type DictationError = "mic-denied" | "no-microphone" | "network" | "failed";
+
 /**
- * Live speech-to-text (Chrome / Edge). Final phrases are appended through
- * `onFinal`; the candidate can always edit or type instead.
+ * Live speech-to-text (Chrome / Edge). Exactly one recognition session can run; a denied microphone
+ * is remembered and never re-requested in a loop. `stop()` resolves once the last words are in.
  */
-export function useDictation(language: InterviewLanguage, onFinal: (text: string) => void) {
+export function useDictation(onFinal: (text: string) => void) {
+  const supported = !!recognitionCtor();
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const supported = !!recognitionCtor();
-  const recRef = useRef<InstanceType<RecognitionCtor> | null>(null);
+  const [error, setError] = useState<DictationError | null>(null);
+  const recRef = useRef<RecognitionLike | null>(null);
   const wantRef = useRef(false);
+  const blockedRef = useRef(false);
+  const endedRef = useRef<(() => void) | null>(null);
+  const restartsRef = useRef<number[]>([]);
   const onFinalRef = useRef(onFinal);
   useEffect(() => {
     onFinalRef.current = onFinal;
@@ -146,9 +144,10 @@ export function useDictation(language: InterviewLanguage, onFinal: (text: string
 
   const start = useCallback(() => {
     const Ctor = recognitionCtor();
-    if (!Ctor) return;
+    if (!Ctor || blockedRef.current) return false;
+    if (recRef.current) return true; // already running — never two sessions
     const rec = new Ctor();
-    rec.lang = speechLang(language);
+    rec.lang = LANG;
     rec.continuous = true;
     rec.interimResults = true;
     rec.onresult = (e) => {
@@ -161,83 +160,226 @@ export function useDictation(language: InterviewLanguage, onFinal: (text: string
       setInterim(live);
     };
     rec.onerror = (e) => {
-      if (e.error === "not-allowed") setError("Microphone access was blocked — you can type your answer instead.");
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        blockedRef.current = true;
+        wantRef.current = false;
+        setError("mic-denied");
+      } else if (e.error === "audio-capture") {
+        wantRef.current = false;
+        setError("no-microphone");
+      } else if (e.error === "network") {
+        wantRef.current = false;
+        setError("network");
+      }
+      // "no-speech" and "aborted" are normal: silence is not an error.
     };
-    // Chrome stops recognition after silence; restart while we still want it.
     rec.onend = () => {
-      if (wantRef.current) {
-        try {
-          rec.start();
-        } catch {
-          /* already started */
+      // Chrome ends recognition after a pause in speech; carry on while the candidate is still answering.
+      if (wantRef.current && recRef.current === rec) {
+        // Guard against a recogniser that ends instantly over and over (a tight restart loop).
+        const now = Date.now();
+        restartsRef.current = [...restartsRef.current.filter((t) => now - t < 3000), now];
+        if (restartsRef.current.length > 5) {
+          wantRef.current = false;
+          setError("failed");
+        } else {
+          try {
+            rec.start();
+            return;
+          } catch {
+            /* fall through and finish */
+          }
         }
-      } else setListening(false);
+      }
+      if (recRef.current === rec) recRef.current = null;
+      setListening(false);
+      setInterim("");
+      endedRef.current?.();
+      endedRef.current = null;
     };
     recRef.current = rec;
     wantRef.current = true;
+    setError(null);
     try {
       rec.start();
       setListening(true);
+      return true;
     } catch {
-      setListening(false);
+      recRef.current = null;
+      wantRef.current = false;
+      setError("failed");
+      return false;
     }
-  }, [language]);
-
-  const stop = useCallback(() => {
-    wantRef.current = false;
-    recRef.current?.stop();
-    setInterim("");
-    setListening(false);
   }, []);
 
-  useEffect(() => () => {
-    wantRef.current = false;
-    recRef.current?.stop();
-  }, []);
+  /** Stops listening; resolves when the recogniser has delivered its last words (or after 1.5 s). */
+  const stop = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        wantRef.current = false;
+        const rec = recRef.current;
+        if (!rec) {
+          setListening(false);
+          return resolve();
+        }
+        const t = window.setTimeout(() => {
+          if (recRef.current === rec) recRef.current = null;
+          setListening(false);
+          setInterim("");
+          endedRef.current = null;
+          resolve();
+        }, 1500);
+        endedRef.current = () => {
+          window.clearTimeout(t);
+          resolve();
+        };
+        try {
+          rec.stop();
+        } catch {
+          rec.onend?.();
+        }
+      }),
+    [],
+  );
 
-  return { start, stop, listening, interim, supported, error };
+  // Clean up on unmount: no recogniser may outlive the interview room.
+  useEffect(
+    () => () => {
+      wantRef.current = false;
+      const rec = recRef.current;
+      recRef.current = null;
+      if (rec) {
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        try {
+          (rec.abort ?? rec.stop).call(rec);
+        } catch {
+          /* already stopped */
+        }
+      }
+    },
+    [],
+  );
+
+  return { supported, listening, interim, error, blocked: error === "mic-denied", start, stop };
 }
 
-/** Records one answer from the microphone stream as compressed audio. */
-export function useAnswerRecorder(stream: MediaStream | null) {
+// ───────────────────────── answer recording ─────────────────────────
+
+export type RecordedAudio = { base64: string; mime: string } | null;
+
+/**
+ * Records answers only after the candidate allowed it. The microphone stream is opened on first use
+ * and released on unmount. Recordings over the 4 MB limit are dropped — never cut short and uploaded.
+ */
+export function useAnswerRecorder() {
+  const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const totalRef = useRef(0);
+  const overRef = useRef(false);
   const [recording, setRecording] = useState(false);
+  const [overLimit, setOverLimit] = useState(false);
+  const supported = typeof window !== "undefined" && typeof MediaRecorder !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
-  const start = useCallback(() => {
-    if (!stream || typeof MediaRecorder === "undefined") return;
+  /** Starts recording; resolves false when the microphone isn't available (the answer still works). */
+  const start = useCallback(async (): Promise<"recording" | "denied" | "unavailable"> => {
+    if (!supported) return "unavailable";
+    if (recorderRef.current?.state === "recording") return "recording";
+    try {
+      streamRef.current ??= await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch (e) {
+      return e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "SecurityError") ? "denied" : "unavailable";
+    }
     const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find((m) => MediaRecorder.isTypeSupported(m));
-    const rec = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 32000 });
+    const rec = new MediaRecorder(streamRef.current, { mimeType: mime, audioBitsPerSecond: 32000 });
     chunksRef.current = [];
-    rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
+    totalRef.current = 0;
+    overRef.current = false;
+    setOverLimit(false);
+    rec.ondataavailable = (e) => {
+      if (!e.data.size || overRef.current) return;
+      const r = addChunk(totalRef.current, e.data.size);
+      totalRef.current = r.total;
+      if (r.overLimit) {
+        overRef.current = true;
+        chunksRef.current = [];
+        setOverLimit(true);
+        if (rec.state !== "inactive") rec.stop();
+        return;
+      }
+      chunksRef.current.push(e.data);
+    };
     rec.start(1000);
     recorderRef.current = rec;
     setRecording(true);
-  }, [stream]);
+    return "recording";
+  }, [supported]);
 
-  const pause = useCallback(() => recorderRef.current?.state === "recording" && recorderRef.current.pause(), []);
-  const resume = useCallback(() => recorderRef.current?.state === "paused" && recorderRef.current.resume(), []);
-
-  /** Stops and returns base64 audio, or null if nothing was recorded. */
+  /** Stops and returns the audio, or null when nothing (or too much) was recorded. */
   const finish = useCallback(
     () =>
-      new Promise<{ base64: string; mime: string } | null>((resolve) => {
+      new Promise<RecordedAudio>((resolve) => {
         const rec = recorderRef.current;
-        if (!rec || rec.state === "inactive") return resolve(null);
-        rec.onstop = async () => {
+        recorderRef.current = null;
+        const done = async () => {
           setRecording(false);
-          const blob = new Blob(chunksRef.current, { type: rec.mimeType });
-          recorderRef.current = null;
+          if (overRef.current || !chunksRef.current.length) return resolve(null);
+          const blob = new Blob(chunksRef.current, { type: rec?.mimeType || "audio/webm" });
+          chunksRef.current = [];
           if (!blob.size || blob.size > 4 * 1024 * 1024) return resolve(null);
           const buf = new Uint8Array(await blob.arrayBuffer());
           let bin = "";
           for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-          resolve({ base64: btoa(bin), mime: rec.mimeType });
+          resolve({ base64: btoa(bin), mime: rec?.mimeType || "audio/webm" });
         };
+        if (!rec || rec.state === "inactive") return void done();
+        rec.onstop = () => void done();
         rec.stop();
       }),
     [],
   );
 
-  return { start, pause, resume, finish, recording };
+  /** Throws the current recording away (e.g. "Try again"). */
+  const discard = useCallback(() => {
+    const rec = recorderRef.current;
+    recorderRef.current = null;
+    chunksRef.current = [];
+    if (rec && rec.state !== "inactive") {
+      rec.onstop = null;
+      rec.stop();
+    }
+    setRecording(false);
+  }, []);
+
+  useEffect(
+    () => () => {
+      const rec = recorderRef.current;
+      if (rec && rec.state !== "inactive") {
+        rec.ondataavailable = null;
+        rec.onstop = null;
+        rec.stop();
+      }
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    },
+    [],
+  );
+
+  return { supported, recording, overLimit, start, finish, discard };
+}
+
+/** Microphone status for the setup screen, without prompting: available / blocked / not found / unknown. */
+export async function microphoneStatus(): Promise<"available" | "blocked" | "missing" | "unknown"> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices) return "missing";
+  try {
+    const p = await navigator.permissions?.query({ name: "microphone" as PermissionName });
+    if (p?.state === "denied") return "blocked";
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    if (!devices.some((d) => d.kind === "audioinput")) return "missing";
+    return p?.state === "granted" || p?.state === "prompt" ? "available" : "unknown";
+  } catch {
+    return "unknown";
+  }
 }

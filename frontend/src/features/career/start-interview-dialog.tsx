@@ -14,39 +14,42 @@ import { useCodeExecution } from "@/features/auth/use-me";
 
 const FALLBACK: Interviewer = { name: "Manisha", role: "Senior Technical Interviewer", company: "Prompters", tone: "Professional, calm, neutral, technical", thinkingSeconds: 30, answerSeconds: 120, codingSeconds: 900 };
 
-export function StartInterviewDialog({ open, onClose, matchId, interviewer }: { open: boolean; onClose: () => void; matchId: string; interviewer?: Interviewer }) {
+/** Where the questions come from: a job-match analysis, or the resume + a target role. */
+export type InterviewSource = { matchId: string } | { resumeId: string; targetRole: string; roleLabel: string };
+
+export function StartInterviewDialog({ open, onClose, source, interviewer }: { open: boolean; onClose: () => void; source: InterviewSource; interviewer?: Interviewer }) {
   return (
     <Dialog open={open} onClose={onClose} title="Start AI Technical Interview" className="max-w-xl">
       {/* Mounted only while open, so the form state starts fresh each time. */}
-      <StartForm matchId={matchId} interviewer={interviewer ?? FALLBACK} onCancel={onClose} />
+      <StartForm source={source} interviewer={interviewer ?? FALLBACK} onCancel={onClose} />
     </Dialog>
   );
 }
 
-function StartForm({ matchId, interviewer, onCancel }: { matchId: string; interviewer: Interviewer; onCancel: () => void }) {
+function StartForm({ source, interviewer, onCancel }: { source: InterviewSource; interviewer: Interviewer; onCancel: () => void }) {
   const uid = useId();
   const router = useRouter();
   const qc = useQueryClient();
   const codingOn = useCodeExecution();
   const [duration, setDuration] = useState(30);
-  const [questions, setQuestions] = useState(15);
-  const [recording, setRecording] = useState(false);
+  const [difficulty, setDifficulty] = useState<"STANDARD" | "HARD">("STANDARD");
+  const [analysis, setAnalysis] = useState(false);
   const [integrity, setIntegrity] = useState(false);
   const [preparationOnly, setPreparationOnly] = useState(false);
-  const [storeAudio, setStoreAudio] = useState(true);
 
   const start = useMutation({
     meta: { silent: true },
     mutationFn: () =>
       api.post<StartInterviewResponse>("/career/sessions", {
-        matchId,
+        ...("matchId" in source ? { matchId: source.matchId } : { resumeId: source.resumeId, targetRole: source.targetRole }),
+        difficulty,
         durationMinutes: duration,
-        questionTarget: questions,
-        consent: { recording, integrity, preparationOnly, storeAudio },
+        // Audio recording is asked separately inside the interview, before the first voice answer.
+        consent: { analysis, integrity, preparationOnly },
       }),
     onSuccess: (s) => {
       qc.invalidateQueries({ queryKey: careerKeys.sessions });
-      qc.invalidateQueries({ queryKey: careerKeys.analysis(matchId) });
+      if ("matchId" in source) qc.invalidateQueries({ queryKey: careerKeys.analysis(source.matchId) });
       router.push(`/career/live/${s.id}`);
     },
   });
@@ -56,7 +59,7 @@ function StartForm({ matchId, interviewer, onCancel }: { matchId: string; interv
     err instanceof ApiError && err.code === "INTERVIEW_IN_PROGRESS" && err.details && typeof err.details === "object" && "sessionId" in err.details
       ? String((err.details as { sessionId: unknown }).sessionId)
       : null;
-  const allConsent = recording && integrity && preparationOnly;
+  const allConsent = analysis && integrity && preparationOnly;
   const answerMin = Math.round(interviewer.answerSeconds / 60);
 
   return (
@@ -75,27 +78,26 @@ function StartForm({ matchId, interviewer, onCancel }: { matchId: string; interv
           <div className="font-medium">
             {interviewer.name} <span className="text-muted">· {interviewer.role}</span>
           </div>
-          <div className="text-xs text-muted">Company simulation: {interviewer.company} · calm, professional</div>
+          <div className="text-xs text-muted">
+            {"matchId" in source ? "Questions from your resume and this job description" : `${source.roleLabel} interview, built from your resume`} · calm, professional
+          </div>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Duration" htmlFor={`${uid}-dur`}>
+        <Field label="Duration" htmlFor={`${uid}-dur`} hint={`About ${({ 15: 8, 30: 14, 45: 20 } as Record<number, number>)[duration]} questions, including follow-ups.`}>
           <Select id={`${uid}-dur`} value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
-            {[20, 30, 45].map((m) => (
+            {[15, 30, 45].map((m) => (
               <option key={m} value={m}>
                 {m} minutes
               </option>
             ))}
           </Select>
         </Field>
-        <Field label="Questions" htmlFor={`${uid}-q`}>
-          <Select id={`${uid}-q`} value={questions} onChange={(e) => setQuestions(Number(e.target.value))}>
-            {[10, 15, 20].map((n) => (
-              <option key={n} value={n}>
-                {n} questions
-              </option>
-            ))}
+        <Field label="Difficulty" htmlFor={`${uid}-diff`} hint={difficulty === "HARD" ? "Starts deeper; expect more scenario and design questions." : "Starts practical, then adapts to your answers."}>
+          <Select id={`${uid}-diff`} value={difficulty} onChange={(e) => setDifficulty(e.target.value as "STANDARD" | "HARD")}>
+            <option value="STANDARD">Standard</option>
+            <option value="HARD">Hard</option>
           </Select>
         </Field>
       </div>
@@ -109,7 +111,9 @@ function StartForm({ matchId, interviewer, onCancel }: { matchId: string; interv
           <li>
             <span className="font-mono">{interviewer.thinkingSeconds}s</span> thinking time, then about <span className="font-mono">{answerMin} min</span> to answer each question.
           </li>
-          <li>{codingOn ? "Up to 2 coding questions, plus follow-ups based on what you say." : "Spoken technical questions and follow-ups based on what you say (coding questions are turned off on this server for now)."}</li>
+          <li>One question at a time, with follow-ups based on what you actually say. Manisha won&apos;t give hints or answers during the interview — feedback comes in the report.</li>
+          <li>{codingOn ? "Problem-solving questions use a code editor with tests." : "Problem-solving questions ask you to explain your approach, pseudocode and complexity — no code is run."}</li>
+          <li>You can pause and continue later (within a day). If Manisha can&apos;t process an answer, it&apos;s saved and you can retry.</li>
           <li>Screen sharing is required. If it stops 3 times, the interview ends.</li>
           <li>Tab switches, fullscreen exits and clipboard actions are logged as integrity signals.</li>
           <li>Eye contact is not tracked or scored.</li>
@@ -118,18 +122,15 @@ function StartForm({ matchId, interviewer, onCancel }: { matchId: string; interv
 
       <fieldset className="space-y-2">
         <legend className="mb-1.5 text-xs font-medium uppercase tracking-wider text-muted">Consent (required)</legend>
-        <Check checked={recording} onChange={setRecording} label="I consent to recording and AI analysis of this interview." />
+        <Check checked={analysis} onChange={setAnalysis} label="I consent to AI analysis of my answers in this interview." />
         <Check checked={integrity} onChange={setIntegrity} label="I understand that integrity signals may be recorded." />
         <Check checked={preparationOnly} onChange={setPreparationOnly} label="I understand that the technical-readiness report is a preparation assessment and not an automated hiring decision." />
       </fieldset>
 
-      <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3">
-        <input type="checkbox" role="switch" checked={storeAudio} onChange={(e) => setStoreAudio(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
-        <span className="text-xs text-muted">
-          <span className="block text-sm text-text">Save my answer audio so I can replay it</span>
-          Deleted automatically after 30 days; you can delete it any time.
-        </span>
-      </label>
+      <p className="rounded-lg border border-border bg-surface-2/50 p-3 text-xs text-muted">
+        <span className="block text-sm text-text">Voice is optional</span>
+        You can answer by voice or type every answer. Before your first voice answer, Manisha asks whether your answer audio may be recorded — you can continue without recording. Recordings are deleted after 30 days.
+      </p>
 
       {inProgressId ? (
         <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn">

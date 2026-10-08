@@ -997,6 +997,7 @@ export interface Interviewer {
   tone: string;
   thinkingSeconds: number;
   answerSeconds: number;
+  problemSeconds?: number;
   codingSeconds: number;
 }
 
@@ -1033,18 +1034,34 @@ export interface JobMatchDetail {
   sessions: { id: string; status: InterviewStatus; readinessScore: number | null; result: string | null; startedAt: string }[];
 }
 
-export type InterviewStatus = "IN_PROGRESS" | "COMPLETED" | "ENDED_INTEGRITY" | "ABANDONED";
+export type InterviewStatus = "IN_PROGRESS" | "PAUSED" | "COMPLETED" | "ENDED_INTEGRITY" | "ABANDONED";
+/** QUESTION = main question · FOLLOW_UP = probe on the last answer · REPEAT = asked again (unclear transcript)
+ *  CODING = editor + tests · PROBLEM = explain-your-approach problem (code execution off). */
+export type InterviewTurnKind = "QUESTION" | "FOLLOW_UP" | "REPEAT" | "CODING" | "PROBLEM";
+export type InterviewArea = "RESUME" | "PROJECTS" | "FUNDAMENTALS" | "ROLE" | "PRACTICAL" | "PROBLEM_SOLVING" | "SYSTEM_DESIGN";
+export type InterviewDifficulty = "STANDARD" | "HARD";
+export interface InterviewDimensions {
+  overall: number | null;
+  technical: number | null;
+  projectUnderstanding: number | null;
+  problemSolving: number | null;
+  practicalEngineering: number | null;
+  communication: number | null;
+}
 
 export interface InterviewTurnView {
   id: string;
   order: number;
-  kind: "QUESTION" | "FOLLOW_UP" | "CODING";
+  kind: InterviewTurnKind;
   lead: string | null;
   question: string;
   skill: string;
-  category: QuestionCategory;
+  category: string;
+  area: InterviewArea | null;
   level: number;
   answered: boolean;
+  /** An answer saved before it could be evaluated (restored after a refresh or failed attempt). */
+  savedAnswer: string | null;
   coding: {
     functionName: string;
     starter: { javascript: string; python: string };
@@ -1058,8 +1075,19 @@ export interface InterviewReport {
   readiness: number;
   result: { key: "INTERVIEW_READY" | "NEEDS_IMPROVEMENT" | "NOT_YET_READY"; label: string };
   insufficientEvidence: boolean;
-  counts: { total: number; correct: number; partial: number; incorrect: number; skipped: number };
+  counts: { total: number; correct: number; partial: number; incorrect: number; skipped: number; unclear?: number };
   communication: number | null;
+  /** Added with the Manisha upgrade; older reports don't have the fields below. */
+  dimensions?: InterviewDimensions;
+  coverage?: { area: InterviewArea; label: string; planned: number; asked: number; score: number | null }[];
+  strongQuestions?: { question: string; skill: string; score: number }[];
+  needsWork?: { question: string; skill: string; score: number }[];
+  claimsDefended?: string[];
+  claimsToStrengthen?: string[];
+  assessment?: string;
+  recommendedQuestions?: { id: string; planId: string; question: string; skill: string; priority: string }[];
+  revisionPlan?: { day: number; focus: string; detail: string }[];
+  readinessChange?: { before: number | null; after: number | null; improved: string[]; declined: string[] };
   areas: { skill: string; score: number; questions: number }[];
   answeredWell: string[];
   struggled: string[];
@@ -1071,10 +1099,12 @@ export interface InterviewReport {
 export interface InterviewTurnResult {
   id: string;
   order: number;
-  kind: "QUESTION" | "FOLLOW_UP" | "CODING";
+  kind: InterviewTurnKind;
   question: string;
   skill: string;
-  category: QuestionCategory;
+  category: string;
+  area?: InterviewArea | null;
+  excluded?: boolean;
   level: number;
   answerText: string | null;
   answerCode: string | null;
@@ -1085,7 +1115,8 @@ export interface InterviewTurnResult {
   hasAudio: boolean;
   evaluation: {
     correctness: number; completeness: number; understanding: number; practical: number; communication: number;
-    verdict: "CORRECT" | "PARTIAL" | "INCORRECT" | "NO_ANSWER";
+    depth?: number; reasoning?: number;
+    verdict: "CORRECT" | "PARTIAL" | "INCORRECT" | "NO_ANSWER" | "UNCLEAR";
     conceptsMentioned: string[]; missingConcepts: string[]; unsupportedClaims: string[];
   } | null;
   score: number;
@@ -1095,6 +1126,13 @@ export interface InterviewSessionView {
   id: string;
   status: InterviewStatus;
   language: InterviewLanguage;
+  mode?: "JOB" | "ROLE";
+  difficulty?: InterviewDifficulty;
+  targetRole?: string | null;
+  pausedAt?: string | null;
+  resumeId?: string | null;
+  /** The candidate's recording choice: null = not asked yet. */
+  recordAudio?: boolean | null;
   durationMinutes: number;
   questionTarget: number;
   startedAt: string;
@@ -1103,7 +1141,7 @@ export interface InterviewSessionView {
   screenShareWarnings: number;
   interviewer: Interviewer;
   job: { title: string; company: string | null };
-  matchId: string;
+  matchId: string | null;
   progress: { answered: number; target: number };
   current: InterviewTurnView | null;
   readinessScore: number | null;
@@ -1144,8 +1182,14 @@ export interface CareerSessionItem {
   result: string | null;
   startedAt: string;
   endedAt: string | null;
-  matchId: string;
-  match: { job: { title: string; company: string | null } };
+  matchId: string | null;
+  targetRole: string | null;
+  difficulty: InterviewDifficulty;
+  durationMinutes: number;
+  match: { job: { title: string; company: string | null } } | null;
+  /** Job title, or the target role for role-only interviews. */
+  role: string;
+  dimensions: InterviewDimensions | null;
 }
 
 export interface StartInterviewResponse {
