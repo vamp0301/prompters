@@ -18,8 +18,12 @@ predicting **P(the student benefits from / completes a recommendation)**.
   unseen students (ROC-AUC by ≥ 0.01 and PR-AUC not worse). Otherwise the run is
   `TRAINED_NOT_PROMOTED`: the candidate is kept for inspection and the live ranker is unchanged.
 - **Rollout**: even a promoted model only ranks the ML arm — a stable per-student split set by
-  `ML_TRAFFIC_PERCENT` (default 10) in the API. Each recommendation records its arm, and
-  `MLTrainingRun.metrics.product.byArm` compares completion, success and mastery gain per arm.
+  `ML_TRAFFIC_PERCENT` (default 5 for the first experiment) in the API. Each recommendation records its arm, and
+  `MLTrainingRun.metrics.product.byArm` compares acceptance, completion, success, mastery gain,
+  interview improvement and negative-outcome rate per arm.
+- **Outcome signals** (`Recommendation.outcomeSignals`), kept alongside the label: accepted, started,
+  completed, masteryDelta, quizDelta, buildDelta, interviewDelta (filled in when the next interview
+  happens) and retention. Each is a measured difference, or null when there is nothing to compare.
 - Library: XGBoost when its native library loads; otherwise scikit-learn's
   `HistGradientBoostingClassifier`. The run records which one was used. (macOS: `brew install libomp`
   enables XGBoost.)

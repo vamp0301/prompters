@@ -95,7 +95,8 @@ export function DifficultySelect({ value, onChange, id }: { value: number; onCha
 
 export function TableWrap({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("overflow-x-auto", className)}>
+    // Focusable so keyboard users can scroll wide tables sideways.
+    <div tabIndex={0} className={cn("overflow-x-auto focus-visible:outline-2 focus-visible:outline-accent", className)}>
       <table className="w-full min-w-[640px] border-collapse text-left text-sm">{children}</table>
     </div>
   );

@@ -96,3 +96,59 @@ export function completedOutcome(action: string, good: boolean, improvement: num
   if (action === "REVISE_TOPIC" || action === "FINISH_BUILD") return "SUCCESS";
   return improvement === null || improvement >= MIN_IMPROVEMENT ? "SUCCESS" : "NO_IMPROVEMENT";
 }
+
+// ───────────────────────── outcome signals ─────────────────────────
+
+export interface OutcomeSignals {
+  accepted: boolean;
+  started: boolean;
+  completed: boolean;
+  /** Concept mastery now minus at recommendation time. */
+  masteryDelta: number | null;
+  /** Last quiz score on the topic after minus before (0–1 scale). */
+  quizDelta: number | null;
+  /** Share of build tests passing now minus when recommended. */
+  buildDelta: number | null;
+  /** Average interview score on the skill after minus before (filled in when the next interview happens). */
+  interviewDelta: number | null;
+  /** Review score after a revision (0–1): was it remembered? */
+  retention: number | null;
+}
+
+const r3 = (x: number) => Math.round(x * 1000) / 1000;
+const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+
+/** Interview answers on a skill before vs after a moment (null unless both sides exist). */
+export function interviewDelta(d: StudentData, skillKey: string, at: Date) {
+  const on = d.turns.filter((t) => canonicalSkill(t.skill) === skillKey && t.answeredAt);
+  const before = mean(on.filter((t) => t.answeredAt!.getTime() <= at.getTime()).map((t) => turnScore(t) / 100));
+  const after = mean(on.filter((t) => t.answeredAt!.getTime() > at.getTime()).map((t) => turnScore(t) / 100));
+  return before === null || after === null ? null : r3(after - before);
+}
+
+/** Every signal for one recommendation — each is a measured difference, or null when there's nothing to compare. */
+export function outcomeSignals(
+  r: Rec & { features: unknown },
+  d: StudentData,
+  p: Progress,
+  extra: { accepted: boolean; started: boolean; masteryDelta: number | null },
+): OutcomeSignals {
+  const f = (r.features ?? {}) as { conceptId?: string | null; facts?: { passed?: number; total?: number } };
+  const t0 = r.createdAt.getTime();
+  const topic = ["LEARN_TOPIC", "TAKE_QUIZ", "REVISIT_PREREQUISITE", "REVISE_TOPIC"].includes(r.action) ? flattenTopics(d.path.stages).find((t) => t.slug === r.itemId) : undefined;
+  const quizzes = topic ? d.quizzes.filter((q) => q.topicId === topic.id && q.score !== null && (q.kind === "MASTERY" || q.kind === "REVIEW")) : [];
+  const lastBefore = quizzes.filter((q) => q.finishedAt!.getTime() <= t0).at(-1);
+  const lastAfter = quizzes.filter((q) => q.finishedAt!.getTime() > t0).at(-1);
+  const sub = r.action === "FINISH_BUILD" ? d.submissions.find((s) => s.buildTask.slug === r.itemId) : undefined;
+  const review = r.action === "REVISE_TOPIC" ? quizzes.filter((q) => q.kind === "REVIEW" && q.finishedAt!.getTime() > t0).at(-1) : undefined;
+  return {
+    accepted: extra.accepted,
+    started: extra.started,
+    completed: p.completed,
+    masteryDelta: extra.masteryDelta,
+    quizDelta: lastBefore && lastAfter ? r3((lastAfter.score! - lastBefore.score!) / 100) : null,
+    buildDelta: sub && sub.totalCount && f.facts?.total ? r3(sub.passedCount / sub.totalCount - (f.facts.passed ?? 0) / f.facts.total) : null,
+    interviewDelta: f.conceptId?.startsWith("skill:") ? interviewDelta(d, f.conceptId.slice(6), r.createdAt) : null,
+    retention: review ? r3(review.score! / 100) : null,
+  };
+}

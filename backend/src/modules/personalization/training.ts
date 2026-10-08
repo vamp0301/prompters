@@ -61,13 +61,15 @@ export async function exportDataset() {
 export async function productMetrics() {
   const shownRecs = await prisma.recommendation.findMany({
     where: { shownAt: { not: null } },
-    select: { arm: true, outcomeDetail: true, improvement: true, feedback: { where: { source: "USER", action: "ACCEPTED" }, select: { id: true } } },
+    select: { arm: true, outcomeDetail: true, improvement: true, outcomeSignals: true, feedback: { where: { source: "USER", action: "ACCEPTED" }, select: { id: true } } },
   });
   const summarize = (recs: typeof shownRecs) => {
     const n = recs.length;
     const count = (pred: (r: (typeof recs)[number]) => boolean) => recs.filter(pred).length;
     const completed = count((r) => r.outcomeDetail === "SUCCESS" || r.outcomeDetail === "NO_IMPROVEMENT");
     const improvements = recs.map((r) => r.improvement).filter((x): x is number => typeof x === "number");
+    const interviewDeltas = recs.map((r) => (r.outcomeSignals as { interviewDelta?: number | null } | null)?.interviewDelta).filter((x): x is number => typeof x === "number");
+    const labelled = count((r) => ["SUCCESS", "NO_IMPROVEMENT", "ABANDONED"].includes(r.outcomeDetail ?? ""));
     return {
       shown: n,
       outcomes: {
@@ -83,6 +85,10 @@ export async function productMetrics() {
           : "INSUFFICIENT_DATA",
       learningImprovement:
         improvements.length >= MIN_ROWS_FOR_IMPROVEMENT ? { meanMasteryDelta: round(improvements.reduce((a, b) => a + b, 0) / improvements.length), n: improvements.length } : "INSUFFICIENT_DATA",
+      // Did the next interview go better on the recommended skill?
+      interviewImprovement:
+        interviewDeltas.length >= MIN_ROWS_FOR_IMPROVEMENT ? { meanInterviewDelta: round(interviewDeltas.reduce((a, b) => a + b, 0) / interviewDeltas.length), n: interviewDeltas.length } : "INSUFFICIENT_DATA",
+      negativeOutcomeRate: labelled >= MIN_ROWS_FOR_IMPROVEMENT ? round(count((r) => r.outcomeDetail === "NO_IMPROVEMENT" || r.outcomeDetail === "ABANDONED") / labelled) : "INSUFFICIENT_DATA",
     };
   };
   return {

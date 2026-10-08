@@ -265,6 +265,7 @@ describe("personalization API", () => {
     expect(done).toMatchObject({ status: "DONE", outcomeDetail: "SUCCESS", outcome: "SUCCESS" });
     expect(done.improvement!).toBeGreaterThanOrEqual(0.05);
     expect(done.feedback.filter((f) => f.source === "SYSTEM").map((f) => f.action).sort()).toEqual(["COMPLETED", "SUCCESSFUL"]);
+    expect(done.outcomeSignals).toMatchObject({ accepted: false, started: true, completed: true, masteryDelta: done.improvement, buildDelta: null, retention: null });
     // That answer is also Caching practice, so the skill recommendation succeeded with it.
     expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: skill.id } })).toMatchObject({ outcomeDetail: "SUCCESS", outcome: "SUCCESS" });
     // The accepted topic is in progress, not yet judged.
@@ -272,7 +273,7 @@ describe("personalization API", () => {
 
     // A week later: accepted-but-unfinished → ABANDONED (0); shown-but-never-started → NOT_ACTED_ON (no label).
     await refresh(s.id, new Date(t0.getTime() + 8 * DAY));
-    expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: topic.id } })).toMatchObject({ status: "EXPIRED", outcomeDetail: "ABANDONED", outcome: "FAILURE" });
+    expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: topic.id } })).toMatchObject({ status: "EXPIRED", outcomeDetail: "ABANDONED", outcome: "FAILURE", outcomeSignals: { accepted: true, started: true, completed: false } });
     expect(await prisma.recommendation.findUniqueOrThrow({ where: { id: untouched.id } })).toMatchObject({ status: "EXPIRED", outcomeDetail: "NOT_ACTED_ON", outcome: null });
 
     // Completed with a poor answer → NO_IMPROVEMENT (0), not the same as ignoring it.
@@ -308,6 +309,70 @@ describe("personalization API", () => {
     const redis = await prisma.studentSkillState.findUniqueOrThrow({ where: { userId_conceptId: { userId: s.id, conceptId: "skill:redis" } } });
     expect(redis.signals).toMatchObject({ interview: 1, interviewAverage: 0.3 });
     expect(redis.mastery).toBeLessThan(0.4);
+  });
+
+  it("interview → recommendation → next interview: the loop is measured and visible", async () => {
+    const s = await studentWithHistory(); // first interview: Caching answers scored 20 and 30
+    await refresh(s.id);
+    const rec = await prisma.recommendation.findFirstOrThrow({ where: { userId: s.id, action: "PRACTICE_SKILL", itemId: "caching" } });
+    await prisma.recommendation.update({ where: { id: rec.id }, data: { shownAt: new Date() } });
+    const q = s.plan.questions.find((x) => x.skill === "Caching")!;
+    await prisma.prepAttempt.create({ data: { questionId: q.id, userId: s.id, answer: "a", score: 85, evaluation: {}, createdAt: new Date(Date.now() + 1000) } });
+    await refresh(s.id, new Date(Date.now() + 2000));
+    const done = await prisma.recommendation.findUniqueOrThrow({ where: { id: rec.id } });
+    expect(done).toMatchObject({ outcomeDetail: "SUCCESS" });
+    // No second interview yet → no interview change (never estimated).
+    expect((done.outcomeSignals as { interviewDelta: number | null }).interviewDelta).toBeNull();
+
+    // Second interview: Caching answered well.
+    const later = new Date(Date.now() + 5000);
+    await prisma.interviewSession.create({
+      data: { userId: s.id, consent: {}, status: "COMPLETED", startedAt: later, endedAt: new Date(later.getTime() + 60_000), turns: { create: [{ order: 0, kind: "QUESTION", question: "When does cache-aside serve stale data?", skill: "Caching", category: "CONCEPTUAL", evaluation: ev(8), answeredAt: new Date(later.getTime() + 30_000) }] } },
+    });
+    await refresh(s.id, new Date(later.getTime() + 120_000));
+    // The resolved recommendation now carries the interview change (signal only; the label is unchanged).
+    const after = await prisma.recommendation.findUniqueOrThrow({ where: { id: rec.id } });
+    expect((after.outcomeSignals as { interviewDelta: number }).interviewDelta).toBe(0.55); // 25% → 80%
+    expect(after.outcomeDetail).toBe("SUCCESS");
+
+    const progress = (await s.agent.get("/api/personalization/interview-progress")).body.data;
+    expect(progress.interviews).toBe(2);
+    const caching = progress.skills.find((x: { skill: string }) => x.skill === "caching");
+    expect(caching).toMatchObject({ label: "Caching", previous: 0.25, latest: 0.8, change: 0.55 });
+    // Both Caching recommendations (the skill and its suggested question) were completed in between.
+    expect(caching.completedBetween).toEqual(expect.arrayContaining([expect.objectContaining({ id: rec.id, outcome: "SUCCESS" })]));
+    expect(caching.completedBetween.every((r: { outcome: string }) => r.outcome === "SUCCESS")).toBe(true);
+    // Node.js was only in the first interview: no invented "latest".
+    expect(progress.skills.find((x: { skill: string }) => x.skill === "nodejs")).toMatchObject({ previous: 0.9, latest: null, change: null });
+    // Someone else sees only their own (none).
+    const other = await login();
+    expect((await other.agent.get("/api/personalization/interview-progress")).body.data).toMatchObject({ interviews: 0, skills: [] });
+  });
+
+  it("admin debug: what the engine believes and why — ADMIN only, every lookup audited", async () => {
+    const s = await studentWithHistory();
+    await refresh(s.id);
+    const admin = await login("ADMIN");
+    const author = await login("AUTHOR");
+    expect((await s.agent.get(`/api/admin/personalization/students/${s.id}`)).status).toBe(403);
+    expect((await author.agent.get(`/api/admin/personalization/students/${s.id}`)).status).toBe(403);
+    expect((await admin.agent.get("/api/admin/personalization/students/no-such-id")).status).toBe(404);
+    const found = (await admin.agent.get("/api/admin/personalization/students").query({ q: s.email })).body.data;
+    expect(found).toEqual([expect.objectContaining({ id: s.id, email: s.email })]);
+
+    const d = (await admin.agent.get(`/api/admin/personalization/students/${s.id}`)).body.data;
+    expect(d.student).toMatchObject({ id: s.id });
+    expect(d.ranker).toMatchObject({ current: { mode: "baseline", modelName: "baseline-weighted" }, mlTrafficPercent: 5, mlConfigured: false });
+    expect(["ml", "baseline"]).toContain(d.ranker.arm);
+    expect(d.skillState.find((x: { conceptId: string }) => x.conceptId === "skill:caching")).toMatchObject({ interviewAverage: 0.25 });
+    expect(d.interviewProgress.interviews).toBe(1);
+    expect(d.next).toMatchObject({ outcome: "PENDING", modelName: "baseline-weighted" });
+    expect(d.next.reasons.length).toBeGreaterThan(0);
+    expect(d.next.features).toHaveProperty("skillGap");
+    expect(typeof d.next.baselineScore).toBe("number");
+    expect(d.predictions.some((p: { target: string }) => p.target === "OPTIMAL_DIFFICULTY")).toBe(true);
+    const log = await prisma.adminAuditLog.findFirst({ where: { actorId: admin.id, action: "VIEWED_PERSONALIZATION", entityId: s.id } });
+    expect(log).not.toBeNull();
   });
 
   const mlDir = path.resolve(import.meta.dirname, "../../ml-service");
@@ -390,6 +455,11 @@ describe("ML service integration and fallback", () => {
   });
 
   it("controlled rollout: a stable per-student split; baseline-arm students never reach the model", async () => {
+    // The first experiment defaults to 5 % of students.
+    delete process.env.ML_TRAFFIC_PERCENT;
+    const share = Array.from({ length: 2000 }, (_, i) => `default-${i}`).filter((id) => armOf(id) === "ml").length / 2000;
+    expect(share).toBeGreaterThan(0.03);
+    expect(share).toBeLessThan(0.07);
     // Deterministic and roughly the configured share.
     process.env.ML_TRAFFIC_PERCENT = "10";
     const ids = Array.from({ length: 2000 }, (_, i) => `student-${i}`);

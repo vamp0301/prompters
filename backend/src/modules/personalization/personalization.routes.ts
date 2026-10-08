@@ -11,6 +11,7 @@ import { COLD_START_EVIDENCE, lastEngine, recView, refreshIfStale } from "./engi
 import { CLIENT_ENTITY, CLIENT_EVENTS } from "./events.js";
 import { careerContext, loadStudentData, studentDifficulty, studentFeatures } from "./data.js";
 import { mlModelInfo } from "./ml-client.js";
+import { interviewProgress } from "./progress.js";
 import { SKILL_STATE_MODEL } from "./model.js";
 
 /**
@@ -20,7 +21,7 @@ import { SKILL_STATE_MODEL } from "./model.js";
 
 type StateSignals = { kind?: "topic" | "skill"; interviewAverage?: number | null; interviewAnswers?: number; jobRelevance?: number; required?: boolean; inRole?: boolean; onResume?: boolean };
 
-const stateView = (s: { conceptId: string; label: string; mastery: number; confidence: number; forgettingRisk: number; attempts: number; correctAttempts: number; lastSeen: Date | null; nextReview: Date | null; signals: Prisma.JsonValue; modelVersion: string }) => {
+export const stateView = (s: { conceptId: string; label: string; mastery: number; confidence: number; forgettingRisk: number; attempts: number; correctAttempts: number; lastSeen: Date | null; nextReview: Date | null; signals: Prisma.JsonValue; modelVersion: string }) => {
   const sig = (s.signals ?? {}) as StateSignals;
   return {
     conceptId: s.conceptId,
@@ -135,6 +136,9 @@ export function personalizationRoutes() {
       },
     };
   }));
+
+  /** Interview → recommendation → next interview: per-skill change between the last two interviews. */
+  r.get("/interview-progress", handler(async (req) => interviewProgress(currentUser(req).id)));
 
   /** Low-stakes interaction events from the browser (allow-listed; never scores or outcomes). */
   r.post("/events", handler(async (req, res) => {

@@ -1,10 +1,10 @@
-import type { Prisma, Recommendation } from "@prisma/client";
+import { Prisma, type Recommendation } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { generateCandidates, type Candidate } from "./candidates.js";
 import { careerContext, conceptStates, loadStudentData, skillRelevance, studentDifficulty, studentFeatures, type StudentData } from "./data.js";
 import { actionLabel, explain, REASON_LABEL } from "./explain.js";
 import { DIFFICULTY_MODEL, LEVELS, priorityOf, SKILL_STATE_MODEL } from "./model.js";
-import { completedOutcome, LABEL, progressOf, type OutcomeDetail } from "./outcomes.js";
+import { completedOutcome, interviewDelta, LABEL, outcomeSignals, progressOf, type OutcomeDetail } from "./outcomes.js";
 import { rank, type EngineStatus } from "./ranker.js";
 
 /**
@@ -146,23 +146,35 @@ export async function resolveOutcomes(userId: string, d: StudentData, now: Date,
     const after = f.conceptId ? masteryNow.get(f.conceptId) : undefined;
     const improvement = typeof before === "number" && typeof after === "number" ? Math.round((after - before) * 1000) / 1000 : null;
     const system = (actions: string[]) => prisma.recommendationFeedback.createMany({ data: actions.map((action) => ({ recommendationId: r.id, userId, action, source: "SYSTEM" })) });
+    const signals = () => outcomeSignals(r, d, p, { accepted: r.feedback.some((x) => x.action === "ACCEPTED"), started, masteryDelta: improvement }) as unknown as Prisma.InputJsonValue;
 
     if (p.completed && p.good !== null) {
       const detail = completedOutcome(r.action, p.good, improvement);
       await prisma.$transaction([
-        prisma.recommendation.update({ where: { id: r.id }, data: { status: "DONE", outcome: LABEL[detail], outcomeDetail: detail, improvement, startedAt: r.startedAt ?? now, resolvedAt: now } }),
+        prisma.recommendation.update({ where: { id: r.id }, data: { status: "DONE", outcome: LABEL[detail], outcomeDetail: detail, improvement, outcomeSignals: signals(), startedAt: r.startedAt ?? now, resolvedAt: now } }),
         system(["COMPLETED", detail === "SUCCESS" ? "SUCCESSFUL" : "UNSUCCESSFUL"]),
       ]);
     } else if (r.expiresAt.getTime() <= now.getTime()) {
       // Began and never finished → ABANDONED (a negative). Shown and never started → NOT_ACTED_ON (no label).
       const detail: OutcomeDetail | null = started ? "ABANDONED" : r.shownAt ? "NOT_ACTED_ON" : null;
       await prisma.$transaction([
-        prisma.recommendation.update({ where: { id: r.id }, data: { status: "EXPIRED", outcome: detail ? (LABEL[detail] ?? null) : null, outcomeDetail: detail, resolvedAt: now } }),
+        prisma.recommendation.update({ where: { id: r.id }, data: { status: "EXPIRED", outcome: detail ? (LABEL[detail] ?? null) : null, outcomeDetail: detail, outcomeSignals: detail ? signals() : undefined, resolvedAt: now } }),
         ...(detail === "ABANDONED" ? [system(["ABANDONED"])] : detail === "NOT_ACTED_ON" ? [system(["IGNORED"])] : []),
       ]);
     } else if (started && !r.startedAt) {
       await prisma.$transaction([prisma.recommendation.update({ where: { id: r.id }, data: { outcomeDetail: "STARTED", startedAt: now } }), system(["STARTED"])]);
     }
+  }
+
+  // The next interview often comes days after a recommendation is resolved: fill in the interview
+  // change then (a signal only — the label stays as it was).
+  const recent = await prisma.recommendation.findMany({ where: { userId, resolvedAt: { gte: new Date(now.getTime() - 30 * DAY) }, outcomeSignals: { not: Prisma.AnyNull } }, select: { id: true, createdAt: true, features: true, outcomeSignals: true } });
+  for (const r of recent) {
+    const sig = r.outcomeSignals as { interviewDelta?: number | null } | null;
+    const conceptId = (r.features as { conceptId?: string | null } | null)?.conceptId;
+    if (!sig || sig.interviewDelta != null || !conceptId?.startsWith("skill:")) continue;
+    const delta = interviewDelta(d, conceptId.slice(6), r.createdAt);
+    if (delta !== null) await prisma.recommendation.update({ where: { id: r.id }, data: { outcomeSignals: { ...sig, interviewDelta: delta } as Prisma.InputJsonValue } });
   }
 }
 

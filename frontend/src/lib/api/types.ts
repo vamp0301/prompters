@@ -1576,3 +1576,48 @@ export interface PersonalNext {
   interviewWeaknesses: PersonalSkillState[];
   recommendedPractice: PersonalRec[];
 }
+
+export interface InterviewProgress {
+  interviews: number;
+  latest: { id: string; at: string } | null;
+  previous: { id: string; at: string } | null;
+  skills: {
+    skill: string;
+    label: string;
+    previous: number | null;
+    latest: number | null;
+    change: number | null;
+    completedBetween: { id: string; title: string; action: string; outcome: string | null }[];
+  }[];
+}
+
+export interface PersonalDebugRec extends PersonalRec {
+  status: string;
+  arm: string | null;
+  features: Record<string, number> | null;
+  baselineScore: number | null;
+  shownAt: string | null;
+  outcome: string;
+  label: string | null;
+  improvement: number | null;
+  signals: Record<string, number | boolean | null> | null;
+  resolvedAt: string | null;
+}
+
+export interface PersonalDebug {
+  student: { id: string; name: string; email: string };
+  ranker: {
+    current: PersonalEngine | null;
+    arm: "ml" | "baseline";
+    mlTrafficPercent: number;
+    mlConfigured: boolean;
+    latestTraining: { status: string; modelVersion: string | null; datasetSize: number; notes: string | null; startedAt: string } | null;
+  };
+  difficulty: { level?: string; status?: string; trend?: string; confidence: number | null; model: string } | null;
+  skillState: PersonalSkillState[];
+  interviewProgress: InterviewProgress;
+  next: PersonalDebugRec | null;
+  active: PersonalDebugRec[];
+  resolved: PersonalDebugRec[];
+  predictions: { modelName: string; modelVersion: string; target: string; prediction: number; confidence: number | null; createdAt: string }[];
+}

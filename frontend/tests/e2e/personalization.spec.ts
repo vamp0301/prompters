@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
@@ -64,4 +65,36 @@ test("Top-100: 'For you' order shows why each question is suggested", async ({ p
   // Deep link from a recommendation: pre-filtered by skill.
   await page.goto(`/career/prep/${id}?skill=Node.js`);
   await expect(page.getByLabel("Skill")).toHaveValue("Node.js");
+});
+
+const sql = (q: string) => execSync(`psql -qtA ${process.env.E2E_DB_URL} -c "${q.replace(/"/g, '\\"')}"`).toString().trim();
+
+test("admin: personalization debug shows the ranker, skill state, next recommendation and why", async ({ page, browser }) => {
+  test.skip(!process.env.E2E_DB_URL, "Needs E2E_DB_URL to promote an admin");
+  // A student whose engine has run once (dashboard visit).
+  await signUp(page);
+  const me = await (await page.request.get("/api/auth/me")).json();
+  await page.goto("/dashboard");
+  await expect(page.getByText("Your next best move")).toBeVisible({ timeout: 30_000 });
+
+  const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+  const admin = await ctx.newPage();
+  const email = `adm${Date.now()}${Math.random().toString(36).slice(2, 6)}@example.com`;
+  await admin.request.post("/api/auth/register", { data: { name: "Ops Admin", email, password: "Password123" } });
+  sql(`UPDATE "User" SET role = 'ADMIN' WHERE email = '${email}'`);
+  await admin.request.post("/api/auth/login", { data: { email, password: "Password123" } });
+
+  await admin.goto("/admin/personalization");
+  await expect(admin.getByRole("heading", { level: 1, name: "Personalization debug" })).toBeVisible({ timeout: 20_000 });
+  await admin.getByLabel("Search by email or name").fill(me.data.email);
+  await admin.getByRole("list", { name: "Students" }).getByRole("button", { name: new RegExp(me.data.email.replace(/[.+]/g, "\\$&")) }).click();
+  await expect(admin.getByText("BASELINE", { exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(admin.getByRole("heading", { name: "Next recommendation" })).toBeVisible();
+  await expect(admin.getByText("PENDING").first()).toBeVisible();
+  await expect(admin.getByRole("list", { name: "Reasons" })).toBeVisible();
+  await expect(admin.getByRole("heading", { name: "Skill state" })).toBeVisible();
+  expect(await axe(admin)).toEqual([]);
+  // Every lookup is audited.
+  expect(Number(sql(`SELECT count(*) FROM "AdminAuditLog" a JOIN "User" u ON u.id = a."actorId" WHERE u.email = '${email}' AND a.action = 'VIEWED_PERSONALIZATION'`))).toBeGreaterThan(0);
+  await ctx.close();
 });

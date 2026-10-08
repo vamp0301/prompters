@@ -43,9 +43,11 @@ export function mlVector(c: Pick<Candidate, "action" | "features">, s: StudentFe
  * on completion, improvement and acceptance before the model gets more traffic.
  */
 export const ROLLOUT_SALT = "ml-rollout-v1";
+/** The first ML experiment is deliberately small: 5 % of students unless configured otherwise. */
+export const DEFAULT_ML_TRAFFIC_PERCENT = 5;
 export function mlTrafficPercent() {
-  const v = Number(process.env.ML_TRAFFIC_PERCENT ?? 10);
-  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 10;
+  const v = Number(process.env.ML_TRAFFIC_PERCENT ?? DEFAULT_ML_TRAFFIC_PERCENT);
+  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : DEFAULT_ML_TRAFFIC_PERCENT;
 }
 export function rolloutBucket(userId: string) {
   return createHash("sha256").update(`${userId}:${ROLLOUT_SALT}`).digest().readUInt32BE(0) % 100;

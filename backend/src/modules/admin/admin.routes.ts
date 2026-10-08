@@ -6,6 +6,7 @@ import { curriculumRoutes } from "./curriculum.routes.js";
 import { insightsRoutes } from "./insights.routes.js";
 import { platformRoutes } from "./platform.routes.js";
 import { adminSiteRoutes } from "../site/site.routes.js";
+import { adminPersonalizationRoutes } from "../personalization/admin.routes.js";
 
 /**
  * Admin API. Role tiers:
@@ -26,5 +27,6 @@ export function adminRoutes() {
   r.use(contentRoutes());
   r.use(platformRoutes());
   r.use(adminSiteRoutes());
+  r.use(adminPersonalizationRoutes());
   return r;
 }

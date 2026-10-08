@@ -1184,6 +1184,9 @@ model Recommendation {
   outcomeDetail String?
   /// Change in the concept's mastery from when it was recommended to when it was resolved.
   improvement   Float?
+  /// Every outcome signal, not just the label: accepted, started, completed, masteryDelta, quizDelta,
+  /// buildDelta, interviewDelta (filled in when the next interview happens) and retention.
+  outcomeSignals Json?
   startedAt     DateTime?
   /// Rollout arm the student was in when this was ranked: ml | baseline.
   arm           String?

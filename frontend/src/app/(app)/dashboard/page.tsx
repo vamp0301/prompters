@@ -13,6 +13,7 @@ import { api } from "@/lib/api/client";
 import type { Dashboard } from "@/lib/api/types";
 import { CareerOverview } from "@/features/dashboard/career-overview";
 import { NextBestMove } from "@/features/personalization/next-best-move";
+import { InterviewProgress } from "@/features/personalization/interview-progress";
 
 const PATH_TONES = ["bg-accent-soft text-accent", "bg-info-soft text-info", "bg-accent-2-soft text-accent-2", "bg-pink-soft text-pink"];
 const QUICK_LINKS = [
@@ -60,6 +61,7 @@ export default function DashboardPage() {
       </div>
 
       <NextBestMove />
+      <InterviewProgress />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)]">
         <section aria-labelledby="path-title" className={cn(paperCard, "p-6")}>
