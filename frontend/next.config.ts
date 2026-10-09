@@ -25,6 +25,8 @@ const nextConfig: NextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           // Microphone is needed by our own pages only (interview recording + dictation); camera is never used.
           { key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=()" },
+          // Lets the Google sign-in popup message this page back (Google's recommended value).
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
         ],
       },
     ];

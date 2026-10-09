@@ -48,7 +48,8 @@ export function PrepView({ id }: { id: string }) {
   const plan = useQuery({
     queryKey: careerKeys.prepPlan(id),
     queryFn: () => api.get<PrepPlanDetail>(`/career/prep/${id}`),
-    refetchInterval: (q) => (q.state.data && (q.state.data.status === "QUEUED" || q.state.data.status === "RUNNING") ? 1500 : false),
+    // Poll quickly while generating; slowly when no worker is alive (nothing will change until one starts).
+    refetchInterval: (q) => (q.state.data && (q.state.data.status === "QUEUED" || q.state.data.status === "RUNNING") ? (q.state.data.workerAlive === false ? 10_000 : 1500) : false),
   });
   if (plan.isLoading) return <PageSkeleton />;
   if (plan.error) return <ErrorState error={plan.error} retry={() => plan.refetch()} />;
@@ -138,6 +139,12 @@ function GeneratingView({ plan }: { plan: PrepPlanDetail }) {
       <Card>
         <CardBody className="space-y-5">
           <ResumeReader reading={reading} label={plan.resume.label} skills={pr.skills.names} projects={pr.projects.names} level={levelText(plan)} />
+          {!failed && plan.workerAlive === false && (
+            <div role="alert" className="rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">
+              <p className="font-medium">Waiting for the background worker</p>
+              <p className="mt-1 text-muted">No worker is running, so generation hasn&apos;t started. It begins automatically as soon as one is up — this page checks every few seconds.</p>
+            </div>
+          )}
           {failed ? (
             <div role="alert" className="space-y-3">
               <p className="text-sm font-medium text-danger">Generation stopped.</p>

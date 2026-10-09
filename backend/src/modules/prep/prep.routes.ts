@@ -4,6 +4,7 @@ import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
 import { currentUser } from "../../middleware/auth.js";
 import { aiLimiter, careerAnswerLimiter } from "../../middleware/rate-limit.js";
+import { workerAlive } from "../../lib/heartbeat.js";
 import { notFound } from "../../utils/errors.js";
 import { handler, param, parse } from "../../utils/http.js";
 import { ensureAiInterviewEnabled } from "../career/career.routes.js";
@@ -90,7 +91,10 @@ export function prepRoutes() {
     if (!plan) throw notFound("Preparation plan");
     // Only published questions count: candidates still being checked are invisible.
     const counts = await prisma.prepQuestion.groupBy({ by: ["status"], where: { planId: plan.id, rank: { gt: 0 } }, _count: true });
-    return { ...plan, published: counts.reduce((a, c) => a + c._count, 0), practice: Object.fromEntries(counts.map((c) => [c.status, c._count])) };
+    // While generating, say whether a background worker is alive: without one a QUEUED plan never starts.
+    const pending = plan.status === "QUEUED" || plan.status === "RUNNING";
+    const workerUp = pending ? await workerAlive().catch(() => true) : true;
+    return { ...plan, published: counts.reduce((a, c) => a + c._count, 0), practice: Object.fromEntries(counts.map((c) => [c.status, c._count])), workerAlive: workerUp };
   }));
 
   r.post("/:id/retry", ai, handler(async (req) => {

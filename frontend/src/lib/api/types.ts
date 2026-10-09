@@ -1254,6 +1254,8 @@ export interface PrepPlanDetail {
   validation: { generated: number; accepted: number; adjusted: number; rejected: Record<string, number> } | null;
   /** Experience band the questions are pitched at (null for plans made before the ladder). */
   band: PrepBand | null;
+  /** While QUEUED/RUNNING: false when no background worker is alive, so the plan cannot progress. */
+  workerAlive?: boolean;
   progress: {
     resume: { state: StepState; chunks?: number };
     /** Skill and project names found on the resume (shown while it is read). */
