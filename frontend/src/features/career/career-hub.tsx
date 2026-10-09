@@ -10,6 +10,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field, Select } from "@/components/ui/input";
 import { EmptyState, ErrorState, PageHeader, Skeleton, Tabs } from "@/components/ui/misc";
 import { ProjectsList } from "./projects/projects-list";
+import { ResumeBar } from "./add-resume";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
 import type { CareerAnalysisItem, CareerJob, CareerResume, CareerSessionItem, CareerStatus } from "@/lib/api/types";
@@ -43,6 +44,12 @@ export function CareerHub() {
   const params = useSearchParams();
   const initial = params.get("tab");
   const [tab, setTab] = useState<"prep" | "interview" | "projects" | "match">(initial === "interview" || initial === "match" || initial === "projects" ? initial : "prep");
+  // ?addResume=1 (e.g. from the dashboard note) opens the upload straight away.
+  const [adding, setAdding] = useState(params.get("addResume") === "1");
+  const manageResumes = () => {
+    setTab("match");
+    requestAnimationFrame(() => document.getElementById("resumes")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
 
   return (
     <div className="space-y-6">
@@ -51,6 +58,8 @@ export function CareerHub() {
         title="Don't prepare for interviews. Prepare for YOUR interview."
         description="Upload your resume once. Get the 100 technical questions you're most likely to face — built from your projects, skills, claims and achievements — then practise them and download your personal interview pack."
       />
+
+      <ResumeBar disabled={disabled} open={adding} onOpenChange={setAdding} onManage={manageResumes} />
 
       <Tabs
         value={tab}

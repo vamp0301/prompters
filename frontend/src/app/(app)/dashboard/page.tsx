@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { buttonClass } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState, ErrorState, PageHeader, PageSkeleton } from "@/components/ui/misc";
-import { StatCard, TapedNote, paperCard } from "@/components/ui/paper";
+import { PinnedNote, StatCard, TapedNote, paperCard } from "@/components/ui/paper";
+import { ResumeNoteLink } from "@/features/career/add-resume";
 import { cn } from "@/lib/utils";
 import { Progress, ScoreRing } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
@@ -93,6 +94,9 @@ export default function DashboardPage() {
           )}
         </section>
         <div className="space-y-4">
+          <PinnedNote>
+            <ResumeNoteLink />
+          </PinnedNote>
           <TapedNote tape="A note to self">
             <p className="font-display text-[1.9rem] leading-[1.15]">Build something you can defend.</p>
             <p className="mt-4 text-[13px] leading-relaxed">Confidence doesn&apos;t come from knowing everything. It comes from knowing your own decisions.</p>

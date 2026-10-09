@@ -45,7 +45,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     <div className="bg-grid grid min-h-[calc(100vh-72px)] place-items-start justify-items-center px-4 pb-16 pt-16 sm:pt-[70px]">
       <div className="w-full max-w-[360px]">
         <div className="mb-8 text-center">
-          <Logo className="justify-center" />
+          <Logo className="justify-center" animate />
           <p className="eyebrow mt-10 text-accent">{mode === "login" ? "Welcome back" : "Get started"}</p>
           <h1 className="font-display mt-2 text-[2.9rem] leading-tight">{mode === "login" ? "Welcome back" : "Create your account"}</h1>
           <p className="mt-1 text-sm text-muted">{mode === "login" ? "Continue where you left off." : "Free to start. Pick Python or JavaScript next."}</p>

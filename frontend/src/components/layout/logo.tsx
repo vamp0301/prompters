@@ -1,13 +1,12 @@
 import Link from "next/link";
+import { BrandMark, Wordmark } from "@/components/brand/brand-mark";
 import { cn } from "@/lib/utils";
 
-export function Logo({ className, href = "/" }: { className?: string; href?: string }) {
+export function Logo({ className, href = "/", animate = false }: { className?: string; href?: string; animate?: boolean }) {
   return (
-    <Link href={href} className={cn("group inline-flex items-center gap-2.5", className)} aria-label="Prompters home">
-      <span className="grid size-[31px] place-items-center rounded-[7px] bg-ink font-mono text-[12px] font-medium tracking-[-2px] text-ink-fg" aria-hidden>
-        &gt;_
-      </span>
-      <span className="text-[17px] font-extrabold tracking-[-0.04em]">Prompters</span>
+    <Link href={href} className={cn("group inline-flex items-center gap-2", className)} aria-label="Prompters home">
+      <BrandMark size={28} animate={animate ? "once" : false} />
+      <Wordmark className="text-[19px]" />
     </Link>
   );
 }

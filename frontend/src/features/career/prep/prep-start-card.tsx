@@ -13,6 +13,7 @@ import { api } from "@/lib/api/client";
 import type { CareerJob, CareerResume, PrepMeta, PrepPlanItem, PrepUsage } from "@/lib/api/types";
 import { formatDate } from "@/lib/utils";
 import { DocumentForm } from "../document-form";
+import { AddResumeButton } from "../add-resume";
 import { careerKeys, ConfirmButton, InlineError } from "../shared";
 
 export function usePrepUsage() {
@@ -79,15 +80,18 @@ export function PrepStartCard({ disabled }: { disabled: boolean }) {
               if (ready && !disabled) create.mutate();
             }}
           >
-            <Field label="Resume" htmlFor={`${uid}-r`}>
-              <Select id={`${uid}-r`} value={rId} onChange={(e) => setResumeId(e.target.value)} disabled={create.isPending}>
-                {resumes.data?.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+            <div className="flex items-end gap-2">
+              <Field label="Resume" htmlFor={`${uid}-r`} className="min-w-0 flex-1">
+                <Select id={`${uid}-r`} value={rId} onChange={(e) => setResumeId(e.target.value)} disabled={create.isPending}>
+                  {resumes.data?.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <AddResumeButton disabled={disabled || create.isPending} size="md" label="New resume" />
+            </div>
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted">Prepare for</p>
               <Tabs

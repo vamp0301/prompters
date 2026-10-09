@@ -119,6 +119,7 @@ export function DocumentForm({ kind, disabled, onDone }: { kind: Kind; disabled?
             id={`${uid}-file`}
             type="file"
             accept="application/pdf,text/plain,.pdf,.txt"
+            aria-label={kind === "resume" ? "Choose a resume file (PDF or TXT)" : "Choose a job description file (PDF or TXT)"}
             className="sr-only"
             disabled={disabled || busy}
             onChange={(e) => {

@@ -77,6 +77,27 @@ export function StatCard({ label, value, hint, tone = "green", className }: { la
   );
 }
 
+/** A yellow sticky note held by a push pin. The pin is decorative. */
+export function PinnedNote({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("note-yellow relative rotate-[1.2deg] rounded-sm p-6 pt-9 shadow-[0_18px_40px_rgba(94,85,46,0.16)]", className)}>
+      <svg viewBox="0 0 28 34" width="28" height="34" aria-hidden className="absolute -top-4 left-1/2 -translate-x-1/2 drop-shadow-[1px_3px_2px_rgba(0,0,0,0.25)]">
+        <path d="M14 17 L15.4 32" stroke="#8a8378" strokeWidth="1.6" strokeLinecap="round" />
+        <circle cx="14" cy="10" r="9" fill="var(--accent-2)" />
+        <circle cx="14" cy="10" r="9" fill="url(#pin-shade)" />
+        <circle cx="10.8" cy="6.8" r="2.6" fill="#fff" opacity="0.45" />
+        <defs>
+          <radialGradient id="pin-shade" cx="0.35" cy="0.3" r="0.8">
+            <stop offset="0.55" stopColor="#000" stopOpacity="0" />
+            <stop offset="1" stopColor="#000" stopOpacity="0.28" />
+          </radialGradient>
+        </defs>
+      </svg>
+      {children}
+    </div>
+  );
+}
+
 /** A taped yellow sticky note. */
 export function TapedNote({ tape, children, className }: { tape: string; children: ReactNode; className?: string }) {
   return (

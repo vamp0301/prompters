@@ -29,7 +29,7 @@ export function PublicHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-bg/85 backdrop-blur-lg">
       <div className="flex h-[72px] items-center justify-between gap-4 px-5 sm:px-[clamp(20px,5vw,76px)]">
-        <Logo />
+        <Logo animate />
         <div className="hidden items-center md:flex">
           <nav aria-label="Site" className="flex items-center gap-6 text-[13px] text-muted">
             {NAV.map((n) => (
