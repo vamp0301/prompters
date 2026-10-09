@@ -4,6 +4,9 @@ import { prisma } from "../../lib/prisma.js";
 import { currentUser } from "../../middleware/auth.js";
 import { handler, parse } from "../../utils/http.js";
 import { logEvent } from "../platform/events.js";
+import { EXPERIENCE_BANDS } from "../prep/ladder.js";
+import { chooseCareer, LEGACY_GOAL_ROLE } from "../roles/profiles.service.js";
+import { roleDef } from "../roles/taxonomy.js";
 
 const ROLES = ["BACKEND", "FRONTEND", "FULLSTACK", "DEVOPS", "SDE", "AI"] as const;
 
@@ -27,13 +30,21 @@ const profileSchema = z.object({
   links: z.record(z.string().url().max(300)).nullable().optional(),
 });
 
-const onboardingSchema = profileSchema.extend({
-  startLanguage: z.enum(["PYTHON", "JAVASCRIPT"]),
-  explanationLocale: z.enum(["hinglish", "en", "hi"]),
-  goalRole: z.enum(ROLES),
-  codingLevel: z.enum(["ZERO", "BEGINNER", "INTERMEDIATE", "ADVANCED"]),
-  weeklyHours: z.number().int().min(1).max(80),
-});
+const onboardingSchema = profileSchema
+  .extend({
+    explanationLocale: z.enum(["hinglish", "en", "hi"]),
+    weeklyHours: z.number().int().min(1).max(80),
+    /** Any career in the taxonomy. Older clients send goalRole instead. */
+    targetRoleKey: z.string().max(60).optional(),
+    experienceLevel: z.enum(EXPERIENCE_BANDS).optional(),
+  })
+  .superRefine((d, ctx) => {
+    const roleKey = d.targetRoleKey ?? (d.goalRole ? LEGACY_GOAL_ROLE[d.goalRole] : undefined);
+    const role = roleDef(roleKey);
+    if (!role) return ctx.addIssue({ code: "custom", path: ["targetRoleKey"], message: "Choose the role you're preparing for." });
+    // A programming language only matters for careers that involve coding.
+    if (role.code && !d.startLanguage) ctx.addIssue({ code: "custom", path: ["startLanguage"], message: "Pick your first programming language." });
+  });
 
 export function profileRoutes() {
   const r = Router();
@@ -60,14 +71,17 @@ export function profileRoutes() {
 
   r.post("/onboarding", handler(async (req) => {
     const me = currentUser(req);
-    const { name, links, ...data } = parse(onboardingSchema, req.body);
+    const { name, links, targetRoleKey, experienceLevel, ...data } = parse(onboardingSchema, req.body);
+    const roleKey = (targetRoleKey ?? LEGACY_GOAL_ROLE[data.goalRole!])!;
     if (name) await prisma.user.update({ where: { id: me.id }, data: { name } });
     const profile = await prisma.userProfile.upsert({
       where: { userId: me.id },
       create: { userId: me.id, ...data, links: links ?? undefined, onboardedAt: new Date() },
       update: { ...data, links: links ?? undefined, onboardedAt: new Date() },
     });
-    await logEvent(me.id, "onboarding_completed", { meta: { startLanguage: data.startLanguage, goalRole: data.goalRole } });
+    // The chosen career becomes the primary target-role profile (re-onboarding just switches primary).
+    await chooseCareer(me.id, { roleKey, level: experienceLevel, timeline: data.targetDate ?? null });
+    await logEvent(me.id, "onboarding_completed", { meta: { startLanguage: data.startLanguage ?? null, goalRole: data.goalRole ?? null, roleKey, family: roleDef(roleKey)?.family ?? null } });
     return profile;
   }));
 

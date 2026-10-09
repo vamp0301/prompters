@@ -38,7 +38,12 @@ export async function refreshIfStale(userId: string, opts: { force?: boolean; no
 
 async function refreshIfStaleLocked(userId: string, opts: { force?: boolean; now?: Date }) {
   const now = opts.now ?? new Date();
-  const last = await prisma.recommendation.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { updatedAt: "desc" }, select: { updatedAt: true } });
+  const [last, career] = await Promise.all([
+    prisma.recommendation.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { updatedAt: "desc" }, select: { updatedAt: true, targetProfileId: true } }),
+    prisma.targetRoleProfile.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: [{ primary: "desc" }, { createdAt: "asc" }], select: { id: true } }),
+  ]);
+  // Switched careers: the open recommendations belong to another target role — recompute now.
+  if (last && (last.targetProfileId ?? null) !== (career?.id ?? null)) return { refreshed: true, ...(await refresh(userId, now)) };
   if (last) {
     const age = now.getTime() - last.updatedAt.getTime();
     // Even a forced refresh waits 30 s, so repeated calls can't hammer the database.
@@ -86,7 +91,8 @@ export async function refresh(userId: string, now = new Date()) {
   const top = ranked.slice(0, TOP_N);
 
   const open = await prisma.recommendation.findMany({ where: { userId, status: "ACTIVE" } });
-  const byKey = new Map(open.map((r) => [`${r.action}:${r.itemId}`, r]));
+  // Only this career's open recommendations are updated in place; another career's are superseded below.
+  const byKey = new Map(open.filter((r) => (r.targetProfileId ?? null) === career.targetProfileId).map((r) => [`${r.action}:${r.itemId}`, r]));
   const keep = new Set(top.map((c) => `${c.action}:${c.itemId}`));
   const saved: Recommendation[] = await prisma.$transaction(
     top.map((c, i) => {
@@ -102,6 +108,7 @@ export async function refresh(userId: string, now = new Date()) {
         modelName: engine.modelName,
         modelVersion: engine.modelVersion,
         arm: engine.arm,
+        targetProfileId: career.targetProfileId,
       };
       const existing = byKey.get(`${c.action}:${c.itemId}`);
       return existing
@@ -109,7 +116,7 @@ export async function refresh(userId: string, now = new Date()) {
         : prisma.recommendation.create({ data: { userId, action: c.action, itemType: c.itemType, itemId: c.itemId, expiresAt: new Date(now.getTime() + TTL_DAYS * DAY), ...data } });
     }),
   );
-  const dropped = open.filter((r) => !keep.has(`${r.action}:${r.itemId}`)).map((r) => r.id);
+  const dropped = open.filter((r) => !keep.has(`${r.action}:${r.itemId}`) || (r.targetProfileId ?? null) !== career.targetProfileId).map((r) => r.id);
   if (dropped.length) await prisma.recommendation.updateMany({ where: { id: { in: dropped } }, data: { status: "SUPERSEDED" } });
 
   // Every score and estimate is recorded with the model that produced it.

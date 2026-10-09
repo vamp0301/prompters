@@ -2,6 +2,7 @@ import { flattenTopics } from "../learning/path.service.js";
 import { canonicalSkill } from "../prep/text.js";
 import { skillRelevance, type CareerContext, type ConceptState, type StudentData } from "./data.js";
 import { levelOf, LEVELS, successAt, type CandidateFeatures, type DifficultyEstimate, type DifficultyLevel } from "./model.js";
+import { competency } from "../roles/taxonomy.js";
 
 /**
  * Candidate next actions, generated from the student's real state: the roadmap, due revisions,
@@ -122,7 +123,9 @@ export function generateCandidates(d: StudentData, c: CareerContext, states: Con
     const rel = skillRelevance(key, c);
     if (rel.jobRelevance < 0.5 || s.mastery >= 0.75) continue;
     const interviewWeak = s.interviewAverage !== null ? 1 - s.interviewAverage : 0;
-    const ready = s.attempts > 0 || rel.onResume ? 1 : r3(foundations);
+    // Readiness to start an unpractised skill: the programming roadmap for coding careers; the
+    // competency's own prerequisites for every other career (a PM doesn't need Python topics first).
+    const ready = s.attempts > 0 || rel.onResume ? 1 : c.code ? r3(foundations) : prerequisiteReadiness(key, byId);
     const f: CandidateFeatures = { mastery: s.mastery, confidence: s.confidence, forgettingRisk: s.forgettingRisk, skillGap: 1 - s.mastery, jobRelevance: rel.jobRelevance, prerequisiteReadiness: ready, interviewRelevance: r3(interviewWeak), successProbability: successAt(difficulty, difficulty.level), questionImportance: 0, dueForReview: s.nextReview && s.nextReview.getTime() <= now.getTime() && s.attempts > 0 ? 1 : 0 };
     const questions = planQuestions.filter((q) => canonicalSkill(q.skill) === key);
     const href = d.plan && questions.length ? `/career/prep/${d.plan.id}?skill=${encodeURIComponent(questions[0].skill)}` : `/career/skills/map?name=${encodeURIComponent(s.label)}`;
@@ -185,7 +188,52 @@ export function generateCandidates(d: StudentData, c: CareerContext, states: Con
     });
   }
 
-  // One candidate per (action, item).
+  // One candidate per (action, item); then the role filter — before anything is ranked.
   const seen = new Set<string>();
-  return out.filter((x) => (seen.has(`${x.action}:${x.itemId}`) ? false : (seen.add(`${x.action}:${x.itemId}`), true)));
+  const stageOf = new Map(topics.map((t) => [t.slug, t.stage.slug]));
+  return out
+    .filter((x) => (seen.has(`${x.action}:${x.itemId}`) ? false : (seen.add(`${x.action}:${x.itemId}`), true)))
+    .filter((x) => eligibleForRole(x, c, stageOf))
+    .map((x) => withRoleRequirement(x, c));
+}
+
+/** Curriculum stages that serve every career (the rest of the roadmap is programming). */
+export const ROLE_NEUTRAL_STAGES = new Set(["job-readiness"]);
+
+const skillKeyOf = (x: Candidate) => (x.conceptId?.startsWith("skill:") ? x.conceptId.slice("skill:".length) : null);
+
+/**
+ * Whether an activity serves this career at all. Engineering careers keep everything. Other
+ * careers never get programming topics, coding builds, or code-only skills that neither their
+ * role framework nor their job description asks for.
+ */
+export function eligibleForRole(x: Candidate, c: CareerContext, stageOf: Map<string, string>): boolean {
+  if (c.code) return true;
+  if (x.itemType === "TOPIC") return ROLE_NEUTRAL_STAGES.has(stageOf.get(x.itemId) ?? "");
+  if (x.itemType === "BUILD_TASK") return false;
+  const key = skillKeyOf(x);
+  if (!key) return true;
+  if (c.roleImportance.has(key) || c.jobRequired.has(key) || c.jobPreferred.has(key)) return true;
+  return !competency(key)?.code;
+}
+
+/** Says which role requirement an activity serves (shown on the dashboard). */
+function withRoleRequirement(x: Candidate, c: CareerContext): Candidate {
+  const key = skillKeyOf(x);
+  const importance = key ? (c.roleImportance.get(key) ?? null) : null;
+  if (!importance) return x;
+  const roleReason = importance === "REQUIRED" ? "required_for_role" : importance === "PREFERRED" ? "preferred_for_role" : null;
+  const reasons = roleReason && !x.reasons.includes("in_job_description") ? [roleReason, ...x.reasons.filter((r) => r !== "high_role_relevance")] : x.reasons;
+  return { ...x, reasons, facts: { ...x.facts, roleRequirement: importance, role: c.roleLabel } };
+}
+
+/** Share of a competency's prerequisites the student has shown (unknown ones count half). */
+function prerequisiteReadiness(key: string, byId: Map<string, ConceptState>) {
+  const prereqs = competency(key)?.prereqs ?? [];
+  if (!prereqs.length) return 1;
+  const score = prereqs.map((p) => {
+    const s = byId.get(`skill:${p}`);
+    return !s || s.attempts === 0 ? 0.5 : s.mastery >= 0.5 ? 1 : 0.2;
+  });
+  return r3(score.reduce((a, b) => a + b, 0) / score.length);
 }

@@ -185,7 +185,8 @@ describe("personalization API", () => {
     expect(next.skillGaps.map((x: { conceptId: string }) => x.conceptId)).toContain("skill:caching");
     const recs = (await s.agent.get("/api/personalization/recommendations")).body.data as { action: string; itemId: string; rank: number; reasons: { code: string }[]; why: string; features: Record<string, number> }[];
     const cachingRec = recs.find((r) => r.action === "PRACTICE_SKILL" && r.itemId === "caching")!;
-    expect(cachingRec.reasons.map((r) => r.code)).toEqual(expect.arrayContaining(["interview_weakness", "high_role_relevance"]));
+    // Caching is a PREFERRED competency of the Backend framework, so the reason names that level.
+    expect(cachingRec.reasons.map((r) => r.code)).toEqual(expect.arrayContaining(["interview_weakness", "preferred_for_role"]));
     expect(cachingRec.why).toMatch(/interview answers on Caching averaged 25%/);
     expect(cachingRec.features.interviewRelevance).toBe(0.75);
     const nodeRec = recs.find((r) => r.action === "PRACTICE_SKILL" && r.itemId === "nodejs");

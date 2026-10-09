@@ -4,9 +4,11 @@ import { turnScore } from "../career/interview.report.js";
 import { jobParsedSchema, resumeParsedSchema } from "../career/schemas.js";
 import { learnerPath, flattenTopics } from "../learning/path.service.js";
 import { resumeSkills } from "../prep/intelligence.service.js";
-import { effectiveBand, type ExperienceBand } from "../prep/ladder.js";
+import { effectiveBand, EXPERIENCE_BANDS, type ExperienceBand } from "../prep/ladder.js";
 import { inferRole } from "../prep/profile.js";
-import { targetRole, type TargetRoleKey } from "../prep/roles.js";
+import { isTargetRole, targetRole, type TargetRoleKey } from "../prep/roles.js";
+import type { FamilyKey } from "../roles/catalogue.js";
+import { roleDef, type Importance } from "../roles/taxonomy.js";
 import { canonicalSkill } from "../prep/text.js";
 import { EVIDENCE_WEIGHT, estimateDifficulty, estimateSkillState, levelOf, type DifficultyLevel, type Observation, type SkillStateEstimate } from "./model.js";
 
@@ -24,6 +26,13 @@ const CODING_LEVEL: Record<string, DifficultyLevel> = { BEGINNER: "easy", INTERM
 
 export async function loadStudentData(userId: string, now = new Date()) {
   const since90 = new Date(now.getTime() - 90 * DAY);
+  // The career being prepared for scopes the Top-100 plan and job used below (role isolation).
+  const targetProfile = await prisma.targetRoleProfile.findFirst({
+    where: { userId, status: "ACTIVE" },
+    orderBy: [{ primary: "desc" }, { createdAt: "asc" }],
+    select: { id: true, roleKey: true, level: true, jobId: true, job: { select: { title: true, parsed: true } } },
+  });
+  const planScope = targetProfile ? { OR: [{ targetRole: targetProfile.roleKey }, ...(targetProfile.jobId ? [{ jobId: targetProfile.jobId }] : [])] } : {};
   const [profile, path, masteries, quizzes, submissions, resume, plan, prepAttempts, turns, concepts, events, maps, prereqs, projectAnswers] = await Promise.all([
     prisma.userProfile.findUnique({ where: { userId }, select: { goalRole: true, codingLevel: true } }),
     learnerPath(userId),
@@ -32,7 +41,7 @@ export async function loadStudentData(userId: string, now = new Date()) {
     prisma.submission.findMany({ where: { userId }, select: { status: true, passedCount: true, totalCount: true, startedAt: true, completedAt: true, updatedAt: true, buildTask: { select: { id: true, slug: true, title: true, topicId: true } } } }),
     prisma.careerResume.findFirst({ where: { userId }, orderBy: { createdAt: "desc" }, select: { id: true, parsed: true } }),
     prisma.prepPlan.findFirst({
-      where: { userId, status: { in: ["READY", "RUNNING"] } },
+      where: { userId, status: { in: ["READY", "RUNNING"] }, ...planScope },
       orderBy: { createdAt: "desc" },
       select: { id: true, targetRole: true, job: { select: { title: true, parsed: true } }, questions: { where: { rank: { gt: 0 } }, select: { id: true, question: true, skill: true, difficulty: true, probability: true, status: true, rank: true } } },
     }),
@@ -50,10 +59,11 @@ export async function loadStudentData(userId: string, now = new Date()) {
     // Project knowledge-test answers: "how well do you know YOUR project" evidence, per skill.
     prisma.projectAnswer.findMany({ where: { userId }, select: { projectId: true, skill: true, score: true, level: true, createdAt: true, project: { select: { name: true } } }, orderBy: { createdAt: "asc" } }),
   ]);
-  const latestJob = plan?.job ?? (await prisma.jobTarget.findFirst({ where: { userId }, orderBy: { createdAt: "desc" }, select: { title: true, parsed: true } }));
-  return { userId, now, profile, path, masteries, quizzes, submissions, resume, plan, prepAttempts, turns, concepts, events, mapKeys: new Set(maps.map((m) => m.key)), prereqs, projectAnswers, latestJob };
+  const latestJob = targetProfile?.job ?? plan?.job ?? (await prisma.jobTarget.findFirst({ where: { userId }, orderBy: { createdAt: "desc" }, select: { title: true, parsed: true } }));
+  return { userId, now, targetProfile, profile, path, masteries, quizzes, submissions, resume, plan, prepAttempts, turns, concepts, events, mapKeys: new Set(maps.map((m) => m.key)), prereqs, projectAnswers, latestJob };
 }
 export type StudentData = Awaited<ReturnType<typeof loadStudentData>>;
+const maxBand = (a: ExperienceBand, b: ExperienceBand) => (EXPERIENCE_BANDS.indexOf(a) >= EXPERIENCE_BANDS.indexOf(b) ? a : b);
 
 // ───────────────────────── career context ─────────────────────────
 
@@ -68,6 +78,13 @@ export interface CareerContext {
   jobPreferred: Set<string>;
   jobTitle: string | null;
   roleSkills: Set<string>;
+  /** The target-role profile this context belongs to (null for users without one yet). */
+  targetProfileId: string | null;
+  family: FamilyKey;
+  /** Whether coding activities are relevant for this career at all. */
+  code: boolean;
+  /** Canonical competency key → importance in the role's framework. */
+  roleImportance: Map<string, Importance>;
 }
 
 export function careerContext(d: StudentData): CareerContext {
@@ -76,20 +93,25 @@ export function careerContext(d: StudentData): CareerContext {
   if (parsed?.success) for (const s of [...resumeSkills(parsed.data), ...parsed.data.projects.flatMap((p) => p.technologies)]) if (canonicalSkill(s)) resume.set(canonicalSkill(s), s);
   const job = d.latestJob ? jobParsedSchema.safeParse(d.latestJob.parsed) : null;
   const jobData = job?.success ? job.data : null;
-  const role: TargetRoleKey = (d.plan?.targetRole as TargetRoleKey | null) ?? (d.profile?.goalRole ? GOAL_ROLE[d.profile.goalRole] : undefined) ?? (d.latestJob ? inferRole(d.latestJob.title) : "sde");
+  const role: TargetRoleKey = (isTargetRole(d.targetProfile?.roleKey) ? d.targetProfile!.roleKey : null) ?? (d.plan?.targetRole as TargetRoleKey | null) ?? (d.profile?.goalRole ? GOAL_ROLE[d.profile.goalRole] : undefined) ?? (d.latestJob ? inferRole(d.latestJob.title) : "sde");
   const r = targetRole(role) ?? targetRole("sde")!;
   const months = parsed?.success ? parsed.data.totalExperienceMonths : 0;
   return {
     role,
     roleLabel: r.label,
     goalRole: d.profile?.goalRole ?? null,
-    band: effectiveBand(months, jobData),
+    // The level the student chose, unless their resume/JD shows more experience.
+    band: maxBand(effectiveBand(months, jobData), (d.targetProfile?.level as ExperienceBand | undefined) ?? "STUDENT"),
     experienceMonths: months,
     resumeSkills: resume,
     jobRequired: new Set((jobData?.requiredSkills ?? []).map(canonicalSkill)),
     jobPreferred: new Set((jobData?.preferredSkills ?? []).map(canonicalSkill)),
     jobTitle: d.latestJob?.title ?? null,
     roleSkills: new Set([...r.skills, ...r.concepts].map(canonicalSkill)),
+    targetProfileId: d.targetProfile?.id ?? null,
+    family: r.family,
+    code: r.code,
+    roleImportance: new Map((roleDef(role)?.competencies ?? []).map((c) => [c.key, c.importance])),
   };
 }
 

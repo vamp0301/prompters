@@ -10,6 +10,8 @@ export const REASON_LABEL: Record<string, string> = {
   not_yet_practised: "Not practised yet",
   in_job_description: "In your job description",
   high_role_relevance: "Core for your target role",
+  required_for_role: "Required for your target role",
+  preferred_for_role: "Valued for your target role",
   on_your_resume: "On your resume",
   interview_weakness: "Weak in your interview",
   due_for_review: "Due for review",
