@@ -34,7 +34,7 @@ import { quizRoutes } from "../modules/quiz/quiz.routes.js";
 import { readinessRoutes } from "../modules/readiness/readiness.routes.js";
 import { careerRoutes } from "../modules/career/career.routes.js";
 import { prepRoutes } from "../modules/prep/prep.routes.js";
-import { roleCatalogueRoutes, targetRoleRoutes } from "../modules/roles/roles.routes.js";
+import { roleAdminRoutes, roleCatalogueRoutes, targetRoleRoutes } from "../modules/roles/roles.routes.js";
 
 export function createApp() {
   const app = express();
@@ -100,6 +100,7 @@ export function createApp() {
   api.use("/career/prep", requireAuth, prepRoutes());
   api.use("/career/projects", requireAuth, projectExperienceRoutes());
   api.use("/career", requireAuth, careerRoutes());
+  api.use("/admin/roles", roleAdminRoutes());
   api.use("/admin", requireAuth, adminRoutes());
   api.use("/", requireAuth, learningRoutes());
   api.use("/", requireAuth, quizRoutes());

@@ -56,6 +56,7 @@ export function MyCareers() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{p.role?.name ?? p.roleKey}</span>
                     {p.primary && <Badge tone="accent">Primary</Badge>}
+                    {p.role && !p.role.reviewed && <Badge>Framework not yet practitioner-reviewed</Badge>}
                   </div>
                   <div className="text-xs text-muted">
                     {p.role?.familyName}

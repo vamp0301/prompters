@@ -1,4 +1,5 @@
 import { logger } from "../../lib/logger.js";
+import { acquire } from "../../lib/lock.js";
 import { prisma } from "../../lib/prisma.js";
 import { canonicalSkill } from "../prep/text.js";
 import {
@@ -13,6 +14,9 @@ import {
  */
 
 export type Importance = "REQUIRED" | "PREFERRED" | "OPTIONAL";
+export const REVIEW_STATUSES = ["UNREVIEWED", "IN_REVIEW", "REVIEWED", "CHANGES_REQUESTED"] as const;
+export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
+const UNREVIEWED: Role["review"] = { status: "UNREVIEWED", reviewedBy: null, reviewerCredentials: null, reviewedAt: null, reviewedFrameworkVersion: null, notes: null };
 export const IMPORTANCE_WEIGHT: Record<Importance, number> = { REQUIRED: 1, PREFERRED: 0.6, OPTIONAL: 0.3 };
 
 export interface Competency {
@@ -45,8 +49,10 @@ export interface Role {
   domain: string | null;
   version: number;
   active: boolean;
-  /** Reviewed by a practitioner of the profession. False for the built-in catalogue. */
+  /** Reviewed by a practitioner for the CURRENT framework version. False for the built-in catalogue. */
   reviewed: boolean;
+  frameworkVersion: number;
+  review: { status: ReviewStatus; reviewedBy: string | null; reviewerCredentials: string | null; reviewedAt: Date | null; reviewedFrameworkVersion: number | null; notes: string | null };
   competencies: RoleCompetency[];
 }
 export interface Taxonomy {
@@ -81,7 +87,7 @@ function fromCatalogue(): Taxonomy {
     roles.set(r.key, {
       key: r.key, family: r.family, familyName: FAMILIES[r.family].name, name: r.name, description: r.description, aliases: r.aliases, specializations: r.specializations ?? [],
       code, areas: r.areas ?? fam.areas, rubric: [...COMMON_RUBRIC, ...fam.rubric],
-      assessments: fam.assessments.filter((a) => code || !CODE_ASSESSMENTS.has(a)), domain: r.domain ?? null, version: TAXONOMY_VERSION, active: true, reviewed: false, competencies: comps,
+      assessments: fam.assessments.filter((a) => code || !CODE_ASSESSMENTS.has(a)), domain: r.domain ?? null, version: TAXONOMY_VERSION, active: true, reviewed: false, frameworkVersion: 1, review: UNREVIEWED, competencies: comps,
     });
   }
   return { version: TAXONOMY_VERSION, source: "catalogue", roles, competencies };
@@ -153,27 +159,77 @@ export function classifyRole(text: string, limit = 5): { suggestions: { key: str
 
 // ───────────────────────── database ─────────────────────────
 
-/** Writes the built-in catalogue to the database when it is newer (idempotent; never deletes). */
+/** JSON with object keys sorted: Postgres jsonb reorders keys, so plain JSON.stringify never compares equal. */
+const canonical = (v: unknown): unknown =>
+  Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])])) : v;
+
+/** What makes up a role's framework: when any of it changes, the framework version goes up. */
+const frameworkOf = (r: { family: string; code: boolean; areas: unknown; rubric: unknown; assessments: string[]; competencies: { key: string; importance: string; weight: number }[] }) =>
+  JSON.stringify({
+    family: r.family,
+    code: r.code,
+    areas: canonical(r.areas),
+    rubric: canonical(r.rubric),
+    assessments: [...r.assessments].sort(),
+    competencies: [...r.competencies].map((c) => `${c.key}:${c.importance}:${c.weight}`).sort(),
+  });
+
+/**
+ * Brings the database in line with the built-in catalogue. Safe to run on every start and from
+ * several instances at once (Redis lock; idempotent). Only roles whose framework actually changed
+ * are written, and their frameworkVersion goes up — which ends any practitioner review of the old
+ * version. Review fields are never written here: only a person records a review.
+ */
 export async function syncTaxonomy() {
-  const have = await prisma.careerRole.aggregate({ _min: { version: true }, _count: true });
-  const builtIn = fromCatalogue();
-  if (have._count >= builtIn.roles.size && (have._min.version ?? 0) >= TAXONOMY_VERSION) return { synced: false };
-  await prisma.$transaction(async (tx) => {
-    for (const c of builtIn.competencies.values()) {
-      const data = { name: c.name, kind: c.kind, description: c.description, assessments: c.assessments, code: c.code, aliases: c.aliases, version: TAXONOMY_VERSION };
-      await tx.competency.upsert({ where: { key: c.key }, create: { key: c.key, ...data }, update: data });
-    }
-    for (const c of builtIn.competencies.values())
-      for (const p of c.prereqs) await tx.competencyPrerequisite.upsert({ where: { competencyKey_prerequisiteKey: { competencyKey: c.key, prerequisiteKey: p } }, create: { competencyKey: c.key, prerequisiteKey: p }, update: {} });
-    for (const r of builtIn.roles.values()) {
-      const data = { family: r.family, name: r.name, description: r.description, aliases: r.aliases, specializations: r.specializations, code: r.code, areas: r.areas as object[], rubric: r.rubric as object[], assessments: r.assessments, domain: r.domain, version: TAXONOMY_VERSION, reviewed: r.reviewed };
-      await tx.careerRole.upsert({ where: { key: r.key }, create: { key: r.key, ...data }, update: data });
-      for (const c of r.competencies)
-        await tx.roleCompetency.upsert({ where: { roleKey_competencyKey: { roleKey: r.key, competencyKey: c.key } }, create: { roleKey: r.key, competencyKey: c.key, importance: c.importance, weight: c.weight }, update: { importance: c.importance, weight: c.weight } });
-    }
-  }, { timeout: 120_000 });
-  logger.info({ version: TAXONOMY_VERSION, roles: builtIn.roles.size, competencies: builtIn.competencies.size }, "Career taxonomy synced to the database");
-  return { synced: true };
+  const release = await acquire("lock:taxonomy-sync", 120_000, 60_000);
+  if (!release) return { synced: false, reason: "busy" as const };
+  try {
+    const builtIn = fromCatalogue();
+    const [roles, comps] = await Promise.all([prisma.careerRole.findMany({ include: { competencies: true } }), prisma.competency.findMany()]);
+    // Database rows in the same shape as the built-in roles, for comparison.
+    const roleByKey = new Map(roles.map((r) => [r.key, { ...r, competencies: r.competencies.map((c) => ({ key: c.competencyKey, importance: c.importance, weight: c.weight })) }]));
+    const compByKey = new Map(comps.map((c) => [c.key, c]));
+    let changedRoles = 0;
+    let changedCompetencies = 0;
+    await prisma.$transaction(
+      async (tx) => {
+        for (const c of builtIn.competencies.values()) {
+          const data = { name: c.name, kind: c.kind, description: c.description, assessments: c.assessments, code: c.code, aliases: c.aliases, version: TAXONOMY_VERSION };
+          const have = compByKey.get(c.key);
+          if (have && have.name === c.name && have.kind === c.kind && have.description === c.description && have.code === c.code && JSON.stringify(have.assessments) === JSON.stringify(c.assessments) && JSON.stringify(have.aliases) === JSON.stringify(c.aliases)) continue;
+          await tx.competency.upsert({ where: { key: c.key }, create: { key: c.key, ...data }, update: data });
+          changedCompetencies++;
+        }
+        for (const c of builtIn.competencies.values())
+          for (const p of c.prereqs) await tx.competencyPrerequisite.upsert({ where: { competencyKey_prerequisiteKey: { competencyKey: c.key, prerequisiteKey: p } }, create: { competencyKey: c.key, prerequisiteKey: p }, update: {} });
+        for (const r of builtIn.roles.values()) {
+          const have = roleByKey.get(r.key);
+          const content = { family: r.family, name: r.name, description: r.description, aliases: r.aliases, specializations: r.specializations, code: r.code, areas: r.areas as object[], rubric: r.rubric as object[], assessments: r.assessments, domain: r.domain, version: TAXONOMY_VERSION };
+          if (!have) {
+            await tx.careerRole.create({ data: { key: r.key, ...content, frameworkVersion: 1 } });
+          } else {
+            const same = frameworkOf(have) === frameworkOf(r);
+            const textSame = have.name === r.name && have.description === r.description && JSON.stringify(have.aliases) === JSON.stringify(r.aliases) && JSON.stringify(have.specializations) === JSON.stringify(r.specializations) && have.domain === r.domain;
+            if (same && textSame) continue;
+            const frameworkVersion = same ? have.frameworkVersion : have.frameworkVersion + 1;
+            // A review covers one framework version: a changed framework is unreviewed again.
+            const reviewed = have.reviewStatus === "REVIEWED" && have.reviewedFrameworkVersion === frameworkVersion;
+            await tx.careerRole.update({ where: { key: r.key }, data: { ...content, frameworkVersion, reviewed, ...(same ? {} : { reviewStatus: have.reviewStatus === "REVIEWED" ? "UNREVIEWED" : have.reviewStatus }) } });
+            if (!same) await tx.roleCompetency.deleteMany({ where: { roleKey: r.key, competencyKey: { notIn: r.competencies.map((c) => c.key) } } });
+          }
+          if (!have || frameworkOf(have) !== frameworkOf(r))
+            for (const c of r.competencies)
+              await tx.roleCompetency.upsert({ where: { roleKey_competencyKey: { roleKey: r.key, competencyKey: c.key } }, create: { roleKey: r.key, competencyKey: c.key, importance: c.importance, weight: c.weight }, update: { importance: c.importance, weight: c.weight } });
+          changedRoles++;
+        }
+      },
+      { timeout: 120_000 },
+    );
+    if (changedRoles || changedCompetencies) logger.info({ version: TAXONOMY_VERSION, changedRoles, changedCompetencies }, "Career taxonomy synced to the database");
+    return { synced: changedRoles + changedCompetencies > 0, changedRoles, changedCompetencies };
+  } finally {
+    await release();
+  }
 }
 
 /** Reads the database taxonomy into memory (falls back to the built-in catalogue if empty). */
@@ -204,7 +260,12 @@ export async function loadTaxonomy(): Promise<Taxonomy> {
       .sort((a, b) => order.indexOf(a.importance) - order.indexOf(b.importance));
     map.set(r.key, {
       key: r.key, family, familyName: FAMILIES[family].name, name: r.name, description: r.description, aliases: r.aliases, specializations: r.specializations, code: r.code,
-      areas: r.areas as unknown as Area[], rubric: r.rubric as unknown as RubricDim[], assessments: r.assessments as AssessmentType[], domain: r.domain, version: r.version, active: r.active, reviewed: r.reviewed, competencies: rc,
+      areas: r.areas as unknown as Area[], rubric: r.rubric as unknown as RubricDim[], assessments: r.assessments as AssessmentType[], domain: r.domain, version: r.version, active: r.active,
+      // Reviewed only if the review covers the framework version in force now.
+      reviewed: r.reviewStatus === "REVIEWED" && r.reviewedFrameworkVersion === r.frameworkVersion,
+      frameworkVersion: r.frameworkVersion,
+      review: { status: r.reviewStatus as ReviewStatus, reviewedBy: r.reviewedBy, reviewerCredentials: r.reviewerCredentials, reviewedAt: r.reviewedAt, reviewedFrameworkVersion: r.reviewedFrameworkVersion, notes: r.reviewNotes },
+      competencies: rc,
     });
   }
   current = { version: Math.max(...roles.map((r) => r.version)), source: "database", roles: map, competencies };

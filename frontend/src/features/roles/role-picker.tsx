@@ -78,6 +78,9 @@ export function RolePicker({ value, onChange, exclude = [] }: { value: string | 
           </button>
         ))}
       </div>
+      {roles.some((r) => !r.reviewed) && (
+        <p className="text-xs text-muted">Skill frameworks are curated by Prompters; ones not yet reviewed by a working practitioner say so on your career.</p>
+      )}
       {matches.length === 0 ? (
         <p className="text-sm text-muted">No career matches that yet. Try another word, or pick the closest one — you can add more careers later.</p>
       ) : (
@@ -96,6 +99,7 @@ export function RolePicker({ value, onChange, exclude = [] }: { value: string | 
                     <span className="block font-medium">{r.name}</span>
                     <span className="mt-0.5 block text-xs text-muted">{r.familyName}{suggested.includes(r.key) && query ? " · suggested" : ""}</span>
                     <span className="mt-1 block text-xs text-muted">{r.description}</span>
+                    {r.reviewed && r.review?.reviewedBy && <span className="mt-1 block text-[11px] text-accent">Framework reviewed by {r.review.reviewedBy}</span>}
                   </span>
                   {selected && <Check className="size-4 shrink-0 text-accent" aria-hidden />}
                 </button>

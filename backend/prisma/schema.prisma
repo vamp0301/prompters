@@ -1370,27 +1370,37 @@ model ProjectAnswer {
 
 /// A career the platform prepares people for. Seeded from the built-in catalogue; extensible in the database.
 model CareerRole {
-  key             String           @id
-  family          String
-  name            String
-  description     String
+  key                      String           @id
+  family                   String
+  name                     String
+  description              String
   /// Words that identify the role in a target, resume headline or job title.
-  aliases         String[]         @default([])
-  specializations String[]         @default([])
+  aliases                  String[]         @default([])
+  specializations          String[]         @default([])
   /// Whether coding tasks may appear at all for this role.
-  code            Boolean          @default(false)
+  code                     Boolean          @default(false)
   /// Interview areas with weights: [{ key, label, description, weight }].
-  areas           Json
+  areas                    Json
   /// Evaluation rubric (common + role dimensions): [{ key, label, description }].
-  rubric          Json
-  assessments     String[]         @default([])
-  domain          String?
-  version         Int
-  active          Boolean          @default(true)
-  /// Reviewed by a practitioner of the profession (false for the built-in catalogue).
-  reviewed        Boolean          @default(false)
-  updatedAt       DateTime         @updatedAt
-  competencies    RoleCompetency[]
+  rubric                   Json
+  assessments              String[]         @default([])
+  domain                   String?
+  version                  Int
+  active                   Boolean          @default(true)
+  /// True only while reviewStatus = REVIEWED for the current frameworkVersion (kept for older readers).
+  reviewed                 Boolean          @default(false)
+  /// Version of this role's competency framework (bumped whenever its content changes).
+  frameworkVersion         Int              @default(1)
+  /// UNREVIEWED | IN_REVIEW | REVIEWED | CHANGES_REQUESTED — set only by a person, never by generation.
+  reviewStatus             String           @default("UNREVIEWED")
+  /// The practitioner who reviewed it, their credentials, when, and which framework version.
+  reviewedBy               String?
+  reviewerCredentials      String?
+  reviewedAt               DateTime?
+  reviewedFrameworkVersion Int?
+  reviewNotes              String?
+  updatedAt                DateTime         @updatedAt
+  competencies             RoleCompetency[]
 
   @@index([family, active])
 }

@@ -1784,7 +1784,13 @@ export interface ProjectReport extends ProjectTestResult {
 export type CareerFamilyKey = "software" | "data" | "product" | "business" | "mba" | "sales" | "design" | "other";
 export type ExperienceLevel = "STUDENT" | "JUNIOR" | "MID" | "SENIOR";
 export interface CareerFamily { key: CareerFamilyKey; name: string; description: string }
-export interface CareerRoleSummary { key: string; name: string; family: CareerFamilyKey; familyName: string; description: string; code: boolean; reviewed: boolean }
+export interface CareerRoleSummary {
+  key: string; name: string; family: CareerFamilyKey; familyName: string; description: string; code: boolean;
+  /** A practitioner reviewed the CURRENT framework version. */
+  reviewed: boolean;
+  frameworkVersion?: number;
+  review?: { status: "UNREVIEWED" | "IN_REVIEW" | "REVIEWED" | "CHANGES_REQUESTED"; reviewedBy: string | null; reviewedAt: string | null };
+}
 export interface CareerCatalogue { version: number; families: CareerFamily[]; roles: CareerRoleSummary[] }
 export interface CareerCompetency { key: string; name: string; kind: string; description: string; assessments: string[] }
 export interface CareerRoleDetail extends CareerRoleSummary {

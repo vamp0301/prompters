@@ -1,16 +1,23 @@
 import { Router } from "express";
 import { z } from "zod";
-import { currentUser, requireAuth } from "../../middleware/auth.js";
-import { notFound } from "../../utils/errors.js";
+import { prisma } from "../../lib/prisma.js";
+import { currentUser, requireAuth, requireRole } from "../../middleware/auth.js";
+import { audit } from "../platform/audit.js";
+import { badRequest, notFound } from "../../utils/errors.js";
 import { handler, param, parse } from "../../utils/http.js";
 import { EXPERIENCE_BANDS } from "../prep/ladder.js";
 import { FAMILIES, type FamilyKey } from "./catalogue.js";
 import { addProfile, archiveProfile, listProfiles, setPrimary, updateProfile } from "./profiles.service.js";
-import { classifyRole, listRoles, roleDef, taxonomy } from "./taxonomy.js";
+import { classifyRole, listRoles, loadTaxonomy, REVIEW_STATUSES, roleDef, taxonomy } from "./taxonomy.js";
 
 const familyKeys = Object.keys(FAMILIES) as [FamilyKey, ...FamilyKey[]];
 
-const summary = (r: ReturnType<typeof listRoles>[number]) => ({ key: r.key, name: r.name, family: r.family, familyName: r.familyName, description: r.description, code: r.code, reviewed: r.reviewed });
+/** Every role says whether a practitioner has reviewed its CURRENT framework (unreviewed content stays labelled). */
+const summary = (r: ReturnType<typeof listRoles>[number]) => ({
+  key: r.key, name: r.name, family: r.family, familyName: r.familyName, description: r.description, code: r.code, reviewed: r.reviewed,
+  frameworkVersion: r.frameworkVersion,
+  review: { status: r.reviewed ? "REVIEWED" : r.review.status === "REVIEWED" ? "UNREVIEWED" : r.review.status, reviewedBy: r.reviewed ? r.review.reviewedBy : null, reviewedAt: r.reviewed ? r.review.reviewedAt : null },
+});
 
 /** The career catalogue (public, read-only: not personal data). */
 export function roleCatalogueRoutes() {
@@ -57,4 +64,49 @@ export function targetRoleRoutes() {
   r.post("/:id/primary", handler(async (req) => setPrimary(currentUser(req).id, param(req, "id"))));
   r.delete("/:id", handler(async (req) => archiveProfile(currentUser(req).id, param(req, "id"))));
   return r;
+}
+
+const reviewBody = z.object({
+  status: z.enum(REVIEW_STATUSES),
+  /** The practitioner's name — required to mark a role reviewed. */
+  reviewedBy: z.string().trim().min(2).max(120).optional(),
+  reviewerCredentials: z.string().trim().max(200).optional(),
+  notes: z.string().trim().max(2000).optional(),
+});
+
+/**
+ * Content governance (ADMIN): record a practitioner's review of a role's competency framework.
+ * A review covers the framework version in force at the time; nothing marks a role reviewed
+ * automatically (AI generation and catalogue syncs never do).
+ */
+export function roleAdminRoutes() {
+  const r = Router();
+  r.use(requireAuth, requireRole("ADMIN"));
+  r.get("/", handler(async () => listAdmin()));
+  r.post("/:key/review", handler(async (req) => {
+    const body = parse(reviewBody, req.body);
+    if (body.status === "REVIEWED" && !body.reviewedBy) throw badRequest("Name the practitioner who reviewed this framework.");
+    const before = await prisma.careerRole.findUnique({ where: { key: param(req, "key") } });
+    if (!before) throw notFound("Role");
+    const reviewed = body.status === "REVIEWED";
+    const after = await prisma.careerRole.update({
+      where: { key: before.key },
+      data: {
+        reviewStatus: body.status,
+        reviewed,
+        reviewedBy: body.reviewedBy ?? before.reviewedBy,
+        reviewerCredentials: body.reviewerCredentials ?? before.reviewerCredentials,
+        reviewNotes: body.notes ?? before.reviewNotes,
+        ...(reviewed ? { reviewedAt: new Date(), reviewedFrameworkVersion: before.frameworkVersion } : {}),
+      },
+    });
+    await audit(currentUser(req).id, "REVIEWED_ROLE_FRAMEWORK", "CareerRole", before.key, { status: before.reviewStatus, frameworkVersion: before.frameworkVersion }, { status: after.reviewStatus, reviewedBy: after.reviewedBy, frameworkVersion: after.frameworkVersion });
+    await loadTaxonomy();
+    return after;
+  }));
+  return r;
+}
+
+async function listAdmin(): Promise<unknown[]> {
+  return prisma.careerRole.findMany({ orderBy: [{ family: "asc" }, { name: "asc" }], select: { key: true, name: true, family: true, frameworkVersion: true, reviewStatus: true, reviewed: true, reviewedBy: true, reviewerCredentials: true, reviewedAt: true, reviewedFrameworkVersion: true, reviewNotes: true } });
 }
