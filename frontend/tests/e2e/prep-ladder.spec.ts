@@ -38,6 +38,19 @@ test("the Top 100 climbs step by step: pages, stage tabs, order, search and prac
   await page.goto(`/career/prep/${id}`);
   await expect(page.getByRole("heading", { level: 1, name: "Your Top 100 Interview Questions" })).toBeVisible();
   await expect(page.getByText(/Pitched at: Student \/ fresher/)).toBeVisible();
+
+  // Opens step by step at Step 1 (Easy), 10 per page, then moves to the next step.
+  const steps = page.getByRole("navigation", { name: "Difficulty steps" });
+  await expect(steps.getByRole("button", { name: /Step 1\s*Easy/ })).toHaveAttribute("aria-current", "step");
+  await expect(page.getByText(/^Showing 1–\d+ of \d+ \(filtered from 100\)$/)).toBeVisible();
+  const stepPages = page.getByRole("navigation", { name: "Question pages" });
+  const last = stepPages.getByRole("button", { name: /^Page \d+$/ }).last();
+  if (await last.count()) await last.click();
+  await page.getByRole("button", { name: /^Next: Step 2/ }).click();
+  await expect(steps.getByRole("button", { name: /Step 2\s*Basic/ })).toHaveAttribute("aria-current", "step");
+  expect(await axe(page)).toEqual([]);
+  await steps.getByRole("button", { name: /All levels/ }).click();
+
   await expect(page.getByRole("heading", { name: "Step 1 · Basics" })).toBeVisible();
   await expect(page.getByText("Showing 1–20 of 100")).toBeVisible();
   expect(await axe(page)).toEqual([]);
@@ -126,7 +139,9 @@ test("while generating: the resume is read, the ladder fills, and Basics can be 
   await expect(ladder).toContainText("50 ready to practise");
   await expect(ladder).toContainText("writing & checking · 12/35");
   await expect(page.getByRole("heading", { name: "Start practising" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Step 1 · Basics" })).toBeVisible();
+  // Practising starts at Step 1 (Easy) while harder steps are still being written.
+  await expect(page.getByRole("navigation", { name: "Difficulty steps" }).getByRole("button", { name: /Step 1\s*Easy/ })).toHaveAttribute("aria-current", "step");
+  await expect(page.getByRole("button", { name: /TOP \d+/ }).first()).toBeVisible();
   expect(await axe(page)).toEqual([]);
   await page.screenshot({ path: "test-results/prep-generating.png", fullPage: true });
 });

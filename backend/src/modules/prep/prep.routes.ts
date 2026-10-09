@@ -38,6 +38,8 @@ const pageQuery = z.object({
   page: z.coerce.number().int().min(1).max(100).default(1),
   size: z.coerce.number().int().min(5).max(50).default(20),
   stage: z.coerce.number().int().min(1).max(3).optional(),
+  /** One difficulty step, 1 (easy) … 5 (expert): the step-by-step view pages within a step. */
+  difficulty: z.coerce.number().int().min(1).max(5).optional(),
   priority: csv(PRIORITIES),
   category: csv(PREP_CATEGORIES),
   skill: z.string().trim().max(80).optional(),
@@ -122,6 +124,7 @@ export function prepRoutes() {
       planId: plan.id,
       rank: { gt: 0 },
       ...(f.stage ? { stage: f.stage } : {}),
+      ...(f.difficulty ? { difficulty: f.difficulty } : {}),
       ...(f.priority.length ? { priority: { in: f.priority } } : {}),
       ...(f.category.length ? { category: { in: f.category } } : {}),
       ...(f.skill ? { skill: f.skill } : {}),
@@ -131,9 +134,10 @@ export function prepRoutes() {
     const personal = f.sort === "personal";
     const [rows, total, all] = await Promise.all([
       // Personal order needs the whole (≤100) filtered list to rank; the others page in the database.
-      prisma.prepQuestion.findMany({ where, orderBy: f.sort === "likely" ? [{ probability: "desc" }, { rank: "asc" }] : { rank: "asc" }, ...(personal ? {} : { skip: (f.page - 1) * f.size, take: f.size }), select: PAGE_FIELDS }),
+      // Within a difficulty step: most likely first (the ladder order is already easy → hard across steps).
+      prisma.prepQuestion.findMany({ where, orderBy: f.sort === "likely" || f.difficulty ? [{ probability: "desc" }, { rank: "asc" }] : { rank: "asc" }, ...(personal ? {} : { skip: (f.page - 1) * f.size, take: f.size }), select: PAGE_FIELDS }),
       prisma.prepQuestion.count({ where }),
-      prisma.prepQuestion.findMany({ where: { planId: plan.id, rank: { gt: 0 } }, select: { stage: true, priority: true, category: true, status: true, skill: true } }),
+      prisma.prepQuestion.findMany({ where: { planId: plan.id, rank: { gt: 0 } }, select: { stage: true, priority: true, category: true, status: true, skill: true, difficulty: true } }),
     ]);
     let items: (typeof rows[number] & { personal?: { score: number; reasons: string[] } })[] = rows;
     if (personal) {
@@ -154,6 +158,8 @@ export function prepRoutes() {
       generating: plan.status === "QUEUED" || plan.status === "RUNNING",
       facets: {
         stages: countBy(all, (q) => q.stage),
+        /** Per difficulty step (1 easy … 5 expert): how many questions, and how many the student is confident on. */
+        difficulties: [1, 2, 3, 4, 5].map((d) => ({ difficulty: d, total: all.filter((q) => q.difficulty === d).length, confident: all.filter((q) => q.difficulty === d && q.status === "CONFIDENT").length })),
         priorities: countBy(all, (q) => q.priority),
         categories: countBy(all, (q) => q.category),
         statuses: countBy(all, (q) => q.status),

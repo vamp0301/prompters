@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useId, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Download, Loader2, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronRight, Download, Loader2, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { Field, Input, Select } from "@/components/ui/input";
@@ -347,7 +347,19 @@ function useDebounced<T>(value: T, ms: number) {
   return v;
 }
 
-type PageParams = { page: number; size: number; stage?: number; priority: string; category: string; skill: string; status: string; q: string; sort: SortOrder };
+type PageParams = { page: number; size: number; stage?: number; difficulty?: number; priority: string; category: string; skill: string; status: string; q: string; sort: SortOrder };
+
+/** The five difficulty steps, easiest first. */
+const LEVELS = [
+  { level: 1, label: "Easy", hint: "Definitions and basics" },
+  { level: 2, label: "Basic", hint: "How-to and everyday use" },
+  { level: 3, label: "Medium", hint: "How it works and why" },
+  { level: 4, label: "Hard", hint: "Scenarios and problems" },
+  { level: 5, label: "Expert", hint: "Design, strategy, trade-offs" },
+] as const;
+type Level = "all" | 1 | 2 | 3 | 4 | 5;
+/** Questions per page inside one step. */
+const STEP_PAGE_SIZE = 10;
 
 const pagePath = (planId: string, p: PageParams) => {
   const qs = new URLSearchParams();
@@ -385,11 +397,16 @@ function QuestionBrowser({ plan }: { plan: PrepPlanDetail }) {
   const setSearch = resetting(setSearchRaw);
   const q = useDebounced(search.trim(), 300);
   const [view, setView] = useState<"list" | "topics">("list");
+  // Step by step from easy to hard: start at Step 1, unless a link arrived with a filter.
+  const deepLinked = ["priority", "category", "skill", "sort"].some((k) => params.get(k));
+  const [level, setLevelRaw] = useState<Level>(deepLinked ? "all" : 1);
+  const setLevel = resetting(setLevelRaw);
+  const size = level === "all" ? PAGE_SIZE : STEP_PAGE_SIZE;
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const filters = { stage: stage === "all" ? undefined : Number(stage), priority: priorities.join(","), category: categories.join(","), skill, status, q, sort };
+  const filters = { stage: stage === "all" ? undefined : Number(stage), difficulty: level === "all" ? undefined : level, priority: priorities.join(","), category: categories.join(","), skill, status, q, sort };
 
-  const pageParams: PageParams = { ...filters, page, size: PAGE_SIZE };
+  const pageParams: PageParams = { ...filters, page, size };
   // `published` is in the key: when the next stage is published, the list refreshes by itself.
   const keyFor = (p: PageParams) => [...careerKeys.prepQuestions(plan.id), "page", p, plan.published] as const;
   const list = useQuery({
@@ -549,7 +566,7 @@ function QuestionBrowser({ plan }: { plan: PrepPlanDetail }) {
                   : "Loading questions…"
                 : data
                   ? data.total
-                    ? `Showing ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, data.total)} of ${data.total}${data.total !== total ? ` (filtered from ${total})` : ""}`
+                    ? `Showing ${(page - 1) * size + 1}–${Math.min(page * size, data.total)} of ${data.total}${data.total !== total ? ` (filtered from ${total})` : ""}`
                     : `Showing 0 of ${total}`
                   : "Loading questions…"}
             </span>
@@ -585,6 +602,8 @@ function QuestionBrowser({ plan }: { plan: PrepPlanDetail }) {
         {view === "topics" && <InkAnnotation className="text-xl">one topic at a time →</InkAnnotation>}
       </div>
 
+      {view === "list" && <LevelSteps level={level} onChange={setLevel} steps={facets?.difficulties} total={total} />}
+
       {view === "list" ? (
         list.isLoading ? (
           <PageSkeleton />
@@ -597,7 +616,7 @@ function QuestionBrowser({ plan }: { plan: PrepPlanDetail }) {
             <ol className="grid gap-3 md:grid-cols-2">
               {items.map((x, i) => {
                 // Step headings mark where the ladder moves up a level.
-                const startsStage = sort === "ladder" && x.stage > 0 && (i === 0 || items[i - 1].stage !== x.stage);
+                const startsStage = level === "all" && sort === "ladder" && x.stage > 0 && (i === 0 || items[i - 1].stage !== x.stage);
                 return (
                   <li key={x.id} className={cn(startsStage && "md:col-span-2")}>
                     {startsStage && (
@@ -616,6 +635,7 @@ function QuestionBrowser({ plan }: { plan: PrepPlanDetail }) {
               })}
             </ol>
             <Pagination page={page} pages={data?.pages ?? 1} onChange={setPage} label="Question pages" />
+            {level !== "all" && page >= (data?.pages ?? 1) && <NextStep level={level} steps={facets?.difficulties} onGo={(l) => { setLevel(l); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
           </div>
         )
       ) : all.isLoading ? (
@@ -661,5 +681,57 @@ function QuestionBrowser({ plan }: { plan: PrepPlanDetail }) {
         />
       )}
     </>
+  );
+}
+
+/** Easy → Expert: one step at a time, each with its own pages. */
+function LevelSteps({ level, onChange, steps, total }: { level: Level; onChange: (l: Level) => void; steps?: { difficulty: number; total: number; confident: number }[]; total: number }) {
+  if (!steps) return null;
+  return (
+    <nav aria-label="Difficulty steps" className="-mx-1 overflow-x-auto px-1 pb-1">
+      <ol className="flex min-w-max gap-2">
+        {LEVELS.map((l, i) => {
+          const s = steps.find((x) => x.difficulty === l.level);
+          const n = s?.total ?? 0;
+          const on = level === l.level;
+          return (
+            <li key={l.level} className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-current={on ? "step" : undefined}
+                disabled={!n}
+                onClick={() => onChange(l.level)}
+                className={cn("w-32 rounded-xl border p-2.5 text-left transition-colors disabled:opacity-50", on ? "border-accent bg-accent-soft" : "border-border bg-surface hover:bg-surface-2")}
+              >
+                <span className="block font-mono text-[10px] uppercase tracking-wider text-muted">Step {l.level}</span>
+                <span className="block font-semibold">{l.label}</span>
+                <span className="block text-[11px] text-muted">
+                  {n} question{n === 1 ? "" : "s"}
+                  {s?.confident ? ` · ${s.confident} confident` : ""}
+                </span>
+              </button>
+              {i < LEVELS.length - 1 && <ChevronRight className="size-4 shrink-0 text-subtle" aria-hidden />}
+            </li>
+          );
+        })}
+        <li className="flex items-center pl-2">
+          <button type="button" aria-current={level === "all" ? "step" : undefined} onClick={() => onChange("all")} className={cn("rounded-xl border px-3 py-2.5 text-sm transition-colors", level === "all" ? "border-accent bg-accent-soft" : "border-border bg-surface hover:bg-surface-2")}>
+            All levels <span className="font-mono text-xs text-muted tabular-nums">{total}</span>
+          </button>
+        </li>
+      </ol>
+    </nav>
+  );
+}
+
+function NextStep({ level, steps, onGo }: { level: 1 | 2 | 3 | 4 | 5; steps?: { difficulty: number; total: number }[]; onGo: (l: 1 | 2 | 3 | 4 | 5) => void }) {
+  const next = LEVELS.find((l) => l.level > level && (steps?.find((s) => s.difficulty === l.level)?.total ?? 0) > 0);
+  if (!next) return <p className="text-center text-sm text-muted">That&apos;s the hardest step. Switch to “All levels” to review everything.</p>;
+  return (
+    <div className="flex justify-center">
+      <Button onClick={() => onGo(next.level)}>
+        Next: Step {next.level} · {next.label} <ArrowRight className="size-4" aria-hidden />
+      </Button>
+    </div>
   );
 }

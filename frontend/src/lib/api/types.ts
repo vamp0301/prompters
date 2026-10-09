@@ -1297,6 +1297,8 @@ export interface PrepQuestionPage {
   generating: boolean;
   facets: {
     stages: Partial<Record<string, number>>;
+    /** Per difficulty step (1 easy … 5 expert); absent on older servers. */
+    difficulties?: { difficulty: number; total: number; confident: number }[];
     priorities: Partial<Record<PrepPriority, number>>;
     categories: Partial<Record<PrepCategory, number>>;
     statuses: Partial<Record<PrepPracticeStatus, number>>;
