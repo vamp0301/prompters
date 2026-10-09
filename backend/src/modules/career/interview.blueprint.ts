@@ -175,3 +175,34 @@ export function pickQuestion(ctx: PickContext, area: Area | null): BankItem | nu
 export const QUESTIONS_FOR_DURATION: Record<number, number> = { 15: 8, 20: 10, 30: 14, 45: 20 };
 
 export { isTargetRole };
+
+const STOP = new Set(["with", "from", "that", "this", "your", "have", "using", "used", "built", "build", "work", "team", "data", "project", "projects", "intern", "summer", "experience", "company", "role", "skills", "about", "into", "over", "months", "years", "based", "their", "which", "where"]);
+
+/** Distinctive words of a parsed resume: project and company names, roles, tools, skills. */
+export function resumeAnchors(resume: unknown): Set<string> {
+  const r = (resume ?? {}) as { projects?: { name?: string; technologies?: string[] }[]; experience?: { role?: string; company?: string }[]; skills?: unknown };
+  const texts = [
+    ...(r.projects ?? []).flatMap((p) => [p.name ?? "", ...(p.technologies ?? [])]),
+    ...(r.experience ?? []).flatMap((e) => [e.company ?? "", e.role ?? ""]),
+    ...(Array.isArray(r.skills) ? r.skills : Object.values((r.skills as Record<string, unknown>) ?? {}).flat()).map(String),
+  ];
+  const words = new Set<string>();
+  for (const t of texts) for (const w of t.toLowerCase().split(/[^a-z0-9+#.]+/)) if (w.length >= 3 && !STOP.has(w)) words.add(w);
+  return words;
+}
+
+/**
+ * Deterministic grounding: a question filed under RESUME or PROJECTS must name something from the
+ * candidate's resume. Generic ones the model mislabelled ("How do you handle stakeholder
+ * conflict?") are moved to ROLE, so "Resume & background" coverage means what it says.
+ */
+export function groundAreas<T extends { area: Area; question: string; claimId?: string | null }>(items: T[], resume: unknown): T[] {
+  const anchors = resumeAnchors(resume);
+  if (!anchors.size) return items;
+  return items.map((q) => {
+    // Anchored to a resume claim: grounded by definition.
+    if ((q.area !== "RESUME" && q.area !== "PROJECTS") || q.claimId) return q;
+    const words = q.question.toLowerCase().split(/[^a-z0-9+#.]+/);
+    return words.some((w) => anchors.has(w)) ? q : { ...q, area: "ROLE" as Area };
+  });
+}

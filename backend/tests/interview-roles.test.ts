@@ -3,7 +3,7 @@ import { login, resetDb, seedFixture, startWorker } from "./helpers.js";
 import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
 import { prisma } from "../src/lib/prisma.js";
-import { buildBlueprint, type BankItem } from "../src/modules/career/interview.blueprint.js";
+import { buildBlueprint, groundAreas, type BankItem } from "../src/modules/career/interview.blueprint.js";
 import { interviewProfile } from "../src/modules/career/interview-roles.js";
 
 /** Manisha interviews for the candidate's career: no coding turns for careers that don't code. */
@@ -70,6 +70,20 @@ describe("interview profiles", () => {
     expect(pm).not.toContain("PROBLEM_SOLVING");
     expect(pm).not.toContain("SYSTEM_DESIGN");
     expect(buildBlueprint("backend", 10, bank, true).areas.map((a) => a.area)).toContain("PROBLEM_SOLVING");
+  });
+});
+
+describe("grounding", () => {
+  it("a 'Resume' question must name something from the resume; generic ones move to role knowledge", () => {
+    const resume = { projects: [{ name: "EV adoption study", technologies: ["SPSS"] }], experience: [{ role: "Summer intern", company: "Acme Retail" }], skills: ["Excel"] };
+    const out = groundAreas([
+      { area: "RESUME" as const, question: "How did you run the competitor analysis at Acme Retail?" },
+      { area: "RESUME" as const, question: "How do you approach stakeholder management when departments conflict?" },
+      { area: "PROJECTS" as const, question: "Walk me through your EV adoption study survey design." },
+      { area: "PROJECTS" as const, question: "Tell me about a claim", claimId: "c1" },
+      { area: "FUNDAMENTALS" as const, question: "What is a north-star metric?" },
+    ], resume);
+    expect(out.map((q) => q.area)).toEqual(["RESUME", "ROLE", "PROJECTS", "PROJECTS", "FUNDAMENTALS"]);
   });
 });
 

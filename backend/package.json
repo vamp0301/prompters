@@ -22,7 +22,8 @@
     "db:seed": "tsx prisma/seed/index.ts",
     "db:reset": "prisma migrate reset --force",
     "project:benchmark": "tsx scripts/project-benchmark.ts",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "test:real-ai": "vitest run --config vitest.real-ai.config.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed/index.ts"

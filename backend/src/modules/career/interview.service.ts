@@ -14,7 +14,7 @@ import { isTargetRole, targetRole, type TargetRoleKey } from "../prep/roles.js";
 import { inferRole } from "../prep/profile.js";
 import { interviewProfile } from "./interview-roles.js";
 import {
-  buildBlueprint, fromMatchBank, fromPrepPlan, nextArea, normalizeQuestion, pickQuestion, QUESTIONS_FOR_DURATION,
+  buildBlueprint, fromMatchBank, fromPrepPlan, groundAreas, nextArea, normalizeQuestion, pickQuestion, QUESTIONS_FOR_DURATION,
   type Area, type BankItem, type Blueprint, type Difficulty,
 } from "./interview.blueprint.js";
 import { buildReport, turnScore } from "./interview.report.js";
@@ -212,7 +212,7 @@ async function roleBank(userId: string, resumeId: string, role: TargetRoleKey, f
       const c = q.claimId ? short.find((x) => x.id === q.claimId) : undefined;
       return { id: `g${i + 1}`, question: q.question, skill: q.skill, level: q.level, area: q.area as Area, claimId: c?.dbId ?? null, claim: c?.claim ?? null, why: q.why };
     });
-  return { bank, aiCalls: 1 };
+  return { bank: groundAreas(bank, resume.parsed), aiCalls: 1 };
 }
 
 /**
