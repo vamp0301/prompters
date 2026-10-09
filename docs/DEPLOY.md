@@ -124,6 +124,44 @@ Use your existing Upstash database. In its settings set **Eviction → off** (`n
 - [ ] Download a PDF pack
 - [ ] Wait 20 minutes, open the site again: first request takes ~1 min (Render waking), then normal
 
+## After every deploy: smoke test
+
+From your machine (never commit credentials; the script prints no secrets):
+
+```
+cd backend
+SMOKE_BASE_URL=https://<your-app>.vercel.app npm run smoke          # full journeys (uses Gemini a few times)
+SMOKE_BASE_URL=https://<your-app>.vercel.app SMOKE_AI=0 npm run smoke   # no AI calls
+```
+
+It registers three throwaway students (Backend, Data Analyst, Product Manager), checks onboarding,
+career profiles, recommendations, a career interview and its report, cross-user isolation, then
+deletes the accounts and their files. Optional `SMOKE_R2_PUBLIC_BASE=https://pub-….r2.dev` checks the
+bucket does not serve files publicly (leave the bucket private — the API streams files after an
+ownership check).
+
+## What runs automatically on start (safe to repeat)
+
+- `prisma migrate deploy` — applies only pending migrations. Re-running reports "No pending migrations".
+  Recent ones: `20261015090000_hardening_indexes`, `20261016090000_career_taxonomy`,
+  `20261017090000_interview_profiles` (adds `InterviewSession.targetRoleProfileId` and links old
+  interviews to a career only when unambiguous), `20261018090000_content_governance`.
+- Career catalogue sync — under a Redis lock (several instances can start together); writes only
+  roles whose framework changed and never touches practitioner reviews. A second start writes nothing.
+
+## Content review (practitioner sign-off)
+
+All 29 role frameworks start **unreviewed** and say so in the app. When a practitioner has reviewed
+one, an ADMIN records it (audited):
+
+```
+POST /api/admin/roles/<roleKey>/review
+{ "status": "REVIEWED", "reviewedBy": "Full name", "reviewerCredentials": "e.g. Senior PM, 9 years", "notes": "…" }
+```
+
+A review covers the framework version in force; if the framework later changes, the role becomes
+unreviewed again. Nothing (including AI generation) marks a role reviewed automatically.
+
 ## Important notes
 
 - **Same database as your laptop.** Your local `backend/.env` points at the same Neon `production` branch. Anything you do locally changes live data. Create a Neon branch for local development and point your local `.env` at it.

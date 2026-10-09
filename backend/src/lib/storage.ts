@@ -58,14 +58,22 @@ class LocalStorage implements StorageDriver {
 }
 
 /** Production: any S3-compatible bucket (AWS S3, Cloudflare R2, Neon Object Storage). Private objects only. */
-class S3Storage implements StorageDriver {
-  private client = new S3Client({
-    region: env.S3_REGION,
-    endpoint: env.S3_ENDPOINT,
-    forcePathStyle: !!env.S3_ENDPOINT,
-    credentials: env.S3_ACCESS_KEY_ID && env.S3_SECRET_ACCESS_KEY ? { accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY } : undefined,
-  });
-  private bucket = env.S3_BUCKET ?? "";
+export class S3Storage implements StorageDriver {
+  private client: S3Client;
+  private bucket: string;
+  /** Config defaults to the environment; tests pass a local S3-compatible endpoint. */
+  constructor(cfg: { endpoint?: string; region?: string; bucket?: string; accessKeyId?: string; secretAccessKey?: string } = {}) {
+    const endpoint = cfg.endpoint ?? env.S3_ENDPOINT;
+    const accessKeyId = cfg.accessKeyId ?? env.S3_ACCESS_KEY_ID;
+    const secretAccessKey = cfg.secretAccessKey ?? env.S3_SECRET_ACCESS_KEY;
+    this.client = new S3Client({
+      region: cfg.region ?? env.S3_REGION,
+      endpoint,
+      forcePathStyle: !!endpoint,
+      credentials: accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey } : undefined,
+    });
+    this.bucket = cfg.bucket ?? env.S3_BUCKET ?? "";
+  }
   async put(key: string, body: Buffer, contentType: string) {
     await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: safeKey(key), Body: body, ContentType: contentType }));
   }
