@@ -115,7 +115,7 @@ export function ReportView({ id }: { id: string }) {
     <div className="space-y-6">
       {back}
       <PageHeader
-        eyebrow="Technical Readiness Report"
+        eyebrow={s.report?.reportName ?? "Technical Readiness Report"}
         title={s.job.title}
         description={`${s.job.company ? `${s.job.company} · ` : ""}${formatDate(s.startedAt)} · ${s.difficulty === "HARD" ? "Hard · " : ""}${LANGUAGE_LABEL[s.language] ?? s.language} · with ${s.interviewer.name}`}
         actions={
@@ -233,7 +233,8 @@ function ReportBody({ report }: { report: InterviewReport }) {
           {report.dimensions ? (
             <Card>
               <CardBody className="space-y-2.5">
-                {DIMENSIONS.map((d) => {
+                {DIMENSIONS.map(({ key, label: fallback }) => {
+                  const d = { key, label: report.dimensionLabels?.[key] ?? fallback };
                   const v = report.dimensions![d.key];
                   return (
                     <div key={d.key} className="grid grid-cols-[150px_1fr_44px] items-center gap-3 text-sm">

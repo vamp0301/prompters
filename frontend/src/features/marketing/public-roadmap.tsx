@@ -151,7 +151,7 @@ function TrackColumn({ label, stages }: { label: string; stages: PublicStage[] }
 
 function RoadmapSkeleton() {
   return (
-    <div className="space-y-4" aria-busy="true" aria-label="Loading roadmap">
+    <div className="space-y-4" role="status" aria-busy="true" aria-label="Loading roadmap">
       <Skeleton className="h-40" />
       <div className="grid gap-4 md:grid-cols-2">
         <Skeleton className="h-56" />

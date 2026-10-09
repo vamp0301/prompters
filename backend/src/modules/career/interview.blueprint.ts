@@ -1,5 +1,6 @@
 import type { InterviewTurn, PrepQuestion } from "@prisma/client";
 import { isTargetRole } from "../prep/roles.js";
+import { interviewProfile } from "./interview-roles.js";
 import type { BankQuestion } from "./schemas.js";
 
 /**
@@ -40,31 +41,20 @@ export interface Blueprint {
 
 export type Difficulty = "STANDARD" | "HARD";
 
-/** Share of the main questions per area, by target role. Follow-ups come on top. */
-const WEIGHTS: Record<string, Partial<Record<Area, number>>> = {
-  backend: { RESUME: 0.05, PROJECTS: 0.2, FUNDAMENTALS: 0.2, ROLE: 0.25, PRACTICAL: 0.1, PROBLEM_SOLVING: 0.1, SYSTEM_DESIGN: 0.1 },
-  frontend: { RESUME: 0.05, PROJECTS: 0.2, FUNDAMENTALS: 0.2, ROLE: 0.3, PRACTICAL: 0.15, PROBLEM_SOLVING: 0.05, SYSTEM_DESIGN: 0.05 },
-  fullstack: { RESUME: 0.05, PROJECTS: 0.2, FUNDAMENTALS: 0.2, ROLE: 0.25, PRACTICAL: 0.1, PROBLEM_SOLVING: 0.1, SYSTEM_DESIGN: 0.1 },
-  sde: { RESUME: 0.05, PROJECTS: 0.15, FUNDAMENTALS: 0.2, ROLE: 0.15, PRACTICAL: 0.1, PROBLEM_SOLVING: 0.25, SYSTEM_DESIGN: 0.1 },
-  data_analyst: { RESUME: 0.05, PROJECTS: 0.25, FUNDAMENTALS: 0.25, ROLE: 0.25, PRACTICAL: 0.1, PROBLEM_SOLVING: 0.1 },
-  devops: { RESUME: 0.05, PROJECTS: 0.15, FUNDAMENTALS: 0.15, ROLE: 0.3, PRACTICAL: 0.2, PROBLEM_SOLVING: 0.05, SYSTEM_DESIGN: 0.1 },
-  ml_engineer: { RESUME: 0.05, PROJECTS: 0.2, FUNDAMENTALS: 0.25, ROLE: 0.25, PRACTICAL: 0.1, PROBLEM_SOLVING: 0.1, SYSTEM_DESIGN: 0.05 },
-};
-
 const SYSTEM_DESIGN_RE = /system design|scal|architect|load balanc|cach|queue|microservice|distributed|sharding|replica|rate limit|high availability/i;
 
-/** Analysis (job-match) bank → blueprint areas. */
-export function fromMatchBank(bank: BankQuestion[], claims: { id: string; claim: string }[]): BankItem[] {
+/** Analysis (job-match) bank → blueprint areas. Non-coding careers have no system-design area: deep questions are cases. */
+export function fromMatchBank(bank: BankQuestion[], claims: { id: string; claim: string }[], code = true): BankItem[] {
   return bank.map((q) => {
     const claim = q.claimId ? claims.find((c) => c.id === q.claimId)?.claim ?? null : null;
     const area: Area =
-      q.level >= 5 || SYSTEM_DESIGN_RE.test(q.skill) ? "SYSTEM_DESIGN" : q.category === "CONCEPTUAL" ? "FUNDAMENTALS" : q.category === "MAY_BE_ASKED" ? "PRACTICAL" : claim ? "PROJECTS" : "ROLE";
+      q.level >= 5 || SYSTEM_DESIGN_RE.test(q.skill) ? (code ? "SYSTEM_DESIGN" : "PRACTICAL") : q.category === "CONCEPTUAL" ? "FUNDAMENTALS" : q.category === "MAY_BE_ASKED" ? "PRACTICAL" : claim ? "PROJECTS" : "ROLE";
     return { id: q.id, question: q.question, skill: q.skill, level: q.level, area, claimId: q.claimId ?? null, claim, why: q.why };
   });
 }
 
 /** Top-100 plan questions → blueprint areas (role-only interviews reuse the candidate's own plan). */
-export function fromPrepPlan(questions: Pick<PrepQuestion, "id" | "question" | "skill" | "category" | "difficulty" | "claimId" | "why">[], claims: Map<string, string>): BankItem[] {
+export function fromPrepPlan(questions: Pick<PrepQuestion, "id" | "question" | "skill" | "category" | "difficulty" | "claimId" | "why">[], claims: Map<string, string>, code = true): BankItem[] {
   return questions.map((q) => {
     const claim = q.claimId ? claims.get(q.claimId) ?? null : null;
     const area: Area =
@@ -75,7 +65,7 @@ export function fromPrepPlan(questions: Pick<PrepQuestion, "id" | "question" | "
           : q.category === "CONCEPTUAL"
             ? "FUNDAMENTALS"
             : q.category === "SCENARIO"
-              ? q.difficulty >= 5 || SYSTEM_DESIGN_RE.test(`${q.skill} ${q.question}`)
+              ? code && (q.difficulty >= 5 || SYSTEM_DESIGN_RE.test(`${q.skill} ${q.question}`))
                 ? "SYSTEM_DESIGN"
                 : "PRACTICAL"
               : "ROLE";
@@ -88,8 +78,10 @@ export function fromPrepPlan(questions: Pick<PrepQuestion, "id" | "question" | "
  * or no problem-solving source) get 0 and their share goes to the rest.
  */
 export function buildBlueprint(role: string | null, questionTarget: number, bank: BankItem[], problemSolvingAvailable: boolean): Blueprint {
-  const weights = WEIGHTS[role ?? ""] ?? WEIGHTS.fullstack;
-  const has = (a: Area) => (a === "PROBLEM_SOLVING" ? problemSolvingAvailable : bank.some((q) => q.area === a));
+  const profile = interviewProfile(role);
+  const weights = profile.weights;
+  // Coding/problem turns exist only for careers that involve coding.
+  const has = (a: Area) => (a === "PROBLEM_SOLVING" ? problemSolvingAvailable && profile.code : bank.some((q) => q.area === a));
   const live = AREAS.filter((a) => (weights[a] ?? 0) > 0 && has(a));
   const total = live.reduce((s, a) => s + (weights[a] ?? 0), 0) || 1;
   // About 70% of the turns are main questions; the rest are follow-ups.

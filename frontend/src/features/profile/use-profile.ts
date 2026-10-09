@@ -45,7 +45,7 @@ export function resumeChecks(v: ResumeCheckInput) {
   return [
     { label: "Name", done: v.name.trim().length > 0 },
     { label: "Education", done: v.education.trim().length > 0 },
-    { label: "Goal role", done: v.goalRole.length > 0 },
+    { label: "Target career", done: v.goalRole.length > 0 },
     { label: "At least 3 skills", done: v.skills.length >= 3 },
     { label: "Headline", done: v.headline.trim().length > 0 },
     { label: "Summary", done: v.summary.trim().length > 0 },

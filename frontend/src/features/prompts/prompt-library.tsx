@@ -48,7 +48,7 @@ export function PromptLibrary() {
     return (
       <div>
         {header}
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true" aria-label="Loading prompts">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" role="status" aria-busy="true" aria-label="Loading prompts">
           {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-44" />)}
         </div>
       </div>

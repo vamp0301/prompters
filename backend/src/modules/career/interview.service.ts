@@ -11,6 +11,8 @@ import { logEvent } from "../platform/events.js";
 import { recordAnswerEvaluated, recordFollowUp } from "../personalization/interview-signals.js";
 import { computeReadiness } from "../readiness/readiness.service.js";
 import { isTargetRole, targetRole, type TargetRoleKey } from "../prep/roles.js";
+import { inferRole } from "../prep/profile.js";
+import { interviewProfile } from "./interview-roles.js";
 import {
   buildBlueprint, fromMatchBank, fromPrepPlan, nextArea, normalizeQuestion, pickQuestion, QUESTIONS_FOR_DURATION,
   type Area, type BankItem, type Blueprint, type Difficulty,
@@ -106,14 +108,17 @@ const titleOf = (s: Pick<InterviewSession, "targetRole"> & { match: { job: { tit
 const endsAtOf = (s: Pick<InterviewSession, "startedAt" | "durationMinutes" | "pausedMs">) => new Date(s.startedAt.getTime() + s.durationMinutes * 60_000 + s.pausedMs);
 const aiBudget = (s: Pick<InterviewSession, "questionTarget">) => s.questionTarget * 2 + 8;
 
-function intro(name: string, title: string, questions: number, minutes: number, withJob: boolean) {
+function intro(name: string, title: string, questions: number, minutes: number, withJob: boolean, noun = "technical interview") {
   const first = name.split(" ")[0];
-  return `Hi ${first}, I'm ${INTERVIEWER.name}. I'll be conducting your technical interview today for the ${title} role. I'll ask about ${questions} questions based on your resume${withJob ? " and the job description you've provided" : ""}, over about ${minutes} minutes. Please answer in English. Take your time — I'll give you enough time for each question.`;
+  return `Hi ${first}, I'm ${INTERVIEWER.name}. I'll be conducting your ${noun} today for the ${title} role. I'll ask about ${questions} questions based on your resume${withJob ? " and the job description you've provided" : ""}, over about ${minutes} minutes. Please answer in English. Take your time — I'll give you enough time for each question.`;
 }
 
-function closingLine() {
-  return "Thank you, that's the end of the interview. Your Technical Readiness Report is being prepared.";
+function closingLine(roleKey?: string | null) {
+  return `Thank you, that's the end of the interview. Your ${interviewProfile(roleKey).reportName} is being prepared.`;
 }
+
+/** Manisha's title follows the career being interviewed for. */
+const interviewerFor = (roleKey: string | null | undefined) => ({ ...INTERVIEWER, role: interviewProfile(roleKey).title, tone: interviewProfile(roleKey).code ? INTERVIEWER.tone : "Professional, calm, neutral" });
 
 async function dsaTasks(used: string[]) {
   return prisma.buildTask.findMany({
@@ -147,16 +152,17 @@ async function roleBank(userId: string, resumeId: string, role: TargetRoleKey, f
   const claims = await prisma.resumeClaim.findMany({ where: { resumeId }, select: { id: true, claim: true } });
   const claimMap = new Map(claims.map((c) => [c.id, c.claim]));
   // Reuse the candidate's own Top 100 for this resume and role when it exists — no AI call needed.
-  const plan = await prisma.prepPlan.findFirst({ where: { userId, resumeId, status: "READY", jobId: null, targetRole: role }, orderBy: { createdAt: "desc" }, select: { id: true } })
-    ?? (await prisma.prepPlan.findFirst({ where: { userId, resumeId, status: "READY" }, orderBy: { createdAt: "desc" }, select: { id: true } }));
+  // Only a plan for THIS career: another career's questions must never leak into the interview.
+  const plan = await prisma.prepPlan.findFirst({ where: { userId, resumeId, status: "READY", jobId: null, targetRole: role }, orderBy: { createdAt: "desc" }, select: { id: true } });
+  const profile = interviewProfile(role);
   if (plan) {
     const qs = await prisma.prepQuestion.findMany({ where: { planId: plan.id, rank: { gt: 0 } }, orderBy: { rank: "asc" }, take: 100, select: { id: true, question: true, skill: true, category: true, difficulty: true, claimId: true, why: true } });
-    if (qs.length >= 10) return { bank: fromPrepPlan(qs, claimMap), aiCalls: 0 };
+    if (qs.length >= 10) return { bank: fromPrepPlan(qs, claimMap, profile.code), aiCalls: 0 };
   }
   const resume = await prisma.careerResume.findUniqueOrThrow({ where: { id: resumeId }, select: { parsed: true } });
   const short = claims.slice(0, 20).map((c, i) => ({ id: `c${i + 1}`, claim: c.claim, dbId: c.id }));
   const r = targetRole(role)!;
-  const p = prompts.roleBank({ role: r.label, skills: r.skills, concepts: r.concepts, resume: resume.parsed, claims: short, focus });
+  const p = prompts.roleBank({ role: r.label, skills: r.skills, concepts: r.concepts, resume: resume.parsed, claims: short, focus, profile });
   const out = await aiJson("interview_bank", p.system, p.user, roleBankSchema, 6000, { timeoutMs: 90_000 });
   const seen = new Set<string>();
   const bank = out.questions
@@ -302,7 +308,7 @@ export async function startSession(userId: string, input: StartInput) {
   const questionTarget = input.questionTarget ?? QUESTIONS_FOR_DURATION[input.durationMinutes] ?? Math.round(input.durationMinutes / 2.2);
   let matchId: string | null = null;
   let resumeId: string;
-  let roleKey: TargetRoleKey | null = null;
+  let roleKey: TargetRoleKey;
   let title: string;
   let bank: BankItem[];
   let aiCalls = 0;
@@ -313,7 +319,10 @@ export async function startSession(userId: string, input: StartInput) {
     matchId = match.id;
     resumeId = match.resumeId;
     title = match.job.title;
-    bank = fromMatchBank(match.questions as unknown as BankQuestion[], match.claims as unknown as { id: string; claim: string }[]);
+    // The job's career decides the interview style (falls back to the student's primary career).
+    const primary = await prisma.targetRoleProfile.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: [{ primary: "desc" }, { createdAt: "asc" }], select: { roleKey: true } });
+    roleKey = inferRole(match.job.title, primary?.roleKey ?? null);
+    bank = fromMatchBank(match.questions as unknown as BankQuestion[], match.claims as unknown as { id: string; claim: string }[], interviewProfile(roleKey).code);
   } else {
     if (!input.resumeId || !input.targetRole) throw badRequest("Choose a resume and a target role, or start from a job-match analysis.");
     if (!isTargetRole(input.targetRole)) throw badRequest("Unknown target role.");
@@ -333,7 +342,8 @@ export async function startSession(userId: string, input: StartInput) {
   }
   if (bank.length < 3) throw conflict("There aren't enough questions for an interview yet. Run the analysis again or generate your Top 100 first.");
 
-  const problemsAvailable = await hasProblems();
+  // Coding/problem turns only for careers that involve coding.
+  const problemsAvailable = interviewProfile(roleKey).code && (await hasProblems());
   const blueprint = buildBlueprint(roleKey ?? "fullstack", questionTarget, bank, problemsAvailable);
   blueprint.readinessBefore = await computeReadiness(userId).then((r) => r.score).catch(() => null);
 
@@ -365,8 +375,8 @@ export async function startSession(userId: string, input: StartInput) {
   await logEvent(userId, "interview_started", { meta: { sessionId: session.id, job: title, mode: matchId ? "job" : "role", difficulty } });
   return {
     id: session.id,
-    interviewer: INTERVIEWER,
-    intro: intro(user.name, title, questionTarget, input.durationMinutes, !!matchId),
+    interviewer: interviewerFor(roleKey),
+    intro: intro(user.name, title, questionTarget, input.durationMinutes, !!matchId, interviewProfile(roleKey).interviewNoun),
     current: turnView(session.turns[0]),
     progress: { answered: 0, target: session.questionTarget },
     endsAt: endsAtOf(session),
@@ -396,7 +406,7 @@ async function sessionView(session: FullSession) {
     pausedAt: session.pausedAt,
     endsAt: endsAtOf(session),
     screenShareWarnings: session.screenShareWarnings,
-    interviewer: INTERVIEWER,
+    interviewer: interviewerFor(session.targetRole),
     job: titleOf(session),
     matchId: session.matchId,
     resumeId: session.resumeId,
@@ -492,9 +502,9 @@ export interface AnswerInput {
 async function nextState(sessionId: string, leadText: string | null, replay = false) {
   const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: sessionId }, include: sessionInclude });
   const answered = session.turns.filter((t) => t.answeredAt).length;
-  if (session.status !== "IN_PROGRESS" && session.status !== "PAUSED") return { done: true, lead: leadText ?? "Okay.", closing: closingLine(), sessionId, replay };
+  if (session.status !== "IN_PROGRESS" && session.status !== "PAUSED") return { done: true, lead: leadText ?? "Okay.", closing: closingLine(session.targetRole), sessionId, replay };
   const current = await currentTurnView(session.turns);
-  if (!current) return { done: true, lead: leadText ?? "Okay.", closing: closingLine(), sessionId, replay };
+  if (!current) return { done: true, lead: leadText ?? "Okay.", closing: closingLine(session.targetRole), sessionId, replay };
   return { done: false, lead: current.lead ?? leadText ?? "Okay.", current, progress: { answered, target: session.questionTarget }, replay };
 }
 
@@ -571,7 +581,7 @@ export async function submitAnswer(userId: string, sessionId: string, input: Ans
       const root = turn.kind === "FOLLOW_UP" || turn.kind === "REPEAT" ? session.turns.find((t) => t.id === turn.parentId) ?? turn : turn;
       const depth = session.turns.filter((t) => t.parentId === root.id && t.kind === "FOLLOW_UP").length;
       const claim = turn.claimId ? bank.find((b) => b.claimId === turn.claimId)?.claim ?? "" : "";
-      const p = prompts.evaluate({ question: turn.question, skill: turn.skill, level: turn.level, answer: input.answerText ?? "", context: claim, depth, maxDepth: MAX_FOLLOW_UPS });
+      const p = prompts.evaluate({ question: turn.question, skill: turn.skill, level: turn.level, answer: input.answerText ?? "", context: claim, depth, maxDepth: MAX_FOLLOW_UPS, profile: interviewProfile(session.targetRole) });
       evaluation = await aiJson("evaluate_answer", p.system, p.user, evaluationSchema, 1500, { timeoutMs: 45_000 });
     }
   } catch (e) {

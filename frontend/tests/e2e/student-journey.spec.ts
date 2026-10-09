@@ -8,9 +8,13 @@ test("register → onboard → roadmap → topic → quiz → result", async ({ 
   await page.getByLabel("Password").fill("Passw0rd!");
   await page.getByRole("button", { name: "Create account" }).click();
 
+  // Onboarding starts with the career; a coding career then asks for level and first language.
+  await expect(page.getByRole("heading", { name: "What role are you preparing for?" })).toBeVisible();
+  await page.getByLabel("Search careers").fill("full stack");
+  await page.getByRole("list", { name: "Careers" }).getByRole("button", { name: /Full Stack Developer/ }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { name: "Where are you starting from?" })).toBeVisible();
   await page.getByRole("button", { name: /Never coded/ }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: /^JavaScript/ }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Continue" }).click();

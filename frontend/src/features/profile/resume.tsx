@@ -202,7 +202,7 @@ export function ResumeTab({ profile }: { profile: ProfileResponse }) {
   if (failed) return <ErrorState error={failed.error} retry={() => failed.refetch()} />;
   if (tasksQ.isLoading || projectsQ.isLoading || journeyQ.isLoading || detailQs.some((q) => q.isLoading)) {
     return (
-      <div className="space-y-4" aria-busy="true" aria-label="Loading resume">
+      <div className="space-y-4" role="status" aria-busy="true" aria-label="Loading resume">
         <Skeleton className="h-10 w-60" />
         <Skeleton className="h-[480px]" />
       </div>

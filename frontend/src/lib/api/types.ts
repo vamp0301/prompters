@@ -1072,6 +1072,9 @@ export interface InterviewTurnView {
 }
 
 export interface InterviewReport {
+  /** Career-specific names (absent on reports made before careers existed). */
+  dimensionLabels?: Partial<Record<"technical" | "projectUnderstanding" | "problemSolving" | "practicalEngineering" | "communication", string>>;
+  reportName?: string;
   readiness: number;
   result: { key: "INTERVIEW_READY" | "NEEDS_IMPROVEMENT" | "NOT_YET_READY"; label: string };
   insufficientEvidence: boolean;
@@ -1537,6 +1540,11 @@ export interface PersonalRec {
   reasons: { code: string; label: string }[];
   /** Built from the reasons and real numbers — never model-written. */
   why: string;
+  /** How completion is judged (same thresholds the outcome tracker uses). */
+  doneWhen: string | null;
+  /** The target role's requirement it serves, when it maps to one. */
+  roleRequirement: "REQUIRED" | "PREFERRED" | "OPTIONAL" | null;
+  targetProfileId: string | null;
   modelName: string;
   modelVersion: string;
 }
@@ -1768,4 +1776,32 @@ export interface ProjectTestView {
 export interface ProjectReport extends ProjectTestResult {
   tests: { id: string; mode: ProjectTestMode; completedAt: string; isRetest: boolean; overall: number | null }[];
   progress: { dimension: ProjectDimension; first: number | null; latest: number | null; tests: number }[] | null;
+}
+
+// ───────────────────────── career taxonomy ─────────────────────────
+export type CareerFamilyKey = "software" | "data" | "product" | "business" | "mba" | "sales" | "design" | "other";
+export type ExperienceLevel = "STUDENT" | "JUNIOR" | "MID" | "SENIOR";
+export interface CareerFamily { key: CareerFamilyKey; name: string; description: string }
+export interface CareerRoleSummary { key: string; name: string; family: CareerFamilyKey; familyName: string; description: string; code: boolean; reviewed: boolean }
+export interface CareerCatalogue { version: number; families: CareerFamily[]; roles: CareerRoleSummary[] }
+export interface CareerCompetency { key: string; name: string; kind: string; description: string; assessments: string[] }
+export interface CareerRoleDetail extends CareerRoleSummary {
+  specializations: string[];
+  areas: { key: string; label: string; description: string; weight: number }[];
+  rubric: { key: string; label: string; description: string }[];
+  assessments: string[];
+  competencies: { required: CareerCompetency[]; preferred: CareerCompetency[]; optional: CareerCompetency[] };
+}
+export interface RoleClassification { suggestions: { key: string; name: string; family: CareerFamilyKey; score: number }[]; ambiguous: boolean }
+export interface TargetRoleProfile {
+  id: string;
+  roleKey: string;
+  role: { key: string; name: string; family: CareerFamilyKey; familyName: string; code: boolean; reviewed: boolean } | null;
+  level: ExperienceLevel;
+  job: { id: string; title: string; company: string | null } | null;
+  timeline: string | null;
+  primary: boolean;
+  status: "ACTIVE" | "ARCHIVED";
+  taxonomyVersion: number;
+  createdAt: string;
 }

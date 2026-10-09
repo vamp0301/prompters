@@ -107,7 +107,7 @@ export function InterviewBank() {
       </div>
 
       {isLoading ? (
-        <div className="space-y-2" aria-busy="true" aria-label="Loading questions">
+        <div className="space-y-2" role="status" aria-busy="true" aria-label="Loading questions">
           {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-16" />)}
         </div>
       ) : error ? (

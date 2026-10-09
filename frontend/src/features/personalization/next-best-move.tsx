@@ -74,7 +74,12 @@ export function NextBestMove() {
     if (shownId) send({ recommendationId: shownId, action: "SHOWN" });
   }, [shownId, send]);
 
-  if (q.isLoading) return <div className={cn(paperCard, "h-48 animate-pulse")} aria-label="Loading your next best move" />;
+  if (q.isLoading)
+    return (
+      <div className={cn(paperCard, "h-48 animate-pulse")} role="status">
+        <span className="sr-only">Loading your next best move</span>
+      </div>
+    );
   // Personalization must never break the dashboard.
   if (q.error || !q.data) return null;
   const d = q.data;
@@ -96,6 +101,7 @@ export function NextBestMove() {
                 <span className="font-semibold">Why: </span>
                 {next.why}
               </p>
+              {next.doneWhen && <p className="mt-1 text-[13px]"><span className="font-semibold">Done when: </span>{next.doneWhen.replace(/^Done when /, "")}</p>}
               <ul className="mt-3 flex flex-wrap gap-1.5" aria-label="Reasons">
                 {next.reasons.map((r) => (
                   <li key={r.code} className="rounded-full border border-current/25 px-2 py-0.5 text-[11px]">

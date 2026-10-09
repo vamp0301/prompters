@@ -1,6 +1,6 @@
 "use client";
 import { useState, type FormEvent } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Circle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,9 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
-import type { CodingLevel, GoalRole, ProfileResponse } from "@/lib/api/types";
-import { GOAL_ROLES, LINK_KEYS, normaliseUrl, resumeChecks, splitList, type LinkKey } from "./use-profile";
+import type { CodingLevel, GoalRole, ProfileResponse, TargetRoleProfile } from "@/lib/api/types";
+import { roleKeys } from "@/features/roles/role-picker";
+import { LINK_KEYS, normaliseUrl, resumeChecks, splitList, type LinkKey } from "./use-profile";
 
 const LEVELS: { value: CodingLevel; label: string }[] = [
   { value: "ZERO", label: "Never coded" },
@@ -108,6 +109,7 @@ function build(f: FormState, existingLinks: Record<string, string> | null) {
 export function ProfileForm({ data }: { data: ProfileResponse }) {
   const qc = useQueryClient();
   const [form, setForm] = useState<FormState>(() => seed(data));
+  const careers = useQuery({ queryKey: roleKeys.mine, queryFn: () => api.get<TargetRoleProfile[]>("/me/target-roles") });
   const [errors, setErrors] = useState<Errors>({});
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => ({ ...f, [k]: v }));
   const setLink = (k: LinkKey, v: string) => setForm((f) => ({ ...f, links: { ...f.links, [k]: v } }));
@@ -134,7 +136,8 @@ export function ProfileForm({ data }: { data: ProfileResponse }) {
   const checks = resumeChecks({
     name: form.name,
     education: form.education,
-    goalRole: form.goalRole,
+    // The primary target career (any profession), falling back to the older goal role.
+    goalRole: careers.data?.find((c) => c.primary)?.role?.name ?? form.goalRole,
     skills: splitList(form.skills),
     headline: form.headline,
     summary: form.summary,
@@ -163,7 +166,7 @@ export function ProfileForm({ data }: { data: ProfileResponse }) {
                 {[1, 2, 3, 4, 5, 6].map((y) => <option key={y} value={y}>Year {y}</option>)}
               </Select>
             </Field>
-            <Field label="Coding level" htmlFor={id("codingLevel")}>
+            <Field label="Coding level" htmlFor={id("codingLevel")} hint="Only used for careers that involve coding.">
               <Select id={id("codingLevel")} value={form.codingLevel} onChange={(e) => set("codingLevel", e.target.value as FormState["codingLevel"])}>
                 <option value="">Not specified</option>
                 {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
@@ -175,13 +178,10 @@ export function ProfileForm({ data }: { data: ProfileResponse }) {
         <Card>
           <CardHeader title="Goals" description="Drives your roadmap, daily plan and Readiness target." />
           <CardBody className="grid gap-4 sm:grid-cols-2">
-            <Field label="Goal role" htmlFor={id("goalRole")}>
-              <Select id={id("goalRole")} value={form.goalRole} onChange={(e) => set("goalRole", e.target.value as FormState["goalRole"])}>
-                <option value="">Not specified</option>
-                {GOAL_ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-              </Select>
-            </Field>
-            <Field label="Start language" htmlFor={id("startLanguage")}>
+            <p className="text-sm text-muted sm:col-span-2">
+              Your target careers are managed in <a href="#careers" className="text-accent underline underline-offset-4">Careers you&apos;re preparing for</a> above.
+            </p>
+            <Field label="Start language" htmlFor={id("startLanguage")} hint="Only used for careers that involve coding.">
               <Select id={id("startLanguage")} value={form.startLanguage} onChange={(e) => set("startLanguage", e.target.value as FormState["startLanguage"])}>
                 {!form.startLanguage && <option value="">Not specified</option>}
                 <option value="PYTHON">Python</option>

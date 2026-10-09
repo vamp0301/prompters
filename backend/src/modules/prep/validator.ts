@@ -64,6 +64,8 @@ export interface ValidationContext {
   stage?: { stage: number; min: number; max: number };
   /** Questions from the candidate's earlier plans for the same target: a regenerated plan asks new ones. */
   previous?: { norm: string; tokens: Set<string> }[];
+  /** Behavioural questions are core for this career (they are rejected otherwise). */
+  allowBehavioural?: boolean;
 }
 
 const REQUIRED_SOURCES: Partial<Record<PrepCategory, SourceType[]>> = {
@@ -72,8 +74,11 @@ const REQUIRED_SOURCES: Partial<Record<PrepCategory, SourceType[]>> = {
   ACHIEVEMENT: ["ACHIEVEMENT", "CERTIFICATION"],
 };
 
-const NON_TECHNICAL =
-  /(tell me about yourself|introduce yourself|where do you see yourself|why should we hire|why do you want to (join|work)|your (greatest )?(strengths?|weakness(es)?)|\b5 years\b|five years|salary|notice period|hobbies|relocat|conflict with (a|your) (team|manager|colleague)|biggest failure)/i;
+/** Generic HR filler: never a Top-100 question, for any career. */
+const HR_FILLER =
+  /(tell me about yourself|introduce yourself|where do you see yourself|why should we hire|why do you want to (join|work)|your (greatest )?(strengths?|weakness(es)?)|\b5 years\b|five years|salary|notice period|hobbies|relocat)/i;
+/** Behavioural questions: core for product, business, MBA, sales and design careers; out for technical ones. */
+const BEHAVIOURAL = /(conflict with (a|your) (team|manager|colleague)|biggest failure)/i;
 const TRIVIAL = /^(do|did|have|are|is|can|were|would) you (know|use|used|familiar|heard|worked|aware|comfortable|like)\b/i;
 const QUESTION_FORM = /\?\s*$|^(explain|describe|walk|design|how|what|why|write|compare|implement|debug|suppose|imagine|given|tell|discuss|outline|differentiate|list|show|consider|if|when|which|where)\b/i;
 const DEFINITION = /^(what is|what are|define|what does)\b/i;
@@ -119,7 +124,7 @@ export function validateBatch(items: unknown[], ctx: ValidationContext) {
     const question = g.question.replace(/\s*\((?:\s*[PECA]\d+\s*,?)+\)/g, "").replace(/\s+/g, " ").trim();
 
     // 2. Technical quality: no HR/behavioural, no yes/no trivia, a real question of sensible length.
-    if (NON_TECHNICAL.test(question) || NON_TECHNICAL.test(g.skill)) {
+    if (HR_FILLER.test(question) || HR_FILLER.test(g.skill) || (!ctx.allowBehavioural && (BEHAVIOURAL.test(question) || BEHAVIOURAL.test(g.skill)))) {
       reject("not_technical");
       continue;
     }

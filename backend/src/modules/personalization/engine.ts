@@ -3,7 +3,7 @@ import { prisma } from "../../lib/prisma.js";
 import { acquire } from "../../lib/lock.js";
 import { generateCandidates, type Candidate } from "./candidates.js";
 import { careerContext, conceptStates, loadStudentData, skillRelevance, studentDifficulty, studentFeatures, type StudentData } from "./data.js";
-import { actionLabel, explain, REASON_LABEL } from "./explain.js";
+import { actionLabel, DONE_WHEN, explain, REASON_LABEL } from "./explain.js";
 import { DIFFICULTY_MODEL, LEVELS, priorityOf, SKILL_STATE_MODEL } from "./model.js";
 import { completedOutcome, interviewDelta, LABEL, outcomeSignals, progressOf, type OutcomeDetail } from "./outcomes.js";
 import { rank, type EngineStatus } from "./ranker.js";
@@ -218,6 +218,10 @@ export function recView(r: Recommendation) {
     difficulty: r.difficulty,
     reasons: r.reasons.map((code) => ({ code, label: REASON_LABEL[code] ?? code })),
     why: explain(c),
+    doneWhen: DONE_WHEN[c.action] ?? null,
+    /** Which requirement of the target role it serves (REQUIRED | PREFERRED | OPTIONAL), when it maps to one. */
+    roleRequirement: (c.facts as { roleRequirement?: string }).roleRequirement ?? null,
+    targetProfileId: r.targetProfileId,
     modelName: r.modelName,
     modelVersion: r.modelVersion,
     createdAt: r.createdAt,

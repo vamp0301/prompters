@@ -199,6 +199,7 @@ async function generateCategory(opts: {
       focus,
       stage: opts.stage,
       previous: opts.previousText?.slice(0, PREVIOUS_IN_PROMPT).map((q) => q.slice(0, 140)),
+      brief: opts.profile.brief,
     });
     let items: unknown[];
     try {
@@ -218,6 +219,7 @@ async function generateCategory(opts: {
       fallbackSource: opts.profile.targetSource,
       stage: opts.stage,
       previous: opts.previous,
+      allowBehavioural: opts.profile.brief.allowBehavioural,
     });
     stats = mergeStats(stats, s);
     // Keep the most likely ones when the model over-delivered; reserve the slots before any await.
@@ -332,7 +334,9 @@ export async function runPlan(planId: string) {
     progress.value.resume.state = "running";
     await progress.save();
     const intel = await ensureResumeIntelligence(plan.resumeId);
-    const profile = buildProfile(intel, { job: plan.job, role: (plan.targetRole as TargetRoleKey | null) ?? null });
+    // A JD's title decides the role; when it's ambiguous, the student's own primary career does (never a silent default).
+    const primary = await prisma.targetRoleProfile.findFirst({ where: { userId: plan.userId, status: "ACTIVE" }, orderBy: [{ primary: "desc" }, { createdAt: "asc" }], select: { roleKey: true } });
+    const profile = buildProfile(intel, { job: plan.job, role: (plan.targetRole as TargetRoleKey | null) ?? null, fallbackRole: primary?.roleKey ?? null });
     progress.value.resume = { state: "done", chunks: intel.chunks.length };
     progress.value.skills = { state: "done", count: profile.counts.skills, names: profile.found.skills };
     progress.value.projects = { state: "done", count: profile.counts.projects, names: profile.found.projects };

@@ -1,4 +1,5 @@
 import type { InterviewSession, InterviewTurn } from "@prisma/client";
+import { interviewProfile } from "./interview-roles.js";
 import { prisma } from "../../lib/prisma.js";
 import { AREA_LABEL, type Area, type BankItem, type Blueprint } from "./interview.blueprint.js";
 import type { CodeReview, Evaluation } from "./schemas.js";
@@ -52,6 +53,7 @@ const verdictOf = (t: Turn) => {
 const shortQuestion = (q: string) => q.split("\n")[0].replace(/\*\*/g, "").slice(0, 220);
 
 export async function buildReport(session: InterviewSession & { turns: Turn[] }, bank: BankItem[]) {
+  const profile = interviewProfile(session.targetRole);
   const answered = session.turns.filter((t) => t.answeredAt);
   const scored = answered.filter((t) => !t.excluded);
   const readiness = weighted(scored) ?? 0;
@@ -64,7 +66,8 @@ export async function buildReport(session: InterviewSession & { turns: Turn[] },
     overall: readiness,
     technical: avg(evals.map((e) => Math.round((e.correctness * 0.45 + e.understanding * 0.3 + (e.depth ?? e.understanding) * 0.25) * 10))),
     projectUnderstanding: weighted(inAreas(["PROJECTS", "RESUME"]).concat(scored.filter((t) => t.claimId && !["PROJECTS", "RESUME"].includes(t.area ?? "")))),
-    problemSolving: weighted(scored.filter((t) => t.kind === "CODING" || t.kind === "PROBLEM" || t.area === "PROBLEM_SOLVING" || t.area === "SYSTEM_DESIGN")),
+    // Coding careers: coding/problem turns and design. Other careers: their cases and scenarios.
+    problemSolving: weighted(scored.filter((t) => t.kind === "CODING" || t.kind === "PROBLEM" || t.area === "PROBLEM_SOLVING" || t.area === "SYSTEM_DESIGN" || (!profile.code && t.area === "PRACTICAL"))),
     practicalEngineering: avg(evals.map((e) => e.practical * 10)),
     communication: avg(evals.map((e) => e.communication * 10)),
   };
@@ -82,7 +85,7 @@ export async function buildReport(session: InterviewSession & { turns: Turn[] },
     .sort((a, b) => b.score - a.score);
   const coverage = (session.blueprint as Blueprint | null)?.areas.map((b) => {
     const ts = inAreas([b.area]);
-    return { area: b.area, label: AREA_LABEL[b.area], planned: b.target, asked: ts.filter((t) => t.kind !== "FOLLOW_UP").length, score: weighted(ts) };
+    return { area: b.area, label: profile.areaLabels[b.area] ?? AREA_LABEL[b.area], planned: b.target, asked: ts.filter((t) => t.kind !== "FOLLOW_UP").length, score: weighted(ts) };
   }) ?? [];
 
   const missing = new Map<string, number>();
@@ -164,6 +167,9 @@ export async function buildReport(session: InterviewSession & { turns: Turn[] },
     result,
     insufficientEvidence: scored.length < 5,
     dimensions,
+    /** Names of the dimensions and of the report for this career. */
+    dimensionLabels: profile.dimensionLabels,
+    reportName: profile.reportName,
     counts: {
       total: scored.length,
       correct: verdicts.filter((v) => v === "CORRECT").length,
@@ -195,6 +201,6 @@ export async function buildReport(session: InterviewSession & { turns: Turn[] },
       screenShareWarnings: session.screenShareWarnings,
       status: signalCount === 0 ? "No signals" : session.screenShareWarnings > 0 || signalCount >= 3 ? "Review recommended" : "Minor signals",
     },
-    disclaimer: "This Technical Readiness Report is a preparation assessment generated from your answers. It is not an automated hiring decision.",
+    disclaimer: `This ${profile.reportName} is a preparation assessment generated from your answers. It is not an automated hiring decision.`,
   };
 }

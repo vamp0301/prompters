@@ -43,6 +43,19 @@ const ACTION_VERB: Record<Candidate["action"], string> = {
 
 export const actionLabel = (a: Candidate["action"]) => ACTION_VERB[a];
 
+/** How the outcome of each action is judged — the same thresholds outcomes.ts measures. */
+export const DONE_WHEN: Record<Candidate["action"], string> = {
+  LEARN_TOPIC: "Done when you pass its quiz.",
+  TAKE_QUIZ: "Done when you pass the quiz.",
+  REVISIT_PREREQUISITE: "Done when you pass its quiz.",
+  REVISE_TOPIC: "Done when your review scores 70% or more.",
+  PRACTICE_SKILL: "Done when your answers on it average 70% or more.",
+  PRACTICE_QUESTION: "Done when your answer scores 70% or more.",
+  FINISH_BUILD: "Done when all its tests pass.",
+  LEARN_CONCEPT: "Done when your explanation scores 75 or more.",
+  PRACTICE_PROJECT: "Done when your re-test answers on it average 70% or more.",
+};
+
 export function explain(c: Pick<Candidate, "action" | "subject" | "reasons" | "facts">) {
   const f = c.facts;
   const has = (r: string) => c.reasons.includes(r);
@@ -72,6 +85,8 @@ export function explain(c: Pick<Candidate, "action" | "subject" | "reasons" | "f
       else if (has("low_mastery") && evidence) parts.push(`${c.subject} is one of your weaker areas (${evidence}).`);
       else if (has("not_yet_practised")) parts.push(`You haven't practised ${c.subject} yet.`);
       if (has("in_job_description")) parts.push(`It's required in ${f.job ? `the ${f.job} job description` : "your job description"}.`);
+      else if (has("required_for_role")) parts.push(`It's a required skill for ${f.role ?? "your target role"}.`);
+      else if (has("preferred_for_role")) parts.push(`${f.role ?? "Your target role"} values it.`);
       else if (has("high_role_relevance")) parts.push(`It's core for a ${f.role ?? "your target"} role.`);
       if (c.action === "PRACTICE_QUESTION") {
         if (has("increase_difficulty")) parts.push("Your recent answers say you're ready for a harder one.");

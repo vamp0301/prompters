@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { ErrorState, PageHeader, PageSkeleton, Tabs } from "@/components/ui/misc";
+import { MyCareers } from "@/features/roles/my-careers";
 import { ProfileForm } from "./profile-form";
 import { ResumeTab } from "./resume";
 import { useProfile } from "./use-profile";
@@ -32,7 +33,14 @@ export function ProfileView() {
       />
       <div role="tabpanel" aria-label={tab === "profile" ? "Profile" : "Resume"}>
         {/* Keyed by updatedAt so the form re-seeds from fresh server data after a save elsewhere. */}
-        {tab === "profile" ? <ProfileForm key={data.profile?.updatedAt ?? "new"} data={data} /> : <ResumeTab profile={data} />}
+        {tab === "profile" ? (
+          <div className="space-y-6">
+            <MyCareers />
+            <ProfileForm key={data.profile?.updatedAt ?? "new"} data={data} />
+          </div>
+        ) : (
+          <ResumeTab profile={data} />
+        )}
       </div>
     </div>
   );
