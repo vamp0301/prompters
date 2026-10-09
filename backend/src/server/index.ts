@@ -5,13 +5,18 @@ import { closePrepQueue } from "../jobs/prep-queue.js";
 import { logger } from "../lib/logger.js";
 import { prisma } from "../lib/prisma.js";
 import { closeRedis } from "../lib/redis.js";
+import { startWorkers } from "../workers/run.js";
 import { createApp } from "./app.js";
 
 if (isProd) {
   // Not fatal (docker-compose runs the production image locally), but worth saying loudly.
   if (corsOrigins.some((o) => /localhost|127\.0\.0\.1/.test(o))) logger.warn({ corsOrigins }, "CORS_ORIGIN allows localhost in production");
-  if (env.STORAGE_DRIVER === "local") logger.warn("STORAGE_DRIVER=local: the API and worker must share STORAGE_DIR, and files live on one machine");
+  if (env.STORAGE_DRIVER === "local") logger.warn("STORAGE_DRIVER=local: files live on this machine's disk — on hosts with ephemeral disks (e.g. Render free) they are lost on every deploy or restart; use STORAGE_DRIVER=s3");
 }
+
+// Hosts without a separate worker service (Render free plan) run the workers in this process.
+const stopWorkers = env.RUN_WORKERS_IN_API ? await startWorkers() : null;
+if (stopWorkers) logger.info("Background workers running inside the API process (RUN_WORKERS_IN_API=true)");
 
 const server = createApp().listen(env.PORT, () => logger.info(`Prompters API listening on :${env.PORT}`));
 // Slightly above typical load-balancer idle timeouts so the LB closes idle connections first.
@@ -35,6 +40,7 @@ async function shutdown(signal: string) {
     server.close(() => resolve());
     server.closeIdleConnections();
   });
+  await stopWorkers?.().catch(() => undefined);
   await Promise.allSettled([closeQueues(), closePrepQueue()]);
   await Promise.allSettled([closeRedis(), prisma.$disconnect()]);
   logger.info("API stopped cleanly");

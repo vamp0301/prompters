@@ -3,7 +3,7 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { pinoHttp } from "pino-http";
-import { corsOrigins, isProd } from "../config/env.js";
+import { corsOrigins, env, isProd } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
 import { workerAlive } from "../lib/heartbeat.js";
 import { redis } from "../lib/redis.js";
@@ -38,7 +38,7 @@ import { prepRoutes } from "../modules/prep/prep.routes.js";
 export function createApp() {
   const app = express();
   app.disable("x-powered-by");
-  if (isProd) app.set("trust proxy", 1);
+  if (isProd) app.set("trust proxy", env.TRUST_PROXY_HOPS);
 
   app.use(requestId);
   app.use(pinoHttp({ logger, genReqId: (req) => (req as express.Request).id, autoLogging: { ignore: (req) => req.url === "/health" || req.url === "/live" || req.url === "/ready" } }));

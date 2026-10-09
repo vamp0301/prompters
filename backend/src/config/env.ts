@@ -43,6 +43,19 @@ const schema = z.object({
     .enum(["true", "false"])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === "true")),
+  /**
+   * Run the background workers (Top-100 generation, PDFs, maintenance) inside the API process.
+   * For hosts without a separate worker service (Render free plan). Default: separate worker process.
+   */
+  RUN_WORKERS_IN_API: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  /**
+   * Reverse proxies in front of the API, so req.ip (rate limits) is the user's IP and not a proxy's.
+   * Render alone = 1; Vercel rewrite → Render = 2.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
   RATE_LIMIT_DISABLED: z
     .enum(["true", "false"])
     .default("false")

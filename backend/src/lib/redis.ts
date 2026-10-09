@@ -11,6 +11,13 @@ export function redis(): Redis {
   return client;
 }
 
+/**
+ * Shared by every worker. When a queue is empty, long-poll for 30 s (a new job still wakes the worker
+ * at once) and check for stalled jobs once a minute: idle Redis traffic stays low, which matters on
+ * hosted plans that count commands (Upstash free: 500K/month).
+ */
+export const IDLE_WORKER_OPTIONS = { drainDelay: 30, stalledInterval: 60_000 } as const;
+
 export function bullConnection() {
   const url = new URL(env.REDIS_URL);
   return {

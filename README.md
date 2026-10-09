@@ -906,7 +906,9 @@ The Docker driver has not been run in this environment; its adversarial test sui
 
 ## Deployment
 
-**No deployment exists yet.** The recommended architecture is:
+**Free deployment (Render + Vercel):** step-by-step guide and every environment variable in [docs/DEPLOY.md](docs/DEPLOY.md); the Render service is defined in [`render.yaml`](render.yaml). On hosts without a separate worker service, set `RUN_WORKERS_IN_API=true` to run the workers inside the API process.
+
+The general recommended architecture is:
 
 | Component | Recommendation |
 |---|---|

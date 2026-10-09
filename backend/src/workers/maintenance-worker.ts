@@ -1,5 +1,5 @@
 import { Queue, Worker } from "bullmq";
-import { bullConnection } from "../lib/redis.js";
+import { bullConnection, IDLE_WORKER_OPTIONS } from "../lib/redis.js";
 import { logger } from "../lib/logger.js";
 import { purgeExpiredRecordings } from "../modules/career/interview.service.js";
 import { recoverStuckPrepWork } from "../modules/prep/recovery.js";
@@ -22,7 +22,7 @@ export async function startMaintenanceWorker() {
         await recoverStuckPrepWork();
       }
     },
-    { connection: bullConnection(), concurrency: 1 },
+    { connection: bullConnection(), concurrency: 1, ...IDLE_WORKER_OPTIONS },
   );
   return { queue, worker };
 }
