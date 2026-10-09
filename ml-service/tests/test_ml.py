@@ -20,7 +20,7 @@ FEATURES = ["skillGap", "jobRelevance", "forgettingRisk", "successProbability"]
 TOKEN = "test-token"
 
 
-def synthetic(n: int, seed: int = 7, students: int = 40, baseline: str = "noise") -> list[dict]:
+def synthetic(n: int, seed: int = 7, students: int = 40, baseline: str = "noise", family: str = "software") -> list[dict]:
     """Learnable synthetic rows spread over `students` (test fixture only). `baseline` is the
     transparent ranker's score for each row: "noise" (uninformative) or "oracle" (knows the label)."""
     rnd = random.Random(seed)
@@ -30,7 +30,7 @@ def synthetic(n: int, seed: int = 7, students: int = 40, baseline: str = "noise"
         p = 0.15 + 0.7 * f["successProbability"] * (0.5 + 0.5 * f["jobRelevance"])
         label = 1 if rnd.random() < p else 0
         b = rnd.random() if baseline == "noise" else 0.9 * label + 0.05 * rnd.random()
-        rows.append({"id": f"r{i}", "group": f"s{i % students}", "createdAt": f"2026-01-01T{(i % students):02d}:{i // 60 % 60:02d}:{i % 60:02d}Z", "label": label, "baseline": b, "features": f})
+        rows.append({"id": f"{family}-r{i}", "group": f"{family}-s{i % students}", "createdAt": f"2026-01-01T{(i % students):02d}:{i // 60 % 60:02d}:{i % 60:02d}Z", "label": label, "baseline": b, "features": f, "family": family})
     return rows
 
 
@@ -134,3 +134,25 @@ def test_rejects_missing_features_and_oversized_requests(client, tmp_path):
     assert client.post("/rank", headers=H, json={"items": [{"id": "a", "features": {"skillGap": 0.5}}]}).status_code == 422
     too_many = [{"id": str(i), "features": {k: 0.5 for k in FEATURES}} for i in range(201)]
     assert client.post("/rank", headers=H, json={"items": too_many}).status_code == 422
+
+
+def test_serves_only_career_families_with_enough_of_their_own_data(tmp_path):
+    """A model trained mostly on engineers must not rank MBA students: only covered families are served."""
+    rows = synthetic(600, students=60, baseline="noise", family="software") + synthetic(40, seed=3, students=6, family="mba")
+    out = train(rows, tmp_path)
+    assert out["status"] in ("TRAINED", "TRAINED_NOT_PROMOTED")
+    assert out["families"] == ["software"]
+    fam = out["gate"]["families"]
+    assert fam["software"]["covered"] is True
+    assert fam["mba"] == {**fam["mba"], "rows": 40, "students": 6, "covered": False}
+    # Evaluated per family on unseen students; too little held-out MBA data is reported, not guessed.
+    assert out["metrics"]["by_family"]["software"]["status"] == "evaluated"
+    assert out["metrics"]["by_family"].get("mba", {"status": "insufficient"})["status"] == "insufficient"
+
+
+def test_rows_without_a_career_family_cannot_train_a_model(tmp_path):
+    rows = [{k: v for k, v in r.items() if k != "family"} for r in synthetic(400)]
+    out = train(rows, tmp_path)
+    assert out["status"] == "INSUFFICIENT_DATA"
+    assert "covered_families" in out["reason"]
+    assert not (tmp_path / "current.json").exists()

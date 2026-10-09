@@ -71,7 +71,7 @@ export interface Ranked extends Candidate {
   mlFeatures: Record<string, number>;
 }
 
-export async function rank(candidates: Candidate[], student: StudentFeatures, userId: string): Promise<{ ranked: Ranked[]; engine: EngineStatus }> {
+export async function rank(candidates: Candidate[], student: StudentFeatures, userId: string, family?: string): Promise<{ ranked: Ranked[]; engine: EngineStatus }> {
   const arm = armOf(userId);
   const rows = candidates.map((c, i) => ({ c, id: String(i), base: baselineScore(c.features), vec: mlVector(c, student) }));
   const ml = !mlConfigured()
@@ -81,13 +81,15 @@ export async function rank(candidates: Candidate[], student: StudentFeatures, us
       : rows.length
         ? await mlRank(rows.map((r) => ({ id: r.id, features: r.vec })))
         : { ok: false as const, reason: "no_candidates" };
-  const useMl = ml.ok && rows.every((r) => typeof ml.scores[r.id] === "number");
+  // A model only ranks careers it has enough of its own data for (engineers ≠ MBA students).
+  const inDistribution = ml.ok && !!family && (ml.families ?? []).includes(family);
+  const useMl = ml.ok && inDistribution && rows.every((r) => typeof ml.scores[r.id] === "number");
   const ranked = rows
     .map((r) => ({ ...r.c, baselineScore: r.base, score: useMl && ml.ok ? Math.round(ml.scores[r.id] * 10000) / 10000 : r.base, mlFeatures: r.vec }))
     .sort((a, b) => b.score - a.score || b.baselineScore - a.baselineScore || a.itemId.localeCompare(b.itemId));
   const engine: EngineStatus =
     useMl && ml.ok
       ? { mode: "ml", modelStatus: "trained", arm, modelName: ml.modelName, modelVersion: ml.modelVersion }
-      : { mode: "baseline", modelStatus: ml.ok ? "error" : ml.reason, arm, modelName: BASELINE_RANKER.name, modelVersion: BASELINE_RANKER.version };
+      : { mode: "baseline", modelStatus: ml.ok ? (inDistribution ? "error" : "out_of_distribution") : ml.reason, arm, modelName: BASELINE_RANKER.name, modelVersion: BASELINE_RANKER.version };
   return { ranked, engine };
 }

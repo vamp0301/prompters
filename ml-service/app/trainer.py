@@ -30,6 +30,13 @@ MIN_KNOWN_RATE = 0.5
 TEST_STUDENT_SHARE = 0.2
 # The model goes live only if it beats the transparent baseline on those unseen students.
 PROMOTION_MARGIN = 0.01
+# A career family (software, data, product, mba…) is served by the model only with this much of its
+# own data: a model trained on engineers says nothing about MBA students. Others keep the baseline.
+MIN_FAMILY_ROWS = 100
+MIN_FAMILY_STUDENTS = 10
+MIN_FAMILY_PER_CLASS = 10
+# Per-family evaluation on unseen students needs at least this many held-out rows (both classes).
+MIN_FAMILY_TEST_ROWS = 20
 
 
 def make_model():
@@ -54,6 +61,24 @@ def calibration(y: np.ndarray, p: np.ndarray, bins: int = 10):
     return out
 
 
+def family_coverage(rows: list[dict]) -> dict:
+    """Rows, students and outcomes per career family, and whether the family has enough to be served."""
+    out: dict[str, dict] = {}
+    for r in rows:
+        f = r.get("family") or "unknown"
+        e = out.setdefault(f, {"rows": 0, "positives": 0, "students": set()})
+        e["rows"] += 1
+        e["positives"] += 1 if r["label"] == 1 else 0
+        if r.get("group"):
+            e["students"].add(r["group"])
+    report = {}
+    for f, e in out.items():
+        students, negatives = len(e["students"]), e["rows"] - e["positives"]
+        covered = f != "unknown" and e["rows"] >= MIN_FAMILY_ROWS and students >= MIN_FAMILY_STUDENTS and e["positives"] >= MIN_FAMILY_PER_CLASS and negatives >= MIN_FAMILY_PER_CLASS
+        report[f] = {"rows": e["rows"], "students": students, "positives": e["positives"], "negatives": negatives, "covered": covered}
+    return report
+
+
 def gate(rows: list[dict]) -> dict:
     """Every check the dataset must pass before a model is trained, with the measured values."""
     n = len(rows)
@@ -70,7 +95,10 @@ def gate(rows: list[dict]) -> dict:
         "varying_features": {"value": round(len(varying) / len(features), 3) if features else 0, "required": MIN_VARYING_FEATURES, "ok": bool(features) and len(varying) / len(features) >= MIN_VARYING_FEATURES},
         "known_rate": {"value": round(known, 3), "required": MIN_KNOWN_RATE, "ok": known >= MIN_KNOWN_RATE},
     }
-    return {"ok": all(c["ok"] for c in checks.values()), "checks": checks}
+    families = family_coverage(rows)
+    covered = sorted(f for f, e in families.items() if e["covered"])
+    checks["covered_families"] = {"value": len(covered), "required": 1, "ok": len(covered) >= 1}
+    return {"ok": all(c["ok"] for c in checks.values()), "checks": checks, "families": families}
 
 
 def student_split(rows: list[dict]):
@@ -128,14 +156,26 @@ def train(rows: list[dict], out_dir: Path) -> dict:
     baseline = ranking_metrics(y_test, baseline_scores)
     promoted = metrics["roc_auc"] >= baseline["roc_auc"] + PROMOTION_MARGIN and metrics["pr_auc"] >= baseline["pr_auc"]
     comparison = {"on": "unseen students", "ml": {k: metrics[k] for k in ("roc_auc", "pr_auc")}, "baseline": baseline, "margin_required": PROMOTION_MARGIN, "ml_beats_baseline": promoted}
+    # Per family, on the same unseen students — "insufficient" where there's too little to judge.
+    by_family = {}
+    fam_test = np.array([r.get("family") or "unknown" for r in test_rows])
+    for f in sorted(set(fam_test)):
+        m = fam_test == f
+        if m.sum() < MIN_FAMILY_TEST_ROWS or len(set(y_test[m])) < 2:
+            by_family[f] = {"status": "insufficient", "test_rows": int(m.sum())}
+        else:
+            by_family[f] = {"status": "evaluated", "test_rows": int(m.sum()), "ml": ranking_metrics(y_test[m], p[m]), "baseline": ranking_metrics(y_test[m], baseline_scores[m])}
+    metrics["by_family"] = by_family
+    # Served only for families with enough training data of their own.
+    families = sorted(f for f, e in g["families"].items() if e["covered"])
 
     digest = hashlib.sha1(json.dumps([r["id"] for r in rows]).encode()).hexdigest()[:8]
     version = f"{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{digest}"
     out_dir.mkdir(parents=True, exist_ok=True)
     file = f"model-{version}.joblib"
     joblib.dump({"model": model, "features": features, "library": library, "version": version}, out_dir / file)
-    meta = {"model_name": MODEL_NAME, "version": version, "file": file, "features": features, "library": library, "metrics": metrics, "comparison": comparison, "dataset_size": n, "trained_at": datetime.now(timezone.utc).isoformat()}
-    result = {**base, "model_version": version, "library": library, "features": features, "metrics": metrics, "comparison": comparison}
+    meta = {"model_name": MODEL_NAME, "version": version, "file": file, "features": features, "library": library, "metrics": metrics, "comparison": comparison, "families": families, "dataset_size": n, "trained_at": datetime.now(timezone.utc).isoformat()}
+    result = {**base, "model_version": version, "library": library, "features": features, "metrics": metrics, "comparison": comparison, "families": families}
     if not promoted:
         # Kept for inspection, never served: the live ranker stays as it is.
         (out_dir / f"candidate-{version}.json").write_text(json.dumps(meta, indent=2))

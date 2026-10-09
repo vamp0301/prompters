@@ -392,6 +392,8 @@ describe("personalization API", () => {
 describe("ML service integration and fallback", () => {
   let server: Server;
   let mode: "trained" | "cold" | "slow" | "error" = "trained";
+  /** Career families the stub model claims enough data for (undefined: an older service that doesn't say). */
+  let families: string[] | undefined = ["software"];
   let seenToken = "";
   let calls = 0;
   beforeAll(async () => {
@@ -407,7 +409,7 @@ describe("ML service integration and fallback", () => {
           if (mode === "error") return res.writeHead(500).end("boom");
           // A "trained" model that simply prefers revisions and topics over skills — distinguishable from the baseline.
           const scores = Object.fromEntries(items.map((i) => [i.id, i.features.action_LEARN_TOPIC ? 0.99 : 0.1 + i.features.skillGap * 0.1]));
-          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ model_status: "trained", model_name: "recommendation-success", model_version: "test-v1", scores }));
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ model_status: "trained", model_name: "recommendation-success", model_version: "test-v1", ...(families ? { families } : {}), scores }));
         };
         if (mode === "slow") setTimeout(reply, 1500);
         else reply();
@@ -481,6 +483,25 @@ describe("ML service integration and fallback", () => {
     } finally {
       process.env.ML_TRAFFIC_PERCENT = "100";
     }
+  });
+
+  it("a model never ranks a career family it wasn't trained on (out of distribution → baseline)", async () => {
+    mode = "trained";
+    families = ["software"];
+    const pm = await login("STUDENT", { onboard: false });
+    await pm.agent.post("/api/profile/onboarding").send({ targetRoleKey: "product_manager", explanationLocale: "en", weeklyHours: 8 });
+    await pm.agent.post("/api/career/resumes").send({ text: RESUME, label: "CV" });
+    const run = await refresh(pm.id);
+    expect(run.engine).toMatchObject({ mode: "baseline", modelStatus: "out_of_distribution", modelName: "baseline-weighted" });
+    const recs = await prisma.recommendation.findMany({ where: { userId: pm.id, status: "ACTIVE" } });
+    expect(recs.length).toBeGreaterThan(0);
+    expect(recs.every((r) => (r.features as { role?: { family?: string } }).role?.family === "product")).toBe(true);
+
+    // An older service that doesn't say which families it covers is trusted for none.
+    families = undefined;
+    const s = await studentWithHistory();
+    expect((await refresh(s.id)).engine).toMatchObject({ mode: "baseline", modelStatus: "out_of_distribution" });
+    families = ["software"];
   });
 
   it("falls back when the service is down", async () => {

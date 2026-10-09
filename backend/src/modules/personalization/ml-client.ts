@@ -10,6 +10,8 @@ export interface MlRankResult {
   ok: true;
   modelName: string;
   modelVersion: string;
+  /** Career families the model has enough of its own data for; others keep the baseline. */
+  families?: string[];
   scores: Record<string, number>;
 }
 export interface MlUnavailable {
@@ -45,9 +47,9 @@ const reasonOf = (e: unknown) => {
 /** P(success) per item from the trained model, or why it can't be used. */
 export async function mlRank(items: { id: string; features: Record<string, number> }[]): Promise<MlRankResult | MlUnavailable> {
   try {
-    const r = await call<{ model_status: string; model_name?: string; model_version?: string; scores?: Record<string, number> }>("/rank", { items });
+    const r = await call<{ model_status: string; model_name?: string; model_version?: string; families?: string[]; scores?: Record<string, number> }>("/rank", { items });
     if (r.model_status !== "trained" || !r.scores || !r.model_name || !r.model_version) return { ok: false, reason: r.model_status || "cold_start" };
-    return { ok: true, modelName: r.model_name, modelVersion: r.model_version, scores: r.scores };
+    return { ok: true, modelName: r.model_name, modelVersion: r.model_version, families: Array.isArray(r.families) ? r.families : [], scores: r.scores };
   } catch (e) {
     const reason = reasonOf(e);
     if (reason !== "not_configured" && reason !== "cold_start") logger.warn({ reason }, "ML ranker unavailable; using the baseline");

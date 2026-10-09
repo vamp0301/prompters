@@ -37,7 +37,7 @@ export async function exportDataset() {
   });
   return rows
     .map((r) => {
-      const f = r.features as { ml?: Record<string, number>; baselineScore?: number } | null;
+      const f = r.features as { ml?: Record<string, number>; baselineScore?: number; role?: { key?: string; family?: string } } | null;
       if (!f?.ml) return null;
       return {
         id: r.id,
@@ -48,6 +48,9 @@ export async function exportDataset() {
         outcomeDetail: r.outcomeDetail,
         label: r.outcome === "SUCCESS" ? 1 : 0,
         baseline: typeof f.baselineScore === "number" ? f.baselineScore : null,
+        // Career family: the trainer serves the model only for families with enough of their own data.
+        family: f.role?.family ?? "unknown",
+        roleKey: f.role?.key ?? null,
         features: Object.fromEntries(ML_FEATURES.map((k) => [k, f.ml![k] ?? -1])),
       };
     })
@@ -61,8 +64,9 @@ export async function exportDataset() {
 export async function productMetrics() {
   const shownRecs = await prisma.recommendation.findMany({
     where: { shownAt: { not: null } },
-    select: { arm: true, outcomeDetail: true, improvement: true, outcomeSignals: true, feedback: { where: { source: "USER", action: "ACCEPTED" }, select: { id: true } } },
+    select: { arm: true, outcomeDetail: true, improvement: true, outcomeSignals: true, features: true, feedback: { where: { source: "USER", action: "ACCEPTED" }, select: { id: true } } },
   });
+  const familyOf = (r: (typeof shownRecs)[number]) => (r.features as { role?: { family?: string } } | null)?.role?.family ?? "unknown";
   const summarize = (recs: typeof shownRecs) => {
     const n = recs.length;
     const count = (pred: (r: (typeof recs)[number]) => boolean) => recs.filter(pred).length;
@@ -94,6 +98,8 @@ export async function productMetrics() {
   return {
     ...summarize(shownRecs),
     byArm: { ml: summarize(shownRecs.filter((r) => r.arm === "ml")), baseline: summarize(shownRecs.filter((r) => r.arm !== "ml")) },
+    // Per career family: a result for engineers says nothing about MBA or PM students.
+    byFamily: Object.fromEntries([...new Set(shownRecs.map(familyOf))].sort().map((f) => [f, summarize(shownRecs.filter((r) => familyOf(r) === f))])),
   };
 }
 

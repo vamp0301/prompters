@@ -1,6 +1,7 @@
 import { Prisma, type Recommendation } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
 import { acquire } from "../../lib/lock.js";
+import { taxonomy } from "../roles/taxonomy.js";
 import { generateCandidates, type Candidate } from "./candidates.js";
 import { careerContext, conceptStates, loadStudentData, skillRelevance, studentDifficulty, studentFeatures, type StudentData } from "./data.js";
 import { actionLabel, DONE_WHEN, explain, REASON_LABEL } from "./explain.js";
@@ -87,7 +88,7 @@ export async function refresh(userId: string, now = new Date()) {
   await resolveOutcomes(userId, d, now, new Map(states.map((x) => [x.conceptId, x.mastery])));
 
   const candidates = generateCandidates(d, career, states, difficulty);
-  const { ranked, engine } = await rank(candidates, student, userId);
+  const { ranked, engine } = await rank(candidates, student, userId, career.family);
   const top = ranked.slice(0, TOP_N);
 
   const open = await prisma.recommendation.findMany({ where: { userId, status: "ACTIVE" } });
@@ -104,7 +105,7 @@ export async function refresh(userId: string, now = new Date()) {
         difficulty: c.difficulty,
         priority: priorityOf(c.score),
         reasons: c.reasons,
-        features: { features: c.features, ml: c.mlFeatures, baselineScore: c.baselineScore, facts: c.facts, subject: c.subject, conceptId: c.conceptId, itemType: c.itemType } as unknown as Prisma.InputJsonValue,
+        features: { features: c.features, ml: c.mlFeatures, baselineScore: c.baselineScore, facts: c.facts, subject: c.subject, conceptId: c.conceptId, itemType: c.itemType, role: { key: career.role, family: career.family, taxonomyVersion: taxonomy().version } } as unknown as Prisma.InputJsonValue,
         modelName: engine.modelName,
         modelVersion: engine.modelVersion,
         arm: engine.arm,
