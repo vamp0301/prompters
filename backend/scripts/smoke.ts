@@ -138,7 +138,7 @@ async function main() {
     expect(r.status === 401, `status ${r.status}`);
   });
 
-  const journeys = [];
+  const journeys: Awaited<ReturnType<typeof journey>>[] = [];
   for (const role of ["backend", "data_analyst", "product_manager"]) journeys.push(await journey(role));
 
   await check("isolation", "another user can't read an interview", async () => {
