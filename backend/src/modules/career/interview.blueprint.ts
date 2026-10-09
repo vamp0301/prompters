@@ -1,5 +1,5 @@
 import type { InterviewTurn, PrepQuestion } from "@prisma/client";
-import type { TargetRoleKey } from "../prep/roles.js";
+import { isTargetRole } from "../prep/roles.js";
 import type { BankQuestion } from "./schemas.js";
 
 /**
@@ -182,4 +182,4 @@ export function pickQuestion(ctx: PickContext, area: Area | null): BankItem | nu
 /** Interview length → number of turns (main questions + follow-ups). */
 export const QUESTIONS_FOR_DURATION: Record<number, number> = { 15: 8, 20: 10, 30: 14, 45: 20 };
 
-export const isTargetRole = (r: string): r is TargetRoleKey => ["backend", "frontend", "fullstack", "sde", "data_analyst", "devops", "ml_engineer"].includes(r);
+export { isTargetRole };

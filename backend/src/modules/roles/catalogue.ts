@@ -210,14 +210,14 @@ export const COMPETENCIES: Record<string, CompetencyDef> = {
   Java: prog("Typed, object-oriented language for large systems."), "C++": prog("Systems language with manual memory control."), JavaScript: prog("The language of the web."),
   TypeScript: prog("JavaScript with static types."), HTML: tool("Structure of web pages.", { code: true }), CSS: tool("Styling and layout of web pages.", { code: true }),
   React: prog("UI library built from components."), "Next.js": prog("React framework with routing and server rendering."), Redux: prog("Predictable state container."),
-  "Tailwind CSS": tool("Utility-first CSS framework.", { code: true }), "REST APIs": tech("Resource-oriented HTTP APIs.", { code: true, assessments: ["CONCEPT_CHECK", "CODING"] }),
+  "Tailwind CSS": tool("Utility-first CSS framework.", { code: true }), "REST APIs": tech("Resource-oriented HTTP APIs (REST).", { code: true, assessments: ["CONCEPT_CHECK", "CODING"] }),
   SQL: tool("Querying and shaping relational data.", { code: true, assessments: ["CONCEPT_CHECK", "SQL"] }), PostgreSQL: tool("Relational database.", { code: true, assessments: ["CONCEPT_CHECK", "SQL"] }),
   MySQL: tool("Relational database.", { code: true, assessments: ["CONCEPT_CHECK", "SQL"] }), MongoDB: tool("Document database.", { code: true }), Redis: tool("In-memory data store and cache.", { code: true }),
   Authentication: tech("Proving who a user is.", { code: true }), JWT: tech("Signed tokens for stateless auth.", { code: true }), Docker: tool("Packaging apps into containers.", { code: true }),
   Git: tool("Version control.", { code: true }), Testing: tech("Automated tests that prove code works.", { code: true, assessments: ["CONCEPT_CHECK", "CODING"] }),
   Accessibility: c("DESIGN", "Making products usable for people with disabilities.", ["CONCEPT_CHECK", "DESIGN_CRITIQUE"], { aliases: ["a11y"] }),
-  "Data structures": tech("Arrays, lists, trees, graphs, hash maps.", { code: true, assessments: ["CONCEPT_CHECK", "CODING"] }),
-  Algorithms: tech("Searching, sorting, recursion, dynamic programming.", { code: true, assessments: ["CONCEPT_CHECK", "CODING"], prereqs: ["Data structures"] }),
+  // One concept in the skill-state system (canonical key "data structures algorithms", i.e. DSA).
+  "Data structures & algorithms": tech("Arrays, trees, graphs, hash maps; searching, sorting, recursion.", { code: true, assessments: ["CONCEPT_CHECK", "CODING"], aliases: ["dsa"] }),
   OOP: tech("Objects, classes, encapsulation, polymorphism.", { code: true }), Linux: tool("The operating system most servers run.", { code: true }),
   Bash: prog("Shell scripting."), Kubernetes: tool("Container orchestration.", { code: true, prereqs: ["Docker"] }), AWS: tool("Amazon's cloud platform."),
   "CI/CD": tech("Automated build, test and deploy pipelines.", { code: true }), Terraform: tool("Infrastructure as code.", { code: true }), Nginx: tool("Web server and reverse proxy.", { code: true }),
@@ -229,7 +229,7 @@ export const COMPETENCIES: Record<string, CompetencyDef> = {
   Postman: tool("API testing and exploration."), JIRA: tool("Issue and project tracking.", { aliases: ["jira"] }), Wireshark: tool("Network packet analysis."), Nmap: tool("Network discovery and port scanning."),
   "Burp Suite": tool("Web application security testing."), SIEM: tool("Security event collection and alerting.", { aliases: ["splunk", "security information and event management"] }),
   // ── Software concepts ──
-  HTTP: tech("The request/response protocol of the web."), REST: tech("Resource-based API style."), Databases: tech("Storing and querying data reliably."), Indexing: tech("Making lookups fast.", { prereqs: ["Databases"] }),
+  HTTP: tech("The request/response protocol of the web."), Databases: tech("Storing and querying data reliably."), Indexing: tech("Making lookups fast.", { prereqs: ["Databases"] }),
   Transactions: tech("All-or-nothing changes; ACID.", { prereqs: ["Databases"] }), Caching: tech("Keeping hot data close."), Authorization: tech("Deciding what a user may do.", { prereqs: ["Authentication"] }),
   Concurrency: tech("Many things at once: threads, async, races."), "API design": tech("Designing clear, stable interfaces."), Scalability: tech("Handling more load gracefully."),
   "System design": tech("Architecting systems for scale and reliability.", { assessments: ["CONCEPT_CHECK", "SYSTEM_DESIGN"] }), "Operating systems": tech("Processes, memory, files, scheduling."),
@@ -374,24 +374,24 @@ export interface RoleDef {
   domain?: string;
 }
 
-const SOFTWARE_BASE = ["Git", "Data structures", "Algorithms", "OOP"];
+const SOFTWARE_BASE = ["Git", "Data structures & algorithms", "OOP"];
 
 export const ROLES: RoleDef[] = [
   // ── Software & IT (the original seven keep their keys and skill lists) ──
   { key: "backend", family: "software", name: "Backend Developer", description: "Builds APIs, data stores and server-side systems.", aliases: ["backend", "back end", "server side", "api developer", "node developer", "java developer"],
-    required: ["Node.js", "Express", "REST APIs", "SQL", "Databases", "HTTP", "Authentication", "Git"], preferred: ["Python", "Java", "PostgreSQL", "MySQL", "MongoDB", "Redis", "JWT", "Docker", "Testing", "REST", "Indexing", "Transactions", "Caching", "Authorization", "Concurrency", "API design", "Scalability", "System design", "Data structures", "Algorithms", "OOP", "Operating systems", "Networking", "Security"] },
+    required: ["Node.js", "Express", "REST APIs", "SQL", "Databases", "HTTP", "Authentication", "Git"], preferred: ["Python", "Java", "PostgreSQL", "MySQL", "MongoDB", "Redis", "JWT", "Docker", "Testing", "Indexing", "Transactions", "Caching", "Authorization", "Concurrency", "API design", "Scalability", "System design", "Data structures & algorithms", "OOP", "Operating systems", "Networking", "Security"] },
   { key: "frontend", family: "software", name: "Frontend Developer", description: "Builds the interfaces people use in the browser.", aliases: ["frontend", "front end", "ui developer", "react developer", "web developer"],
-    required: ["HTML", "CSS", "JavaScript", "React", "DOM", "HTTP", "Git"], preferred: ["TypeScript", "Next.js", "Redux", "Tailwind CSS", "REST APIs", "Testing", "Accessibility", "Browser rendering", "Event loop", "Closures", "Promises", "State management", "Performance", "Responsive design", "Security", "Caching", "Data structures", "Algorithms"] },
+    required: ["HTML", "CSS", "JavaScript", "React", "DOM", "HTTP", "Git"], preferred: ["TypeScript", "Next.js", "Redux", "Tailwind CSS", "REST APIs", "Testing", "Accessibility", "Browser rendering", "Event loop", "Closures", "Promises", "State management", "Performance", "Responsive design", "Security", "Caching", "Data structures & algorithms"] },
   { key: "fullstack", family: "software", name: "Full Stack Developer", description: "Works across frontend, backend and data.", aliases: ["full stack", "fullstack", "mern", "mean stack"],
-    required: ["JavaScript", "React", "Node.js", "Express", "REST APIs", "SQL", "HTTP", "Git"], preferred: ["TypeScript", "Next.js", "PostgreSQL", "MongoDB", "Redis", "Authentication", "JWT", "Docker", "Testing", "REST", "Event loop", "State management", "Databases", "Indexing", "Caching", "Security", "Performance", "API design", "System design", "Data structures", "Algorithms", "OOP"] },
+    required: ["JavaScript", "React", "Node.js", "Express", "REST APIs", "SQL", "HTTP", "Git"], preferred: ["TypeScript", "Next.js", "PostgreSQL", "MongoDB", "Redis", "Authentication", "JWT", "Docker", "Testing", "Event loop", "State management", "Databases", "Indexing", "Caching", "Security", "Performance", "API design", "System design", "Data structures & algorithms", "OOP"] },
   { key: "sde", family: "software", name: "Software Engineer", description: "General software engineering; DSA-heavy hiring.", aliases: ["software engineer", "sde", "software developer", "swe", "programmer"],
-    required: ["Data structures", "Algorithms", "OOP", "Time complexity", "Git"], preferred: ["Java", "C++", "Python", "JavaScript", "SQL", "Design patterns", "DBMS", "Operating systems", "Networking", "Concurrency", "System design", "Testing", "Recursion", "Dynamic programming"] },
+    required: ["Data structures & algorithms", "OOP", "Time complexity", "Git"], preferred: ["Java", "C++", "Python", "JavaScript", "SQL", "Design patterns", "DBMS", "Operating systems", "Networking", "Concurrency", "System design", "Testing", "Recursion", "Dynamic programming"] },
   { key: "data_analyst", family: "data", name: "Data Analyst", description: "Answers business questions with SQL, spreadsheets, statistics and dashboards.", aliases: ["data analyst", "analyst", "mis analyst", "reporting analyst"],
     required: ["SQL", "Excel", "Statistics", "Data cleaning", "Data visualization", "Joins", "Aggregation", "KPIs", "Business interpretation"], preferred: ["Python", "Pandas", "Power BI", "Tableau", "Window functions", "Hypothesis testing", "Probability", "A/B testing", "Data modeling", "Dashboard design", "Communication"], optional: ["NumPy", "Cohort analysis", "Funnel analysis"] },
   { key: "devops", family: "software", name: "DevOps Engineer", description: "Builds and runs delivery pipelines and infrastructure.", aliases: ["devops", "sre", "site reliability", "cloud engineer", "platform engineer"],
     required: ["Linux", "Docker", "CI/CD", "Git", "Networking", "Containers"], preferred: ["Bash", "Kubernetes", "AWS", "Terraform", "Nginx", "Monitoring", "Python", "Orchestration", "Infrastructure as code", "Observability", "Security", "Scalability", "High availability", "Operating systems"] },
   { key: "ml_engineer", family: "software", name: "ML Engineer", description: "Builds, evaluates and deploys machine learning models.", aliases: ["ml engineer", "machine learning engineer", "ai engineer"],
-    required: ["Python", "Machine learning", "Statistics", "Evaluation metrics", "NumPy", "Pandas"], preferred: ["scikit-learn", "PyTorch", "TensorFlow", "SQL", "Deep learning", "LLMs", "Docker", "Linear algebra", "Bias-variance", "Overfitting", "Regularization", "Feature engineering", "Neural networks", "Transformers", "Model deployment", "Data structures", "Algorithms"] },
+    required: ["Python", "Machine learning", "Statistics", "Evaluation metrics", "NumPy", "Pandas"], preferred: ["scikit-learn", "PyTorch", "TensorFlow", "SQL", "Deep learning", "LLMs", "Docker", "Linear algebra", "Bias-variance", "Overfitting", "Regularization", "Feature engineering", "Neural networks", "Transformers", "Model deployment", "Data structures & algorithms"] },
   { key: "qa_engineer", family: "software", name: "QA / Test Engineer", description: "Finds defects early and automates quality checks.", aliases: ["qa", "quality assurance", "test engineer", "sdet", "tester", "automation tester"],
     required: ["Test design", "Regression testing", "API testing", "Bug reporting", "SDLC"], preferred: ["Test automation", "Selenium", "Playwright", "Cypress", "Postman", "SQL", "JIRA", "Git", "Agile & Scrum", "Performance testing", "Java", "Python"] },
   { key: "cybersecurity_analyst", family: "software", name: "Cybersecurity Analyst", description: "Protects systems: monitoring, vulnerabilities and incident response.", aliases: ["cybersecurity", "security analyst", "soc analyst", "information security", "infosec"],

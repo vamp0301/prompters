@@ -67,6 +67,7 @@ model User {
   achievements       Achievement[]
   auditLogs          AdminAuditLog[]
   resumes            CareerResume[]
+  targetRoles        TargetRoleProfile[]
   jobTargets         JobTarget[]
   jobMatches         JobMatch[]
   interviewSessions  InterviewSession[]
@@ -742,16 +743,17 @@ model CareerResume {
 }
 
 model JobTarget {
-  id        String     @id @default(cuid())
-  userId    String
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title     String
-  company   String?
-  text      String
-  parsed    Json
-  createdAt DateTime   @default(now())
-  matches   JobMatch[]
-  prepPlans PrepPlan[]
+  id                 String              @id @default(cuid())
+  userId             String
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title              String
+  company            String?
+  text               String
+  parsed             Json
+  createdAt          DateTime            @default(now())
+  matches            JobMatch[]
+  prepPlans          PrepPlan[]
+  targetRoleProfiles TargetRoleProfile[]
 
   @@index([userId, createdAt])
 }
@@ -1162,54 +1164,57 @@ model StudentSkillState {
 
 /// One "next best action" shown to a student, with the features and model that scored it.
 model Recommendation {
-  id             String                   @id @default(cuid())
-  userId         String
-  user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id              String                   @id @default(cuid())
+  /// The target-role profile this recommendation serves (null: before role profiles existed).
+  targetProfileId String?
+  userId          String
+  user            User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// LEARN_TOPIC | REVISE_TOPIC | REVISIT_PREREQUISITE | PRACTICE_SKILL | PRACTICE_QUESTION | FINISH_BUILD | LEARN_CONCEPT
-  action         String
+  action          String
   /// TOPIC | SKILL | PREP_QUESTION | BUILD_TASK | CONCEPT
-  itemType       String
-  itemId         String
-  title          String
-  href           String
-  score          Float
-  rank           Int
+  itemType        String
+  itemId          String
+  title           String
+  href            String
+  score           Float
+  rank            Int
   /// easy | medium | hard
-  difficulty     String?
+  difficulty      String?
   /// HIGH | MEDIUM | LOW
-  priority       String
+  priority        String
   /// Machine-readable reasons (low_mastery, high_role_relevance, interview_weakness…).
-  reasons        String[]
+  reasons         String[]
   /// Feature values the score came from — for audit and as training rows.
-  features       Json
-  modelName      String
-  modelVersion   String
+  features        Json
+  modelName       String
+  modelVersion    String
   /// ACTIVE | DONE | SUPERSEDED | EXPIRED | DISMISSED
-  status         String                   @default("ACTIVE")
+  status          String                   @default("ACTIVE")
   /// Training label, resolved from later activity: SUCCESS (1) | FAILURE (0) | null (no label, e.g. never acted on).
-  outcome        String?
+  outcome         String?
   /// What actually happened: STARTED → SUCCESS | NO_IMPROVEMENT | ABANDONED, or NOT_ACTED_ON (shown, never started).
-  outcomeDetail  String?
+  outcomeDetail   String?
   /// Change in the concept's mastery from when it was recommended to when it was resolved.
-  improvement    Float?
+  improvement     Float?
   /// Every outcome signal, not just the label: accepted, started, completed, masteryDelta, quizDelta,
   /// buildDelta, interviewDelta (filled in when the next interview happens) and retention.
-  outcomeSignals Json?
-  startedAt      DateTime?
+  outcomeSignals  Json?
+  startedAt       DateTime?
   /// Rollout arm the student was in when this was ranked: ml | baseline.
-  arm            String?
-  shownAt        DateTime?
-  createdAt      DateTime                 @default(now())
-  updatedAt      DateTime                 @updatedAt
-  expiresAt      DateTime
-  resolvedAt     DateTime?
-  feedback       RecommendationFeedback[]
-  predictions    MLPrediction[]
+  arm             String?
+  shownAt         DateTime?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  expiresAt       DateTime
+  resolvedAt      DateTime?
+  feedback        RecommendationFeedback[]
+  predictions     MLPrediction[]
 
   @@index([userId, status, rank])
   @@index([itemType, itemId])
   @@index([status, expiresAt])
   @@index([arm, outcomeDetail])
+  @@index([userId, targetProfileId, status])
 }
 
 model RecommendationFeedback {
@@ -1354,4 +1359,97 @@ model ProjectAnswer {
   @@index([projectId, createdAt])
   @@index([userId, skill])
   @@index([testId, createdAt])
+}
+
+// ───────────────────────── Career taxonomy ─────────────────────────
+
+/// A career the platform prepares people for. Seeded from the built-in catalogue; extensible in the database.
+model CareerRole {
+  key             String           @id
+  family          String
+  name            String
+  description     String
+  /// Words that identify the role in a target, resume headline or job title.
+  aliases         String[]         @default([])
+  specializations String[]         @default([])
+  /// Whether coding tasks may appear at all for this role.
+  code            Boolean          @default(false)
+  /// Interview areas with weights: [{ key, label, description, weight }].
+  areas           Json
+  /// Evaluation rubric (common + role dimensions): [{ key, label, description }].
+  rubric          Json
+  assessments     String[]         @default([])
+  domain          String?
+  version         Int
+  active          Boolean          @default(true)
+  /// Reviewed by a practitioner of the profession (false for the built-in catalogue).
+  reviewed        Boolean          @default(false)
+  updatedAt       DateTime         @updatedAt
+  competencies    RoleCompetency[]
+
+  @@index([family, active])
+}
+
+/// A skill or competency, shared across roles. key = canonical skill key (same as StudentSkillState "skill:<key>").
+model Competency {
+  key           String                   @id
+  name          String
+  /// TOOL | TECHNICAL | ANALYTICAL | PRODUCT | BUSINESS | DOMAIN | COMMUNICATION | PEOPLE | DESIGN
+  kind          String
+  description   String
+  assessments   String[]                 @default([])
+  /// Learning content and tasks may contain code (programming, SQL, scripts).
+  code          Boolean                  @default(false)
+  aliases       String[]                 @default([])
+  version       Int
+  active        Boolean                  @default(true)
+  roles         RoleCompetency[]
+  prerequisites CompetencyPrerequisite[] @relation("dependent")
+  dependents    CompetencyPrerequisite[] @relation("prerequisite")
+}
+
+model RoleCompetency {
+  roleKey       String
+  role          CareerRole @relation(fields: [roleKey], references: [key], onDelete: Cascade)
+  competencyKey String
+  competency    Competency @relation(fields: [competencyKey], references: [key], onDelete: Cascade)
+  /// REQUIRED | PREFERRED | OPTIONAL
+  importance    String
+  weight        Float
+
+  @@id([roleKey, competencyKey])
+  @@index([competencyKey])
+}
+
+model CompetencyPrerequisite {
+  competencyKey   String
+  competency      Competency @relation("dependent", fields: [competencyKey], references: [key], onDelete: Cascade)
+  prerequisiteKey String
+  prerequisite    Competency @relation("prerequisite", fields: [prerequisiteKey], references: [key], onDelete: Cascade)
+
+  @@id([competencyKey, prerequisiteKey])
+}
+
+/// One career a user is preparing for. Readiness, plans and recommendations are scoped to it;
+/// competency evidence (StudentSkillState) is shared, because a skill shown once is shown.
+model TargetRoleProfile {
+  id              String     @id @default(cuid())
+  userId          String
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// CareerRole.key (validated by the taxonomy service; roles can be added without migrations).
+  roleKey         String
+  /// STUDENT | JUNIOR | MID | SENIOR
+  level           String
+  jobId           String?
+  job             JobTarget? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  timeline        DateTime?
+  primary         Boolean    @default(false)
+  /// ACTIVE | ARCHIVED
+  status          String     @default("ACTIVE")
+  taxonomyVersion Int
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([userId, roleKey])
+  @@index([userId, status])
 }

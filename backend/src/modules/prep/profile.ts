@@ -3,7 +3,7 @@ import { jobParsedSchema, type JobParsed } from "../career/schemas.js";
 import type { ResumeIntelligence } from "./intelligence.service.js";
 import { resumeSkills } from "./intelligence.service.js";
 import { ADVANCED_TOPICS, BAND_BRIEF, effectiveBand, type ExperienceBand } from "./ladder.js";
-import { TARGET_ROLES, type TargetRoleKey } from "./roles.js";
+import { targetRole, type TargetRoleKey } from "./roles.js";
 import { canonicalSkill, skillMatcher } from "./text.js";
 import type { Source } from "./validator.js";
 
@@ -124,11 +124,11 @@ export function buildProfile(intel: ResumeIntelligence, target: { job: JobTarget
     targetSource = { type: "JOB", label: target.job.title, evidence: "" };
   } else {
     roleKey = target.role ?? "sde";
-    const r = TARGET_ROLES[roleKey];
+    const r = targetRole(roleKey)!;
     targetText = `Target role: ${r.label} (no specific job description). Core skills for this role: ${r.skills.join(", ")}. Fundamentals interviewers cover: ${r.concepts.join(", ")}.`;
     targetSource = { type: "ROLE", label: r.label, evidence: "" };
   }
-  const role = TARGET_ROLES[roleKey];
+  const role = targetRole(roleKey)!;
   const band = effectiveBand(parsed.totalExperienceMonths, job);
   // Experienced candidates are drilled on a superset: the entry-level universe plus these topics.
   const experienced = band === "MID" || band === "SENIOR";

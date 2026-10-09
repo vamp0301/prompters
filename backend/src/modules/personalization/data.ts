@@ -6,7 +6,7 @@ import { learnerPath, flattenTopics } from "../learning/path.service.js";
 import { resumeSkills } from "../prep/intelligence.service.js";
 import { effectiveBand, type ExperienceBand } from "../prep/ladder.js";
 import { inferRole } from "../prep/profile.js";
-import { TARGET_ROLES, type TargetRoleKey } from "../prep/roles.js";
+import { targetRole, type TargetRoleKey } from "../prep/roles.js";
 import { canonicalSkill } from "../prep/text.js";
 import { EVIDENCE_WEIGHT, estimateDifficulty, estimateSkillState, levelOf, type DifficultyLevel, type Observation, type SkillStateEstimate } from "./model.js";
 
@@ -77,7 +77,7 @@ export function careerContext(d: StudentData): CareerContext {
   const job = d.latestJob ? jobParsedSchema.safeParse(d.latestJob.parsed) : null;
   const jobData = job?.success ? job.data : null;
   const role: TargetRoleKey = (d.plan?.targetRole as TargetRoleKey | null) ?? (d.profile?.goalRole ? GOAL_ROLE[d.profile.goalRole] : undefined) ?? (d.latestJob ? inferRole(d.latestJob.title) : "sde");
-  const r = TARGET_ROLES[role];
+  const r = targetRole(role) ?? targetRole("sde")!;
   const months = parsed?.success ? parsed.data.totalExperienceMonths : 0;
   return {
     role,
@@ -189,7 +189,7 @@ export function conceptStates(d: StudentData, c: CareerContext): ConceptState[] 
     if (k && !labels.has(k)) labels.set(k, name);
   };
   c.resumeSkills.forEach((v) => add(v));
-  [...TARGET_ROLES[c.role].skills].forEach(add);
+  [...(targetRole(c.role)?.skills ?? [])].forEach(add);
   for (const q of d.plan?.questions ?? []) add(q.skill);
   for (const t of d.turns) add(t.skill);
   for (const a of d.prepAttempts) add(a.question.skill);

@@ -2,8 +2,10 @@ import "../config/load-env.js";
 import { logger } from "../lib/logger.js";
 import { prisma } from "../lib/prisma.js";
 import { closeRedis } from "../lib/redis.js";
+import { initTaxonomy } from "../modules/roles/taxonomy.js";
 import { startWorkers } from "./run.js";
 
+await initTaxonomy();
 const stopWorkers = await startWorkers();
 
 /** Generous: an in-flight Top-100 batch or sandbox run is allowed to finish before we force exit. */

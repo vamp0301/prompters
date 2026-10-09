@@ -11,7 +11,7 @@ import { CATEGORY_LABEL, DEFAULT_ALLOCATION, PREP_CATEGORIES, TOTAL_QUESTIONS } 
 import { createPlan, generationUsage, retryPlan } from "./generation.service.js";
 import { deletePackFiles, PACK_LANGUAGES, PACK_VARIANTS, packFile, requestPack } from "./pack.service.js";
 import { practice, PRACTICE_STATUSES, questionDetail, setStatus } from "./practice.service.js";
-import { roleOptions, TARGET_ROLE_KEYS } from "./roles.js";
+import { isTargetRole, roleOptions } from "./roles.js";
 import { personalScores } from "../personalization/top100.js";
 
 const QUESTION_LIST_FIELDS = {
@@ -73,7 +73,7 @@ export function prepRoutes() {
   r.post("/", ai, handler(async (req, res) => {
     const me = currentUser(req);
     await ensureAiInterviewEnabled(me.id);
-    const body = parse(z.object({ resumeId: z.string(), jobId: z.string().optional(), targetRole: z.enum(TARGET_ROLE_KEYS).optional(), regenerate: z.boolean().optional() }), req.body);
+    const body = parse(z.object({ resumeId: z.string(), jobId: z.string().optional(), targetRole: z.string().max(60).refine(isTargetRole, "Unknown target role.").optional(), regenerate: z.boolean().optional() }), req.body);
     const { plan, reused } = await createPlan(me.id, body);
     // 200 = an existing plan for this resume + target was reused; 201 = a new generation started.
     res.status(reused ? 200 : 201);

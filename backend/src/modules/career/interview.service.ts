@@ -10,9 +10,9 @@ import { sample } from "../../utils/random.js";
 import { logEvent } from "../platform/events.js";
 import { recordAnswerEvaluated, recordFollowUp } from "../personalization/interview-signals.js";
 import { computeReadiness } from "../readiness/readiness.service.js";
-import { TARGET_ROLES, type TargetRoleKey } from "../prep/roles.js";
+import { isTargetRole, targetRole, type TargetRoleKey } from "../prep/roles.js";
 import {
-  buildBlueprint, fromMatchBank, fromPrepPlan, isTargetRole, nextArea, normalizeQuestion, pickQuestion, QUESTIONS_FOR_DURATION,
+  buildBlueprint, fromMatchBank, fromPrepPlan, nextArea, normalizeQuestion, pickQuestion, QUESTIONS_FOR_DURATION,
   type Area, type BankItem, type Blueprint, type Difficulty,
 } from "./interview.blueprint.js";
 import { buildReport, turnScore } from "./interview.report.js";
@@ -98,7 +98,7 @@ function bankOf(session: Pick<InterviewSession, "bank"> & { match: { questions: 
   return [];
 }
 
-const roleLabel = (s: Pick<InterviewSession, "targetRole">) => (s.targetRole && isTargetRole(s.targetRole) ? TARGET_ROLES[s.targetRole].label : "Software Engineer");
+const roleLabel = (s: Pick<InterviewSession, "targetRole">) => (s.targetRole && isTargetRole(s.targetRole) ? targetRole(s.targetRole)!.label : "Software Engineer");
 const titleOf = (s: Pick<InterviewSession, "targetRole"> & { match: { job: { title: string; company: string | null } } | null }) => ({
   title: s.match?.job.title ?? roleLabel(s),
   company: s.match?.job.company ?? null,
@@ -155,7 +155,7 @@ async function roleBank(userId: string, resumeId: string, role: TargetRoleKey, f
   }
   const resume = await prisma.careerResume.findUniqueOrThrow({ where: { id: resumeId }, select: { parsed: true } });
   const short = claims.slice(0, 20).map((c, i) => ({ id: `c${i + 1}`, claim: c.claim, dbId: c.id }));
-  const r = TARGET_ROLES[role];
+  const r = targetRole(role)!;
   const p = prompts.roleBank({ role: r.label, skills: r.skills, concepts: r.concepts, resume: resume.parsed, claims: short, focus });
   const out = await aiJson("interview_bank", p.system, p.user, roleBankSchema, 6000, { timeoutMs: 90_000 });
   const seen = new Set<string>();
@@ -302,7 +302,7 @@ export async function startSession(userId: string, input: StartInput) {
   const questionTarget = input.questionTarget ?? QUESTIONS_FOR_DURATION[input.durationMinutes] ?? Math.round(input.durationMinutes / 2.2);
   let matchId: string | null = null;
   let resumeId: string;
-  let targetRole: TargetRoleKey | null = null;
+  let roleKey: TargetRoleKey | null = null;
   let title: string;
   let bank: BankItem[];
   let aiCalls = 0;
@@ -320,21 +320,21 @@ export async function startSession(userId: string, input: StartInput) {
     const resume = await prisma.careerResume.findFirst({ where: { id: input.resumeId, userId }, select: { id: true } });
     if (!resume) throw notFound("Resume");
     resumeId = resume.id;
-    targetRole = input.targetRole;
-    title = TARGET_ROLES[targetRole].label;
+    roleKey = input.targetRole;
+    title = targetRole(roleKey)!.label;
     bank = [];
   }
 
   const past = await history(userId, resumeId);
   if (!matchId) {
-    const built = await roleBank(userId, resumeId, targetRole!, past.focus);
+    const built = await roleBank(userId, resumeId, roleKey!, past.focus);
     bank = built.bank;
     aiCalls = built.aiCalls;
   }
   if (bank.length < 3) throw conflict("There aren't enough questions for an interview yet. Run the analysis again or generate your Top 100 first.");
 
   const problemsAvailable = await hasProblems();
-  const blueprint = buildBlueprint(targetRole ?? "fullstack", questionTarget, bank, problemsAvailable);
+  const blueprint = buildBlueprint(roleKey ?? "fullstack", questionTarget, bank, problemsAvailable);
   blueprint.readinessBefore = await computeReadiness(userId).then((r) => r.score).catch(() => null);
 
   const ctx = { bank, turns: [], blueprint, difficulty, focusAreas: past.focus, previouslyAsked: past.asked, score: turnScore };
@@ -348,7 +348,7 @@ export async function startSession(userId: string, input: StartInput) {
       userId,
       matchId,
       resumeId,
-      targetRole,
+      targetRole: roleKey,
       difficulty,
       bank: bank as unknown as Prisma.InputJsonValue,
       blueprint: blueprint as unknown as Prisma.InputJsonValue,
@@ -691,7 +691,7 @@ export async function interviewHistory(userId: string) {
   });
   return sessions.map(({ report, ...s }) => ({
     ...s,
-    role: s.match?.job.title ?? (s.targetRole && isTargetRole(s.targetRole) ? TARGET_ROLES[s.targetRole].label : "Technical interview"),
+    role: s.match?.job.title ?? (s.targetRole && isTargetRole(s.targetRole) ? targetRole(s.targetRole)!.label : "Technical interview"),
     dimensions: (report as { dimensions?: Record<string, number | null> } | null)?.dimensions ?? null,
   }));
 }

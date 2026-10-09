@@ -12,7 +12,7 @@ import { ensureResumeIntelligence } from "./intelligence.service.js";
 import { BAND_LABEL, ladderOrder, rotate, stagePlan, STAGES, type ExperienceBand } from "./ladder.js";
 import { buildProfile, type CandidateProfile } from "./profile.js";
 import { prepPrompts } from "./prompts.js";
-import { TARGET_ROLES, type TargetRoleKey } from "./roles.js";
+import { targetRole, type TargetRoleKey } from "./roles.js";
 import { dedupeSchema, questionBatchSchema } from "./schemas.js";
 import { contentTokens, normalize } from "./text.js";
 import { emptyStats, isDuplicate, mergeStats, PREVIOUS_THRESHOLD, validateBatch, type ValidationStats, type ValidQuestion } from "./validator.js";
@@ -109,7 +109,7 @@ async function createPlanLocked(userId: string, input: CreatePlanInput, resume: 
     throw new AppError(429, "PREP_DAILY_LIMIT", `You can generate ${usage.limit} preparation plan${usage.limit === 1 ? "" : "s"} per day. Your next one is available in about ${hours} hour${hours === 1 ? "" : "s"} — your existing plans stay available.`, usage);
   }
 
-  const title = job ? `${job.title}${job.company ? ` · ${job.company}` : ""}` : TARGET_ROLES[input.targetRole!].label;
+  const title = job ? `${job.title}${job.company ? ` · ${job.company}` : ""}` : targetRole(input.targetRole)!.label;
   const plan = await prisma.prepPlan.create({
     data: { userId, resumeId: resume.id, jobId: job?.id, targetRole: job ? null : input.targetRole, title, progress: initialProgress() as unknown as Prisma.InputJsonValue, allocation: {} },
   });

@@ -5,6 +5,7 @@ import { closePrepQueue } from "../jobs/prep-queue.js";
 import { logger } from "../lib/logger.js";
 import { prisma } from "../lib/prisma.js";
 import { closeRedis } from "../lib/redis.js";
+import { initTaxonomy } from "../modules/roles/taxonomy.js";
 import { startWorkers } from "../workers/run.js";
 import { createApp } from "./app.js";
 
@@ -13,6 +14,8 @@ if (isProd) {
   if (corsOrigins.some((o) => /localhost|127\.0\.0\.1/.test(o))) logger.warn({ corsOrigins }, "CORS_ORIGIN allows localhost in production");
   if (env.STORAGE_DRIVER === "local") logger.warn("STORAGE_DRIVER=local: files live on this machine's disk — on hosts with ephemeral disks (e.g. Render free) they are lost on every deploy or restart; use STORAGE_DRIVER=s3");
 }
+
+await initTaxonomy();
 
 // Hosts without a separate worker service (Render free plan) run the workers in this process.
 const stopWorkers = env.RUN_WORKERS_IN_API ? await startWorkers() : null;

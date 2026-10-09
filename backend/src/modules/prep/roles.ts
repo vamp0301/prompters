@@ -3,7 +3,8 @@
  * interviewer for that role is expected to cover; they widen the skill universe the
  * validator accepts and steer GENERAL / CONCEPTUAL questions.
  */
-export const TARGET_ROLES = {
+/** The original engineering roles keep their exact Top-100 lists (unchanged behaviour). */
+const LEGACY_LISTS: Record<string, { label: string; skills: readonly string[]; concepts: readonly string[] }> = {
   backend: {
     label: "Backend Developer",
     skills: ["Node.js", "Express", "Python", "Java", "REST APIs", "SQL", "PostgreSQL", "MySQL", "MongoDB", "Redis", "Authentication", "JWT", "Docker", "Git", "Testing"],
@@ -41,7 +42,34 @@ export const TARGET_ROLES = {
   },
 } as const;
 
-export type TargetRoleKey = keyof typeof TARGET_ROLES;
-export const TARGET_ROLE_KEYS = Object.keys(TARGET_ROLES) as [TargetRoleKey, ...TargetRoleKey[]];
+import { listRoles, roleDef } from "../roles/taxonomy.js";
+import type { FamilyKey } from "../roles/catalogue.js";
 
-export const roleOptions = () => TARGET_ROLE_KEYS.map((key) => ({ key, label: TARGET_ROLES[key].label }));
+/** Any active CareerRole key (roles can be added in the database). */
+export type TargetRoleKey = string;
+
+export interface TargetRole {
+  key: string;
+  label: string;
+  family: FamilyKey;
+  /** Whether coding questions/tasks may appear for this role. */
+  code: boolean;
+  /** Skills a question may be about (widen the validator's skill universe). */
+  skills: string[];
+  /** Fundamentals that steer GENERAL / CONCEPTUAL questions. */
+  concepts: string[];
+}
+
+/** The role as Top-100 prep, interviews and personalization use it, from the career taxonomy. */
+export function targetRole(key: string | null | undefined): TargetRole | null {
+  const r = roleDef(key);
+  if (!r || !r.active) return null;
+  const legacy = LEGACY_LISTS[r.key];
+  if (legacy) return { key: r.key, label: legacy.label, family: r.family, code: r.code, skills: [...legacy.skills], concepts: [...legacy.concepts] };
+  const core = r.competencies.filter((c) => c.importance !== "OPTIONAL");
+  return { key: r.key, label: r.name, family: r.family, code: r.code, skills: core.map((c) => c.name), concepts: core.filter((c) => c.kind !== "TOOL").map((c) => c.name) };
+}
+
+export const isTargetRole = (key: string | null | undefined): key is TargetRoleKey => !!targetRole(key);
+
+export const roleOptions = () => listRoles().map((r) => ({ key: r.key, label: r.name, family: r.family, familyName: r.familyName }));
