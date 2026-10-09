@@ -57,7 +57,8 @@ const TECHNICAL: Omit<InterviewProfile, "weights"> = {
   scale: "1 Fundamental, 2 Practical, 3 Deep, 4 Scenario, 5 Architecture",
   behavioural: false,
   evaluator: "senior technical interviewer",
-  dimensionLabels: { technical: "Technical depth", projectUnderstanding: "Project understanding", problemSolving: "Problem solving", practicalEngineering: "Practical engineering", communication: "Communication" },
+  // Same names the report has always shown for engineering interviews.
+  dimensionLabels: { technical: "Technical", projectUnderstanding: "Project understanding", problemSolving: "Problem solving", practicalEngineering: "Practical engineering", communication: "Communication" },
 };
 
 const TITLE: Record<FamilyKey, string> = {
