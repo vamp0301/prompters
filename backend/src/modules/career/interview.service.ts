@@ -84,13 +84,49 @@ const lead = (list: string[], n: number) => list[n % list.length];
 
 // ───────────────────────── helpers ─────────────────────────
 
-const sessionInclude = { turns: { orderBy: { order: "asc" } }, match: { include: { job: true, resume: true } } } satisfies Prisma.InterviewSessionInclude;
+const sessionInclude = {
+  turns: { orderBy: { order: "asc" } },
+  match: { include: { job: true, resume: true } },
+  targetRoleProfile: { select: { id: true, userId: true, roleKey: true, status: true } },
+} satisfies Prisma.InterviewSessionInclude;
 type FullSession = Prisma.InterviewSessionGetPayload<{ include: typeof sessionInclude }>;
 
 async function ownedSession(userId: string, sessionId: string): Promise<FullSession> {
   const session = await prisma.interviewSession.findFirst({ where: { id: sessionId, userId }, include: sessionInclude });
   if (!session) throw notFound("Interview");
+  assertCareer(session);
   return session;
+}
+
+/**
+ * A session linked to a career must stay consistent with it: same owner, same role. Checked on every
+ * access (answers, follow-ups, pause/resume, report, audio, delete) — never trust the link blindly.
+ */
+function assertCareer(s: FullSession) {
+  if (!s.targetRoleProfileId) return;
+  const p = s.targetRoleProfile;
+  if (!p || p.userId !== s.userId || p.roleKey !== s.targetRole) throw new AppError(409, "CAREER_MISMATCH", "This interview no longer matches its career profile.");
+}
+
+/** Interviews that share a career with this one: the same profile, or (older sessions) the same role. */
+const sameCareer = (s: { targetRoleProfileId: string | null; targetRole: string | null }): Prisma.InterviewSessionWhereInput =>
+  s.targetRoleProfileId ? { targetRoleProfileId: s.targetRoleProfileId } : s.targetRole ? { targetRole: s.targetRole } : {};
+
+/**
+ * The career a new interview belongs to. An explicit profile must be the user's own, active, and
+ * of the interview's role. Without one, only the user's profile for exactly that role is used —
+ * never the primary career as a guess.
+ */
+async function careerFor(userId: string, roleKey: string, profileId?: string) {
+  if (profileId) {
+    const p = await prisma.targetRoleProfile.findFirst({ where: { id: profileId, userId }, select: { id: true, roleKey: true, status: true } });
+    if (!p) throw notFound("Career profile");
+    if (p.status !== "ACTIVE") throw conflict("Reactivate this career before interviewing for it.");
+    if (p.roleKey !== roleKey) throw badRequest("The career profile and the interview's role don't match.");
+    return p.id;
+  }
+  const p = await prisma.targetRoleProfile.findUnique({ where: { userId_roleKey: { userId, roleKey } }, select: { id: true, status: true } });
+  return p?.status === "ACTIVE" ? p.id : null;
 }
 
 /** The interview's question bank: its own snapshot, or (older sessions) the analysis bank. */
@@ -179,10 +215,13 @@ async function roleBank(userId: string, resumeId: string, role: TargetRoleKey, f
   return { bank, aiCalls: 1 };
 }
 
-/** What the candidate's earlier interviews on this resume tell us: weak skills to revisit, questions not to repeat. */
-async function history(userId: string, resumeId: string | null) {
+/**
+ * What the candidate's earlier interviews on this resume FOR THIS CAREER tell us: weak skills to
+ * revisit, questions not to repeat. A Data Analyst interview never steers a Product Manager one.
+ */
+async function history(userId: string, resumeId: string | null, career: { targetRoleProfileId: string | null; targetRole: string | null }) {
   const previous = await prisma.interviewSession.findMany({
-    where: { userId, ...(resumeId ? { resumeId } : {}), status: { in: ["COMPLETED", "ENDED_INTEGRITY", "ABANDONED"] } },
+    where: { userId, ...(resumeId ? { resumeId } : {}), ...sameCareer(career), status: { in: ["COMPLETED", "ENDED_INTEGRITY", "ABANDONED"] } },
     orderBy: { startedAt: "desc" },
     take: 5,
     select: { report: true, turns: { select: { question: true } } },
@@ -207,8 +246,9 @@ async function finalize(sessionId: string, status: "COMPLETED" | "ENDED_INTEGRIT
   // Readiness before vs after, and why it moved compared with the previous interview.
   const blueprint = session.blueprint as Blueprint | null;
   const after = await computeReadiness(session.userId).then((r) => r.score).catch(() => null);
+  // Compared with the previous interview for the SAME career only.
   const previous = await prisma.interviewSession.findFirst({
-    where: { userId: session.userId, id: { not: sessionId }, status: { in: ["COMPLETED", "ENDED_INTEGRITY"] }, readinessScore: { not: null }, startedAt: { lt: session.startedAt } },
+    where: { userId: session.userId, id: { not: sessionId }, ...sameCareer(session), status: { in: ["COMPLETED", "ENDED_INTEGRITY"] }, readinessScore: { not: null }, startedAt: { lt: session.startedAt } },
     orderBy: { startedAt: "desc" },
     select: { report: true },
   });
@@ -287,6 +327,8 @@ export interface StartInput {
   matchId?: string;
   resumeId?: string;
   targetRole?: string;
+  /** The career this interview prepares for (must be the user's own and of the same role). */
+  targetRoleProfileId?: string;
   difficulty?: Difficulty;
   durationMinutes: number;
   questionTarget?: number;
@@ -321,9 +363,19 @@ export async function startSession(userId: string, input: StartInput) {
     title = match.job.title;
     // The job's career decides the interview style (falls back to the student's primary career).
     const primary = await prisma.targetRoleProfile.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: [{ primary: "desc" }, { createdAt: "asc" }], select: { roleKey: true } });
-    roleKey = inferRole(match.job.title, primary?.roleKey ?? null);
+    if (input.targetRoleProfileId) {
+      const chosen = await prisma.targetRoleProfile.findFirst({ where: { id: input.targetRoleProfileId, userId }, select: { roleKey: true } });
+      if (!chosen) throw notFound("Career profile");
+      roleKey = chosen.roleKey;
+    } else roleKey = inferRole(match.job.title, primary?.roleKey ?? null);
     bank = fromMatchBank(match.questions as unknown as BankQuestion[], match.claims as unknown as { id: string; claim: string }[], interviewProfile(roleKey).code);
   } else {
+    // A career profile alone is enough: its role is the interview's role.
+    if (!input.targetRole && input.targetRoleProfileId) {
+      const p = await prisma.targetRoleProfile.findFirst({ where: { id: input.targetRoleProfileId, userId }, select: { roleKey: true } });
+      if (!p) throw notFound("Career profile");
+      input = { ...input, targetRole: p.roleKey };
+    }
     if (!input.resumeId || !input.targetRole) throw badRequest("Choose a resume and a target role, or start from a job-match analysis.");
     if (!isTargetRole(input.targetRole)) throw badRequest("Unknown target role.");
     const resume = await prisma.careerResume.findFirst({ where: { id: input.resumeId, userId }, select: { id: true } });
@@ -334,7 +386,8 @@ export async function startSession(userId: string, input: StartInput) {
     bank = [];
   }
 
-  const past = await history(userId, resumeId);
+  const targetRoleProfileId = await careerFor(userId, roleKey, input.targetRoleProfileId);
+  const past = await history(userId, resumeId, { targetRoleProfileId, targetRole: roleKey });
   if (!matchId) {
     const built = await roleBank(userId, resumeId, roleKey!, past.focus);
     bank = built.bank;
@@ -359,6 +412,7 @@ export async function startSession(userId: string, input: StartInput) {
       matchId,
       resumeId,
       targetRole: roleKey,
+      targetRoleProfileId,
       difficulty,
       bank: bank as unknown as Prisma.InputJsonValue,
       blueprint: blueprint as unknown as Prisma.InputJsonValue,
@@ -397,6 +451,7 @@ async function sessionView(session: FullSession) {
     status: session.status,
     language: INTERVIEW_LANGUAGE,
     mode: session.matchId ? "JOB" : "ROLE",
+    targetRoleProfileId: session.targetRoleProfileId,
     difficulty: session.difficulty,
     targetRole: session.targetRole,
     durationMinutes: session.durationMinutes,
@@ -501,6 +556,7 @@ export interface AnswerInput {
 /** What the client needs after an answer: the next question, or the end. */
 async function nextState(sessionId: string, leadText: string | null, replay = false) {
   const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: sessionId }, include: sessionInclude });
+  assertCareer(session);
   const answered = session.turns.filter((t) => t.answeredAt).length;
   if (session.status !== "IN_PROGRESS" && session.status !== "PAUSED") return { done: true, lead: leadText ?? "Okay.", closing: closingLine(session.targetRole), sessionId, replay };
   const current = await currentTurnView(session.turns);
@@ -639,7 +695,7 @@ export async function submitAnswer(userId: string, sessionId: string, input: Ans
     next = { ...base, kind: "FOLLOW_UP", parentId: root.id, question: followUp, lead: lead(NEUTRAL_FOLLOW, nextOrder), skill: root.skill, category: root.category, area: root.area, claimId: root.claimId, level: Math.min(5, root.level + 1) };
   } else {
     const blueprint = (session.blueprint as Blueprint | null) ?? buildBlueprint(session.targetRole ?? "fullstack", session.questionTarget, bank, false);
-    const past = await history(userId, session.resumeId);
+    const past = await history(userId, session.resumeId, session);
     const ctx = { bank, turns, blueprint, difficulty: session.difficulty as Difficulty, focusAreas: session.focusAreas, previouslyAsked: past.asked, score: turnScore };
     const area = nextArea(ctx, (a) => (a === "PROBLEM_SOLVING" ? true : bank.some((q) => q.area === a && !turns.some((t) => t.bankId === q.id))));
     if (area === "PROBLEM_SOLVING") {
@@ -690,12 +746,13 @@ export async function endSession(userId: string, sessionId: string) {
 }
 
 /** Interview history with per-dimension scores, oldest first, for the progress comparison. */
-export async function interviewHistory(userId: string) {
+export async function interviewHistory(userId: string, targetRoleProfileId?: string) {
+  if (targetRoleProfileId && !(await prisma.targetRoleProfile.findFirst({ where: { id: targetRoleProfileId, userId }, select: { id: true } }))) throw notFound("Career profile");
   const sessions = await prisma.interviewSession.findMany({
-    where: { userId },
+    where: { userId, ...(targetRoleProfileId ? { targetRoleProfileId } : {}) },
     orderBy: { startedAt: "desc" },
     select: {
-      id: true, status: true, readinessScore: true, result: true, startedAt: true, endedAt: true, matchId: true, targetRole: true, difficulty: true, durationMinutes: true, report: true,
+      id: true, status: true, readinessScore: true, result: true, startedAt: true, endedAt: true, matchId: true, targetRole: true, targetRoleProfileId: true, difficulty: true, durationMinutes: true, report: true,
       match: { select: { job: { select: { title: true, company: true } } } },
     },
   });

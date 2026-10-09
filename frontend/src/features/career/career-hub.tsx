@@ -11,16 +11,16 @@ import { Field, Select } from "@/components/ui/input";
 import { EmptyState, ErrorState, PageHeader, Skeleton, Tabs } from "@/components/ui/misc";
 import { ProjectsList } from "./projects/projects-list";
 import { ResumeBar } from "./add-resume";
+import { roleKeys, useCatalogue } from "@/features/roles/role-picker";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
-import type { CareerAnalysisItem, CareerJob, CareerResume, CareerSessionItem, CareerStatus } from "@/lib/api/types";
+import type { CareerAnalysisItem, CareerJob, CareerResume, CareerSessionItem, CareerStatus, TargetRoleProfile } from "@/lib/api/types";
 import { cn, formatDate } from "@/lib/utils";
 import { ScoreHistoryChart } from "@/features/readiness/score-history-chart";
 import { DocumentForm } from "./document-form";
 import { PrepPlansCard, PrepStartCard } from "./prep/prep-start-card";
 import { AI_UNAVAILABLE_COPY, careerKeys, ConfirmButton, InlineError, ResultBadge, scoreTone } from "./shared";
 import { StartInterviewDialog } from "./start-interview-dialog";
-import { TARGET_ROLES } from "@/features/marketing/start-preparing";
 
 
 export function useCareerStatus() {
@@ -354,10 +354,17 @@ function InterviewStartCard({ disabled, onNeedResume }: { disabled: boolean; onN
   const status = useCareerStatus();
   const { data: resumes, isLoading } = useQuery({ queryKey: careerKeys.resumes, queryFn: () => api.get<CareerResume[]>("/career/resumes") });
   const [resumeId, setResumeId] = useState("");
-  const [role, setRole] = useState("fullstack");
+  // The interview is for one of the student's careers (each keeps its own interviews and results);
+  // students without a career yet pick any role from the catalogue.
+  const careers = useQuery({ queryKey: roleKeys.mine, queryFn: () => api.get<TargetRoleProfile[]>("/me/target-roles") });
+  const catalogue = useCatalogue();
+  const options = careers.data?.length
+    ? careers.data.map((p) => ({ value: `profile:${p.id}`, label: p.role?.name ?? p.roleKey, roleKey: p.roleKey, profileId: p.id as string | undefined }))
+    : (catalogue.data?.roles ?? []).map((r) => ({ value: `role:${r.key}`, label: r.name, roleKey: r.key, profileId: undefined as string | undefined }));
+  const [picked, setPicked] = useState("");
+  const option = options.find((o) => o.value === picked) ?? options[0];
   const [open, setOpen] = useState(false);
   const chosen = resumeId || resumes?.[0]?.id || "";
-  const roleLabel = TARGET_ROLES.find((r) => r.key === role)?.label ?? role;
 
   return (
     <Card className="border-accent/30">
@@ -367,7 +374,7 @@ function InterviewStartCard({ disabled, onNeedResume }: { disabled: boolean; onN
             <Mic className="size-4 text-accent" aria-hidden /> Interview with Manisha
           </span>
         }
-        description="A realistic technical interview built from your resume and target role — one question at a time, follow-ups on what you say, and a detailed report at the end. No job description needed."
+        description="A realistic interview built from your resume and your career — one question at a time, follow-ups on what you say, and a detailed report at the end. No job description needed."
       />
       <CardBody>
         {isLoading ? (
@@ -390,23 +397,23 @@ function InterviewStartCard({ disabled, onNeedResume }: { disabled: boolean; onN
                 ))}
               </Select>
             </Field>
-            <Field label="Target role" htmlFor={`${uid}-role`}>
-              <Select id={`${uid}-role`} value={role} onChange={(e) => setRole(e.target.value)}>
-                {TARGET_ROLES.map((r) => (
-                  <option key={r.key} value={r.key}>
-                    {r.label}
+            <Field label={careers.data?.length ? "Career" : "Target role"} htmlFor={`${uid}-role`}>
+              <Select id={`${uid}-role`} value={option?.value ?? ""} onChange={(e) => setPicked(e.target.value)}>
+                {options.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </Select>
             </Field>
-            <Button onClick={() => setOpen(true)} disabled={disabled || !chosen}>
+            <Button onClick={() => setOpen(true)} disabled={disabled || !chosen || !option}>
               <Mic className="size-4" aria-hidden /> Set up interview
             </Button>
           </div>
         )}
       </CardBody>
-      {chosen && (
-        <StartInterviewDialog open={open} onClose={() => setOpen(false)} source={{ resumeId: chosen, targetRole: role, roleLabel }} interviewer={status.data?.interviewer} />
+      {chosen && option && (
+        <StartInterviewDialog open={open} onClose={() => setOpen(false)} source={{ resumeId: chosen, targetRole: option.roleKey, roleLabel: option.label, targetRoleProfileId: option.profileId }} interviewer={status.data?.interviewer} />
       )}
     </Card>
   );

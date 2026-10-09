@@ -154,7 +154,10 @@ export function careerRoutes() {
   }));
 
   // ───── Interviews ─────
-  r.get("/sessions", handler(async (req) => interview.interviewHistory(currentUser(req).id)));
+  r.get("/sessions", handler(async (req) => {
+    const q = parse(z.object({ targetRoleProfileId: z.string().max(40).optional() }), req.query);
+    return interview.interviewHistory(currentUser(req).id, q.targetRoleProfileId);
+  }));
 
   r.post("/sessions", ai, handler(async (req, res) => {
     const me = currentUser(req);
@@ -165,6 +168,7 @@ export function careerRoutes() {
           matchId: z.string().max(40).optional(),
           resumeId: z.string().max(40).optional(),
           targetRole: z.string().max(40).optional(),
+          targetRoleProfileId: z.string().max(40).optional(),
           difficulty: z.enum(["STANDARD", "HARD"]).default("STANDARD"),
           // Ignored: interviews are English-only. Still accepted so older clients don't get a 400.
           language: z.enum(["hinglish", "en", "hi"]).optional(),
@@ -172,7 +176,7 @@ export function careerRoutes() {
           questionTarget: z.number().int().min(5).max(25).optional(),
           consent: z.object({ analysis: z.boolean().optional(), recording: z.boolean().optional(), integrity: z.boolean(), preparationOnly: z.boolean(), storeAudio: z.boolean().default(true) }),
         })
-        .refine((b) => !!b.matchId || (!!b.resumeId && !!b.targetRole), { message: "Choose a resume and a target role, or a job-match analysis.", path: ["targetRole"] }),
+        .refine((b) => !!b.matchId || (!!b.resumeId && (!!b.targetRole || !!b.targetRoleProfileId)), { message: "Choose a resume and a target role, or a job-match analysis.", path: ["targetRole"] }),
       req.body,
     );
     res.status(201);

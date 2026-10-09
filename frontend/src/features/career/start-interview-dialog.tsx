@@ -15,7 +15,7 @@ import { useCodeExecution } from "@/features/auth/use-me";
 const FALLBACK: Interviewer = { name: "Manisha", role: "Senior Technical Interviewer", company: "Prompters", tone: "Professional, calm, neutral, technical", thinkingSeconds: 30, answerSeconds: 120, codingSeconds: 900 };
 
 /** Where the questions come from: a job-match analysis, or the resume + a target role. */
-export type InterviewSource = { matchId: string } | { resumeId: string; targetRole: string; roleLabel: string };
+export type InterviewSource = { matchId: string } | { resumeId: string; targetRole: string; roleLabel: string; targetRoleProfileId?: string };
 
 export function StartInterviewDialog({ open, onClose, source, interviewer }: { open: boolean; onClose: () => void; source: InterviewSource; interviewer?: Interviewer }) {
   return (
@@ -41,7 +41,7 @@ function StartForm({ source, interviewer, onCancel }: { source: InterviewSource;
     meta: { silent: true },
     mutationFn: () =>
       api.post<StartInterviewResponse>("/career/sessions", {
-        ...("matchId" in source ? { matchId: source.matchId } : { resumeId: source.resumeId, targetRole: source.targetRole }),
+        ...("matchId" in source ? { matchId: source.matchId } : { resumeId: source.resumeId, targetRole: source.targetRole, ...(source.targetRoleProfileId ? { targetRoleProfileId: source.targetRoleProfileId } : {}) }),
         difficulty,
         durationMinutes: duration,
         // Audio recording is asked separately inside the interview, before the first voice answer.

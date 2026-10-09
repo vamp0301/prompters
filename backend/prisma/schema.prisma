@@ -800,6 +800,10 @@ model InterviewSession {
   resumeId            String?
   resume              CareerResume?             @relation(fields: [resumeId], references: [id], onDelete: Cascade)
   targetRole          String?
+  /// The career (target-role profile) this interview prepares for. Null for older sessions whose
+  /// career can't be determined unambiguously. Its role always equals targetRole.
+  targetRoleProfileId String?
+  targetRoleProfile   TargetRoleProfile?        @relation(fields: [targetRoleProfileId], references: [id], onDelete: SetNull)
   /// STANDARD | HARD
   difficulty          String                    @default("STANDARD")
   /// Question bank for role-only interviews (match-based ones read the analysis bank).
@@ -829,6 +833,7 @@ model InterviewSession {
 
   @@index([userId, startedAt])
   @@index([resumeId])
+  @@index([userId, targetRoleProfileId, startedAt])
 }
 
 model InterviewTurn {
@@ -1433,22 +1438,23 @@ model CompetencyPrerequisite {
 /// One career a user is preparing for. Readiness, plans and recommendations are scoped to it;
 /// competency evidence (StudentSkillState) is shared, because a skill shown once is shown.
 model TargetRoleProfile {
-  id              String     @id @default(cuid())
+  id              String             @id @default(cuid())
   userId          String
-  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// CareerRole.key (validated by the taxonomy service; roles can be added without migrations).
   roleKey         String
   /// STUDENT | JUNIOR | MID | SENIOR
   level           String
   jobId           String?
-  job             JobTarget? @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  job             JobTarget?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
   timeline        DateTime?
-  primary         Boolean    @default(false)
+  primary         Boolean            @default(false)
   /// ACTIVE | ARCHIVED
-  status          String     @default("ACTIVE")
+  status          String             @default("ACTIVE")
   taxonomyVersion Int
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  interviews      InterviewSession[]
 
   @@unique([userId, roleKey])
   @@index([userId, status])
