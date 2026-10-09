@@ -18,8 +18,14 @@ import { contentTokens, normalize } from "./text.js";
 import { emptyStats, isDuplicate, mergeStats, PREVIOUS_THRESHOLD, validateBatch, type ValidationStats, type ValidQuestion } from "./validator.js";
 
 const BATCH = 10;
-/** Candidates generated per allocated question, so de-dup and selection can drop the weakest. */
-const OVER_GENERATE = 1.3;
+/**
+ * Candidates generated per allocated question, so de-dup and selection can drop the weakest.
+ * Measured: at 1.3 the validator + de-dup drops left most stages short, and the top-ups that
+ * followed were half of a plan's total time. More headroom up front is cheaper than more rounds.
+ */
+const OVER_GENERATE = 1.5;
+/** Basics never needed top-ups in measurements; less headroom keeps them visible sooner. */
+const OVER_GENERATE_BASICS = 1.3;
 const AI_TIMEOUT = 120_000;
 /** Concurrent model calls per plan. */
 const AI_CONCURRENCY = 5;
@@ -45,6 +51,8 @@ export interface PlanProgress {
   fresh?: { previousPlans: number; repeated: number };
   dedupe?: { state: StepState; removed?: number };
   ranking: { state: StepState };
+  /** Where the time went (ms) and how many AI calls each phase made — for monitoring and tuning. */
+  timings?: { resumeMs?: number; totalMs?: number; stages: { stage: number; generateMs: number; topUpMs: number; dedupeMs: number; publishMs: number; aiCalls: number; aiMs: number }[] };
 }
 
 const initialProgress = (): PlanProgress => ({ resume: { state: "pending" }, skills: { state: "pending" }, projects: { state: "pending" }, categories: {}, ranking: { state: "pending" } });
@@ -174,6 +182,8 @@ async function generateCategory(opts: {
   limit: ReturnType<typeof limiter>;
   /** Sequential top-up calls after the first (parallel) round, made only while below `minimum`. */
   topUps?: number;
+  /** Counts AI calls and their time for the plan's timings. */
+  meter?: { calls: number; ms: number };
   minimum?: number;
   /** Items (skills, projects, claims…) spread across the parallel batches so they don't all ask about the same thing. */
   focus?: string[];
@@ -203,7 +213,19 @@ async function generateCategory(opts: {
     });
     let items: unknown[];
     try {
-      items = (await opts.limit(() => aiJson(`prep_${opts.category.toLowerCase()}`, p.system, p.user, questionBatchSchema, 12000, { timeoutMs: AI_TIMEOUT, fast: true }))).questions;
+      items = (
+        await opts.limit(async () => {
+          const t0 = Date.now();
+          try {
+            return await aiJson(`prep_${opts.category.toLowerCase()}`, p.system, p.user, questionBatchSchema, 12000, { timeoutMs: AI_TIMEOUT, fast: true });
+          } finally {
+            if (opts.meter) {
+              opts.meter.calls++;
+              opts.meter.ms += Date.now() - t0;
+            }
+          }
+        })
+      ).questions;
     } catch (e) {
       logger.warn({ err: e, planId: opts.planId, category: opts.category }, "Prep batch failed");
       opts.aiErrors.push(e);
@@ -333,7 +355,9 @@ export async function runPlan(planId: string) {
     // 1. Resume intelligence (cached per resume). What was found is shown while the resume is read.
     progress.value.resume.state = "running";
     await progress.save();
+    const planStart = Date.now();
     const intel = await ensureResumeIntelligence(plan.resumeId);
+    progress.value.timings = { ...(progress.value.timings ?? { stages: [] }), resumeMs: Date.now() - planStart };
     // A JD's title decides the role; when it's ambiguous, the student's own primary career does (never a silent default).
     const primary = await prisma.targetRoleProfile.findFirst({ where: { userId: plan.userId, status: "ACTIVE" }, orderBy: [{ primary: "desc" }, { createdAt: "asc" }], select: { roleKey: true } });
     const profile = buildProfile(intel, { job: plan.job, role: (plan.targetRole as TargetRoleKey | null) ?? null, fallbackRole: primary?.roleKey ?? null });
@@ -375,7 +399,8 @@ export async function runPlan(planId: string) {
     let stats: ValidationStats = (plan.validation as unknown as ValidationStats | null) ?? emptyStats();
     const limit = limiter(AI_CONCURRENCY);
     const aiErrors: unknown[] = [];
-    const ctx = { planId: plan.id, profile, resumeText: intel.resume.text, accepted, avoid, limit, aiErrors, previousText };
+    const meter = { calls: 0, ms: 0 };
+    const ctx = { planId: plan.id, profile, resumeText: intel.resume.text, accepted, avoid, limit, aiErrors, previousText, meter };
 
     for (const st of STAGES) {
       const entry = progress.value.stages.find((e) => e.stage === st.stage)!;
@@ -407,25 +432,38 @@ export async function runPlan(planId: string) {
       };
       // Shortfall (thin resume, validator drops) is filled by the flexible categories that suit this stage.
       const flexible: PrepCategory[] = st.stage === 3 ? ["SCENARIO", "SKILL", "CONCEPTUAL"] : ["SKILL", "CONCEPTUAL", "GENERAL"];
+      // Top-ups run in parallel across the flexible categories (one call after another was half of
+      // a plan's time), with a second round only if quality checks still leave the stage short.
       const topUp = async (avoidEarlier: boolean) => {
-        for (const c of flexible) {
-          if (total() >= target) break;
-          const want = have[c] + target - total();
-          await run(c, want, want, avoidEarlier);
+        for (let round = 0; round < 2 && total() < target; round++) {
+          const short = target - total();
+          const share = flexible.map((_, i) => Math.floor(short / flexible.length) + (i < short % flexible.length ? 1 : 0));
+          await Promise.all(flexible.map((c, i) => (share[i] > 0 ? run(c, have[c] + share[i], have[c] + share[i], avoidEarlier) : undefined)));
         }
       };
 
       // 4a. The stage's candidates, with headroom for de-duplication.
-      await Promise.all(PREP_CATEGORIES.filter((c) => cells[c] > have[c]).map((c) => run(c, Math.ceil(cells[c] * OVER_GENERATE), cells[c], true)));
+      const clock = { start: Date.now(), mark: Date.now() };
+      const lap = () => {
+        const ms = Date.now() - clock.mark;
+        clock.mark = Date.now();
+        return ms;
+      };
+      const before = { calls: meter.calls, ms: meter.ms };
+      const timing = { stage: st.stage, generateMs: 0, topUpMs: 0, dedupeMs: 0, publishMs: 0, aiCalls: 0, aiMs: 0 };
+      await Promise.all(PREP_CATEGORIES.filter((c) => cells[c] > have[c]).map((c) => run(c, Math.ceil(cells[c] * (st.stage === 1 ? OVER_GENERATE_BASICS : OVER_GENERATE)), cells[c], true)));
+      timing.generateMs = lap();
       await topUp(true);
       // A resume can only support so many distinct questions: rather than publish a thin stage,
       // allow questions from earlier plans (the plan reports how many repeated).
       if (total() < target && previous.length) await topUp(false);
+      timing.topUpMs = lap();
 
       // 4b. Semantic de-duplication within the stage and against what's already published.
       progress.value.dedupe = { state: "running", removed: progress.value.dedupe?.removed ?? 0 };
       await progress.save();
       const removed = await semanticDedupe(plan.id, st.stage, previousRows.map((q) => q.question));
+      timing.dedupeMs = lap();
       for (const r of removed) {
         have[r.category]--;
         const i = accepted.findIndex((a) => a.norm === normalize(r.question));
@@ -435,6 +473,7 @@ export async function runPlan(planId: string) {
       progress.value.dedupe = { state: "done", removed: (progress.value.dedupe.removed ?? 0) + removed.length };
       if (total() < target) await topUp(true);
       if (total() < target && previous.length) await topUp(false);
+      timing.topUpMs += lap();
       await prisma.prepPlan.update({ where: { id: plan.id }, data: { validation: stats as unknown as Prisma.InputJsonValue } });
 
       if (total() < Math.ceil(target * MIN_STAGE_SHARE)) {
@@ -459,6 +498,11 @@ export async function runPlan(planId: string) {
       progress.value.fresh.repeated += previous.length ? chosen.filter((q) => isDuplicate(q.question, previous, PREVIOUS_THRESHOLD)).length : 0;
       entry.state = "done";
       entry.done = entry.published = chosen.length;
+      timing.publishMs = lap();
+      timing.aiCalls = meter.calls - before.calls;
+      timing.aiMs = meter.ms - before.ms;
+      progress.value.timings = { ...(progress.value.timings ?? { stages: [] }), stages: [...(progress.value.timings?.stages ?? []).filter((x) => x.stage !== st.stage), timing], totalMs: Date.now() - planStart };
+      logger.info({ planId: plan.id, ...timing }, "Prep stage published");
       await progress.save();
       await logEvent(plan.userId, "prep_stage_published", { meta: { planId: plan.id, stage: st.stage, questions: chosen.length } });
     }
