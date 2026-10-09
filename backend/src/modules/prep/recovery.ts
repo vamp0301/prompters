@@ -31,21 +31,24 @@ export async function recoverStuckPrepWork() {
 
   for (const p of plans.filter((x) => !live.plans.has(x.id))) {
     if ((await recoveries("plan", p.id)) > MAX_RECOVERIES) {
-      await prisma.prepPlan.update({ where: { id: p.id }, data: { status: "FAILED", error: "Generation was interrupted several times. Use Retry — questions already generated are kept." } });
+      await prisma.prepPlan.updateMany({ where: { id: p.id, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "FAILED", error: "Generation was interrupted several times. Use Retry — questions already generated are kept." } });
       result.failed++;
       continue;
     }
-    await prisma.prepPlan.update({ where: { id: p.id }, data: { status: "QUEUED" } });
+    // Conditional: a job that finished between our reads must not be flipped back and re-run.
+    const { count } = await prisma.prepPlan.updateMany({ where: { id: p.id, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "QUEUED" } });
+    if (!count) continue;
     await enqueuePrep({ kind: "plan", planId: p.id });
     result.requeued++;
   }
   for (const p of packs.filter((x) => !live.packs.has(x.id))) {
     if ((await recoveries("pack", p.id)) > MAX_RECOVERIES) {
-      await prisma.prepPack.update({ where: { id: p.id }, data: { status: "FAILED", error: "Building the PDF was interrupted. Please request it again." } });
+      await prisma.prepPack.updateMany({ where: { id: p.id, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "FAILED", error: "Building the PDF was interrupted. Please request it again." } });
       result.failed++;
       continue;
     }
-    await prisma.prepPack.update({ where: { id: p.id }, data: { status: "QUEUED" } });
+    const { count } = await prisma.prepPack.updateMany({ where: { id: p.id, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "QUEUED" } });
+    if (!count) continue;
     await enqueuePrep({ kind: "pack", packId: p.id });
     result.requeued++;
   }

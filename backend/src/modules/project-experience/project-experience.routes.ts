@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { prisma } from "../../lib/prisma.js";
 import { currentUser } from "../../middleware/auth.js";
 import { aiLimiter, careerAnswerLimiter, skillGuideLimiter } from "../../middleware/rate-limit.js";
 import { handler, param, parse } from "../../utils/http.js";
@@ -14,7 +15,11 @@ export function projectExperienceRoutes() {
 
   r.get("/", handler(async (req) => {
     const { resumeId } = parse(z.object({ resumeId: z.string().max(40).optional() }), req.query);
-    return listProjects(currentUser(req).id, resumeId);
+    const me = currentUser(req);
+    // Listing reads the resume's projects; a resume never analysed needs one AI call first.
+    const resume = await prisma.careerResume.findFirst({ where: { userId: me.id, ...(resumeId ? { id: resumeId } : {}) }, orderBy: { createdAt: "desc" }, select: { analyzedAt: true } });
+    if (resume && !resume.analyzedAt) await ensureAiInterviewEnabled(me.id);
+    return listProjects(me.id, resumeId);
   }));
 
   // Opening a module generates it on first view (or after the facts changed): an AI feature.

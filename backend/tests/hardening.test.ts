@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import supertest from "supertest";
-import type { Worker } from "bullmq";
 import { app, login, resetDb, seedFixture } from "./helpers.js";
 import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
@@ -21,7 +20,7 @@ const fake = new FakeAI();
 const RESUME = "Riya Sharma — Backend developer\nProjects\nNotes API: Built a Notes REST API with Node.js, Express, MongoDB and JWT authentication.\nExperience\nBackend intern at Acme for 6 months building REST APIs.\nEducation\nB.Tech CSE 2026. Skills: JavaScript, Node.js, Express, MongoDB, Docker.";
 const JD = "Backend Developer at Zeta. Required: Node.js, Express, MongoDB, Redis, AWS. Nice to have: Docker. Build and scale APIs.";
 
-let worker: Worker | undefined;
+let worker: ReturnType<typeof startPrepWorker> | undefined;
 beforeAll(async () => {
   await resetDb();
   await seedFixture();

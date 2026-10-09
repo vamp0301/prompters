@@ -2,6 +2,7 @@ import type { PrepCategory, Prisma } from "@prisma/client";
 import { aiJson } from "../../ai/json.js";
 import { env } from "../../config/env.js";
 import { enqueuePrep } from "../../jobs/prep-queue.js";
+import { LockBusyError, withLock } from "../../lib/lock.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { AppError, badRequest, conflict, notFound } from "../../utils/errors.js";
@@ -74,13 +75,24 @@ export async function generationUsage(userId: string) {
  * target is returned as-is — regenerating it is an explicit action (`regenerate: true`) and
  * counts against the daily limit, because one plan costs ~20–25 model calls.
  */
-export async function createPlan(userId: string, input: { resumeId: string; jobId?: string; targetRole?: TargetRoleKey; regenerate?: boolean }) {
+type CreatePlanInput = { resumeId: string; jobId?: string; targetRole?: TargetRoleKey; regenerate?: boolean };
+
+export async function createPlan(userId: string, input: CreatePlanInput) {
   if (!!input.jobId === !!input.targetRole) throw badRequest("Choose either a job description or a target role.");
   const resume = await prisma.careerResume.findFirst({ where: { id: input.resumeId, userId } });
   if (!resume) throw notFound("Resume");
   const job = input.jobId ? await prisma.jobTarget.findFirst({ where: { id: input.jobId, userId } }) : null;
   if (input.jobId && !job) throw notFound("Job description");
 
+  // One create at a time per user: the "already exists / too many running / daily limit" checks
+  // below would otherwise race between two tabs or a double-click.
+  return withLock(`lock:prep-create:${userId}`, 15_000, () => createPlanLocked(userId, input, resume, job), 5_000).catch((e) => {
+    if (e instanceof LockBusyError) throw conflict("A preparation plan is already being created. Try again in a moment.");
+    throw e;
+  });
+}
+
+async function createPlanLocked(userId: string, input: CreatePlanInput, resume: { id: string }, job: { id: string; title: string; company: string | null } | null) {
   if (!input.regenerate) {
     const existing = await prisma.prepPlan.findFirst({
       where: { userId, resumeId: resume.id, jobId: job?.id ?? null, targetRole: job ? null : input.targetRole, status: { in: ["QUEUED", "RUNNING", "READY"] } },
@@ -111,7 +123,9 @@ export async function retryPlan(userId: string, planId: string) {
   const plan = await prisma.prepPlan.findFirst({ where: { id: planId, userId } });
   if (!plan) throw notFound("Preparation plan");
   if (plan.status !== "FAILED") throw conflict("Only a failed plan can be retried.");
-  await prisma.prepPlan.update({ where: { id: plan.id }, data: { status: "QUEUED", error: null } });
+  // Conditional: a double-click queues it once.
+  const { count } = await prisma.prepPlan.updateMany({ where: { id: plan.id, status: "FAILED" }, data: { status: "QUEUED", error: null } });
+  if (!count) return { queued: true };
   await enqueuePrep({ kind: "plan", planId: plan.id });
   return { queued: true };
 }
@@ -304,9 +318,14 @@ async function recalibrate(planId: string) {
 
 export async function runPlan(planId: string) {
   const plan = await prisma.prepPlan.findUnique({ where: { id: planId }, include: { job: true } });
-  if (!plan || plan.status === "READY") return;
+  if (!plan) return;
+  // Claim: only a QUEUED plan is run, so a duplicate or stale job exits instead of running it twice.
+  const { count } = await prisma.prepPlan.updateMany({ where: { id: plan.id, status: "QUEUED" }, data: { status: "RUNNING", error: null } });
+  if (!count) {
+    logger.info({ planId, status: plan.status }, "Prep plan not claimed (already running or done)");
+    return;
+  }
   const progress = new ProgressWriter(plan.id, { ...initialProgress(), ...(plan.progress as unknown as Partial<PlanProgress>) });
-  await prisma.prepPlan.update({ where: { id: plan.id }, data: { status: "RUNNING", error: null } });
 
   try {
     // 1. Resume intelligence (cached per resume). What was found is shown while the resume is read.
@@ -450,6 +469,7 @@ export async function runPlan(planId: string) {
     for (const step of [progress.value.resume, progress.value.dedupe, progress.value.ranking, ...(progress.value.stages ?? [])]) if (step?.state === "running") step.state = "failed";
     await progress.save().catch(() => undefined);
     const message = e instanceof AppError ? e.message : "Generation stopped unexpectedly. Retry to continue.";
-    await prisma.prepPlan.update({ where: { id: planId }, data: { status: "FAILED", error: message } });
+    // The plan may have been deleted meanwhile: updateMany never throws for a missing row.
+    await prisma.prepPlan.updateMany({ where: { id: planId, status: "RUNNING" }, data: { status: "FAILED", error: message } });
   }
 }

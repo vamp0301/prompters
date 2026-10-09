@@ -66,6 +66,8 @@ export function platformRoutes() {
       },
     });
     if (!user) throw notFound("User");
+    // Viewing a student's full record is itself an audited action.
+    await audit(currentUser(req).id, "VIEWED_USER", "User", user.id);
     return { ...user, googleId: !!user.googleId };
   }));
 
@@ -94,6 +96,10 @@ export function platformRoutes() {
   }));
 
   r.post("/users/:id/revoke-sessions", admin, handler(async (req) => {
+    const me = currentUser(req);
+    const target = await prisma.user.findUnique({ where: { id: param(req, "id") }, select: { role: true } });
+    if (!target) throw notFound("User");
+    if (target.role === "SUPER_ADMIN" && me.role !== "SUPER_ADMIN") throw badRequest("Only a Super Admin can sign out a Super Admin.");
     const user = await prisma.user.update({ where: { id: param(req, "id") }, data: { tokenVersion: { increment: 1 } }, select: { id: true } });
     await audit(currentUser(req).id, "REVOKED_SESSIONS", "User", user.id);
     return { revoked: true };

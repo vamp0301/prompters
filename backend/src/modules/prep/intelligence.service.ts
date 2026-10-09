@@ -1,6 +1,7 @@
 import type { CareerResume, ResumeChunk, ResumeClaim } from "@prisma/client";
 import { aiJson } from "../../ai/json.js";
 import { prisma } from "../../lib/prisma.js";
+import { acquire } from "../../lib/lock.js";
 import { resumeParsedSchema, type ResumeParsed } from "../career/schemas.js";
 import { prepPrompts } from "./prompts.js";
 import { intelligenceSchema } from "./schemas.js";
@@ -20,16 +21,34 @@ export function resumeSkills(parsed: ResumeParsed) {
  * resume. Resumes uploaded before this existed are processed the first time they're used.
  */
 export async function ensureResumeIntelligence(resumeId: string): Promise<ResumeIntelligence> {
+  const cached = await analyzed(resumeId);
+  if (cached) return cached;
+  // Single-flight per resume: concurrent callers (prep worker, projects list) would otherwise each
+  // delete and recreate the chunks and claims, leaving dangling references.
+  const release = await acquire(`lock:resume-intel:${resumeId}`, AI_TIMEOUT + 60_000, AI_TIMEOUT + 30_000);
+  try {
+    return (await analyzed(resumeId)) ?? (await analyze(resumeId));
+  } finally {
+    await release?.();
+  }
+}
+
+async function analyzed(resumeId: string): Promise<ResumeIntelligence | null> {
   const resume = await prisma.careerResume.findUniqueOrThrow({ where: { id: resumeId } });
+  if (!resume.analyzedAt) return null;
   const parsed = resumeParsedSchema.parse(resume.parsed);
-  if (resume.analyzedAt) {
+  {
     const [chunks, claims] = await Promise.all([
       prisma.resumeChunk.findMany({ where: { resumeId }, orderBy: { order: "asc" } }),
       prisma.resumeClaim.findMany({ where: { resumeId }, orderBy: { id: "asc" } }),
     ]);
     return { resume, parsed, chunks, claims };
   }
+}
 
+async function analyze(resumeId: string): Promise<ResumeIntelligence> {
+  const resume = await prisma.careerResume.findUniqueOrThrow({ where: { id: resumeId } });
+  const parsed = resumeParsedSchema.parse(resume.parsed);
   const sections = sectionize(resume.text);
   const p = prepPrompts.intelligence(sections, parsed);
   // Generous budget: Gemini's "thinking" counts against it, and a long resume yields up to 40 chunks + 40

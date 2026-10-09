@@ -718,10 +718,10 @@ model AdminAuditLog {
 // ───────────────────────── Interview & Career Intelligence ─────────────────────────
 
 model CareerResume {
-  id         String             @id @default(cuid())
+  id         String              @id @default(cuid())
   projects   ProjectExperience[]
   userId     String
-  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   label      String
   fileName   String?
   /// Original upload in object storage (deleted with the resume).
@@ -729,7 +729,7 @@ model CareerResume {
   text       String
   /// Structured extraction: skills, projects, experience, education, claims…
   parsed     Json
-  createdAt  DateTime           @default(now())
+  createdAt  DateTime            @default(now())
   /// Set once semantic chunks + claims have been extracted (older resumes get them lazily).
   analyzedAt DateTime?
   matches    JobMatch[]
@@ -867,6 +867,7 @@ model InterviewTurn {
   answeredAt    DateTime?
 
   @@unique([sessionId, order])
+  @@index([answeredAt])
 }
 
 model InterviewIntegrityEvent {
@@ -986,6 +987,7 @@ model PrepPlan {
   packs       PrepPack[]
 
   @@index([userId, createdAt])
+  @@index([status, createdAt])
 }
 
 model PrepQuestion {
@@ -1040,6 +1042,7 @@ model PrepAttempt {
   createdAt  DateTime     @default(now())
 
   @@index([questionId, createdAt])
+  @@index([userId, createdAt])
 }
 
 /// A downloadable interview pack (PDF), generated in the background.
@@ -1060,6 +1063,7 @@ model PrepPack {
   completedAt DateTime?
 
   @@index([planId, createdAt])
+  @@index([status, createdAt])
 }
 
 /// A study guide for one skill in one language (what it is, real-world use, implementation, perks,
@@ -1158,49 +1162,49 @@ model StudentSkillState {
 
 /// One "next best action" shown to a student, with the features and model that scored it.
 model Recommendation {
-  id           String                   @id @default(cuid())
-  userId       String
-  user         User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String                   @id @default(cuid())
+  userId         String
+  user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// LEARN_TOPIC | REVISE_TOPIC | REVISIT_PREREQUISITE | PRACTICE_SKILL | PRACTICE_QUESTION | FINISH_BUILD | LEARN_CONCEPT
-  action       String
+  action         String
   /// TOPIC | SKILL | PREP_QUESTION | BUILD_TASK | CONCEPT
-  itemType     String
-  itemId       String
-  title        String
-  href         String
-  score        Float
-  rank         Int
+  itemType       String
+  itemId         String
+  title          String
+  href           String
+  score          Float
+  rank           Int
   /// easy | medium | hard
-  difficulty   String?
+  difficulty     String?
   /// HIGH | MEDIUM | LOW
-  priority     String
+  priority       String
   /// Machine-readable reasons (low_mastery, high_role_relevance, interview_weakness…).
-  reasons      String[]
+  reasons        String[]
   /// Feature values the score came from — for audit and as training rows.
-  features     Json
-  modelName    String
-  modelVersion String
+  features       Json
+  modelName      String
+  modelVersion   String
   /// ACTIVE | DONE | SUPERSEDED | EXPIRED | DISMISSED
-  status       String                   @default("ACTIVE")
+  status         String                   @default("ACTIVE")
   /// Training label, resolved from later activity: SUCCESS (1) | FAILURE (0) | null (no label, e.g. never acted on).
-  outcome       String?
+  outcome        String?
   /// What actually happened: STARTED → SUCCESS | NO_IMPROVEMENT | ABANDONED, or NOT_ACTED_ON (shown, never started).
-  outcomeDetail String?
+  outcomeDetail  String?
   /// Change in the concept's mastery from when it was recommended to when it was resolved.
-  improvement   Float?
+  improvement    Float?
   /// Every outcome signal, not just the label: accepted, started, completed, masteryDelta, quizDelta,
   /// buildDelta, interviewDelta (filled in when the next interview happens) and retention.
   outcomeSignals Json?
-  startedAt     DateTime?
+  startedAt      DateTime?
   /// Rollout arm the student was in when this was ranked: ml | baseline.
-  arm           String?
-  shownAt      DateTime?
-  createdAt    DateTime                 @default(now())
-  updatedAt    DateTime                 @updatedAt
-  expiresAt    DateTime
-  resolvedAt   DateTime?
-  feedback     RecommendationFeedback[]
-  predictions  MLPrediction[]
+  arm            String?
+  shownAt        DateTime?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  expiresAt      DateTime
+  resolvedAt     DateTime?
+  feedback       RecommendationFeedback[]
+  predictions    MLPrediction[]
 
   @@index([userId, status, rank])
   @@index([itemType, itemId])
@@ -1242,6 +1246,7 @@ model MLPrediction {
 
   @@index([userId, createdAt])
   @@index([modelName, modelVersion])
+  @@index([userId, target, createdAt])
 }
 
 /// One training attempt of the recommendation model, including attempts refused for lack of data.
@@ -1270,11 +1275,11 @@ model MLTrainingRun {
 /// One project (or job) from a resume, as an interview-preparation module. Built from the resume's
 /// PROJECT / EXPERIENCE chunks; facts are editable without touching the resume.
 model ProjectExperience {
-  id          String         @id @default(cuid())
+  id          String          @id @default(cuid())
   userId      String
-  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   resumeId    String
-  resume      CareerResume   @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  resume      CareerResume    @relation(fields: [resumeId], references: [id], onDelete: Cascade)
   /// Stable key within the resume (normalized project name).
   key         String
   name        String
@@ -1291,8 +1296,8 @@ model ProjectExperience {
   /// Hash of the facts the content was generated from — edited facts make it stale.
   contentHash String?
   model       String?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
   tests       ProjectTest[]
   answers     ProjectAnswer[]
 
@@ -1348,4 +1353,5 @@ model ProjectAnswer {
 
   @@index([projectId, createdAt])
   @@index([userId, skill])
+  @@index([testId, createdAt])
 }

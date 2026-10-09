@@ -8,7 +8,7 @@ import { logEvent } from "../platform/events.js";
 import { canonicalSkill } from "../prep/text.js";
 import { DIMENSIONS, type Dimension } from "./content.js";
 import { apiInterview, integrationsOf, KIND_LABEL, type ApiFocus } from "./integrations.js";
-import { contextOf, generateContent, hashOf, ownedProject, type ProjectContent } from "./project.service.js";
+import { contextOf, ensureContent, ownedProject, type ProjectContent } from "./project.service.js";
 
 /**
  * "How well do you actually know this project?" Six modes:
@@ -83,11 +83,7 @@ function nextDrill(s: State, all: Item[]): Item | null {
 }
 
 async function moduleFor(userId: string, projectId: string) {
-  let p = await ownedProject(userId, projectId);
-  if (!p.content || p.contentHash !== hashOf(p)) {
-    await generateContent(p);
-    p = await ownedProject(userId, projectId);
-  }
+  const p = await ensureContent(await ownedProject(userId, projectId));
   return { p, content: p.content as unknown as ProjectContent };
 }
 

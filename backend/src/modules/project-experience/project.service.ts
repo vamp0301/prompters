@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import type { z } from "zod";
 import { aiJson } from "../../ai/json.js";
 import { logger } from "../../lib/logger.js";
+import { acquire } from "../../lib/lock.js";
 import { prisma } from "../../lib/prisma.js";
 import { AppError, badRequest, notFound } from "../../utils/errors.js";
 import { logEvent } from "../platform/events.js";
@@ -131,6 +132,25 @@ export async function buildContent(p: Project) {
 }
 export type ProjectContent = Awaited<ReturnType<typeof buildContent>>;
 
+/**
+ * Generates (and saves) the module unless an equal one already exists. Single-flight per project:
+ * a second tab, a refresh or a test start waits for the running generation and reuses its result.
+ */
+export async function ensureContent(p: Project): Promise<Project> {
+  const fresh = (x: Project) => !!x.content && x.contentHash === hashOf(x);
+  if (fresh(p)) return p;
+  const release = await acquire(`lock:project-gen:${p.id}`, 6 * 60_000, 5 * 60_000);
+  if (!release) throw new AppError(503, "GENERATION_BUSY", "This project's module is still being built. Try again in a minute.");
+  try {
+    const current = await prisma.projectExperience.findUniqueOrThrow({ where: { id: p.id } });
+    if (fresh(current)) return current;
+    await generateContent(current);
+    return prisma.projectExperience.findUniqueOrThrow({ where: { id: p.id } });
+  } finally {
+    await release();
+  }
+}
+
 export async function generateContent(p: Project) {
   const content = await buildContent(p);
   await prisma.projectExperience.update({ where: { id: p.id }, data: { content: content as unknown as Prisma.InputJsonValue, contentHash: hashOf(p), model: process.env.AI_MODEL ?? null } });
@@ -161,10 +181,7 @@ export async function getProject(userId: string, id: string, opts: { generate: b
   let p = await owned(userId, id);
   const ctx = contextOf(p);
   const stale = !p.content || p.contentHash !== hashOf(p);
-  if (stale && opts.generate) {
-    await generateContent(p);
-    p = await owned(userId, id);
-  }
+  if (stale && opts.generate) p = await ensureContent(p);
   await logEvent(userId, "project_viewed", { meta: { projectId: p.id } });
   return {
     id: p.id,
@@ -207,7 +224,13 @@ export async function updateFacts(userId: string, id: string, patch: Record<stri
 
 export async function regenerate(userId: string, id: string) {
   const p = await owned(userId, id);
-  await generateContent(p);
+  const release = await acquire(`lock:project-gen:${p.id}`, 6 * 60_000, 5 * 60_000);
+  if (!release) throw new AppError(503, "GENERATION_BUSY", "This project's module is still being built. Try again in a minute.");
+  try {
+    await generateContent(await owned(userId, id));
+  } finally {
+    await release();
+  }
   return getProject(userId, id, { generate: false });
 }
 

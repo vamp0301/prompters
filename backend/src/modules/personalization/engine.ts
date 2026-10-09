@@ -1,5 +1,6 @@
 import { Prisma, type Recommendation } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
+import { acquire } from "../../lib/lock.js";
 import { generateCandidates, type Candidate } from "./candidates.js";
 import { careerContext, conceptStates, loadStudentData, skillRelevance, studentDifficulty, studentFeatures, type StudentData } from "./data.js";
 import { actionLabel, explain, REASON_LABEL } from "./explain.js";
@@ -24,6 +25,18 @@ const TTL_DAYS = 7;
 export const COLD_START_EVIDENCE = 20;
 
 export async function refreshIfStale(userId: string, opts: { force?: boolean; now?: Date } = {}) {
+  // One refresh per student at a time (two tabs, /next + personal sort): a concurrent caller reads
+  // what the running refresh produces instead of creating duplicate recommendations.
+  const release = await acquire(`lock:refresh:${userId}`, 60_000);
+  if (!release) return { refreshed: false };
+  try {
+    return await refreshIfStaleLocked(userId, opts);
+  } finally {
+    await release();
+  }
+}
+
+async function refreshIfStaleLocked(userId: string, opts: { force?: boolean; now?: Date }) {
   const now = opts.now ?? new Date();
   const last = await prisma.recommendation.findFirst({ where: { userId, status: "ACTIVE" }, orderBy: { updatedAt: "desc" }, select: { updatedAt: true } });
   if (last) {

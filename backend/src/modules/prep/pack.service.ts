@@ -1,6 +1,7 @@
 import type { PrepCategory, PrepPriority, PrepQuestion, Prisma } from "@prisma/client";
 import { aiJson } from "../../ai/json.js";
 import { enqueuePrep } from "../../jobs/prep-queue.js";
+import { LockBusyError, withLock } from "../../lib/lock.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { storage } from "../../lib/storage.js";
@@ -22,6 +23,14 @@ type Localized = { question: string; hint: string; why: string; keyPoints: strin
 // ───────────────────────── API-facing ─────────────────────────
 
 export async function requestPack(userId: string, planId: string, variant: PackVariant, language: PackLanguage) {
+  // Check-then-create below: one request at a time per plan, so a double-click makes one PDF.
+  return withLock(`lock:prep-pack:${userId}:${planId}`, 15_000, () => requestPackLocked(userId, planId, variant, language), 5_000).catch((e) => {
+    if (e instanceof LockBusyError) throw conflict("Your PDF is already being requested. Try again in a moment.");
+    throw e;
+  });
+}
+
+async function requestPackLocked(userId: string, planId: string, variant: PackVariant, language: PackLanguage) {
   const plan = await prisma.prepPlan.findFirst({ where: { id: planId, userId } });
   if (!plan) throw notFound("Preparation plan");
   if (plan.status !== "READY") throw conflict("Your questions are still being prepared.");
@@ -398,8 +407,9 @@ function renderTopics(doc: Doc, qs: RankedQuestion[], loc: (q: PrepQuestion) => 
 
 export async function runPack(packId: string) {
   const pack = await prisma.prepPack.findUnique({ where: { id: packId }, include: { plan: { include: { resume: true, user: { select: { name: true } } } } } });
-  if (!pack || pack.status === "READY") return;
-  await prisma.prepPack.update({ where: { id: pack.id }, data: { status: "RUNNING", error: null } });
+  if (!pack) return;
+  const { count } = await prisma.prepPack.updateMany({ where: { id: pack.id, status: "QUEUED" }, data: { status: "RUNNING", error: null } });
+  if (!count) return; // a duplicate or stale job: someone else has it, or it's done
   try {
     const questions = await prisma.prepQuestion.findMany({ where: { planId: pack.planId, rank: { gt: 0 } }, orderBy: { rank: "asc" }, include: { attempts: { select: { score: true } } } });
     const language = pack.language as PackLanguage;

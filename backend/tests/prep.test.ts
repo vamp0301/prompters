@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Worker } from "bullmq";
 import { login, resetDb, seedFixture } from "./helpers.js";
 import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
@@ -28,7 +27,7 @@ const RESUME = [
 ].join("\n");
 const JD = "Backend Developer at Zeta. Required: Node.js, Express, MongoDB, Redis, AWS. Nice to have: Docker. Build and scale APIs.";
 
-let worker: Worker | undefined;
+let worker: ReturnType<typeof startPrepWorker> | undefined;
 beforeAll(async () => {
   await resetDb();
   await seedFixture();
