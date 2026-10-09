@@ -1496,6 +1496,8 @@ export interface ConceptContent {
   disadvantages: string[];
   mistakes: { wrong: string; right: string }[];
   levels: { level: number; question: string; hint: string }[];
+  /** Level names for professional (non-coding) skills; absent → the technical names. */
+  levelNames?: string[];
   keyPoints: string[];
   internals: string[];
   interviewerExpects: string[];

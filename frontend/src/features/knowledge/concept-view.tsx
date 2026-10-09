@@ -409,7 +409,7 @@ function InterviewMode({ d }: { d: ConceptChapter }) {
             <li key={i} className="rounded-lg border border-border p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="eyebrow text-accent-2">
-                  Level {l.level} · {LEVEL_LABEL[l.level] ?? ""}
+                  Level {l.level} · {c.levelNames?.[l.level - 1] ?? LEVEL_LABEL[l.level] ?? ""}
                 </span>
                 <button
                   type="button"

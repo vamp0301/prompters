@@ -489,7 +489,10 @@ describe("Top-100 preparation plan", () => {
     expect(calls()).toBe(before + 2);
     // Not on this user's resume → not an open AI endpoint.
     expect((await agent.get("/api/career/skills/guide").query({ name: "Kubernetes Operators", lang: "en" })).status).toBe(404);
-    expect((await other.agent.get("/api/career/skills/guide").query({ name: "Node.js", lang: "en" })).status).toBe(404);
+    // Another student may open a guide only for skills on THEIR resume or in THEIR career's framework
+    // (they're onboarded as Backend, so Node.js is open to them; Figma isn't).
+    expect((await other.agent.get("/api/career/skills/guide").query({ name: "Figma", lang: "en" })).status).toBe(404);
+    expect((await other.agent.get("/api/career/skills/guide").query({ name: "Node.js", lang: "en" })).status).toBe(200);
     // The guide content itself is untrusted model output fenced in the prompt.
     expect(fake.calls.find((c) => c.task === "skill_guide")!.user).toContain("<skill>");
   });

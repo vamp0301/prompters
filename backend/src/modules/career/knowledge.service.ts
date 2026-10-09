@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { LEVEL_NAMES, skillFraming, type Framing } from "./skill-framing.js";
 import { aiJson, fence } from "../../ai/json.js";
 import { prisma } from "../../lib/prisma.js";
 import { AppError, badRequest, notFound } from "../../utils/errors.js";
@@ -25,7 +26,36 @@ const curated = new Map(Object.entries(CURATED_MAPS).map(([, m]) => [canonicalSk
 
 // ───────────────────────── prompts ─────────────────────────
 
-function mapPrompt(skill: string) {
+/**
+ * Professional framing (competencies of non-coding careers): the same prompts with the software
+ * wording swapped. Every phrase must still exist in the technical prompt (tested).
+ */
+export const PROFESSIONAL_SWAPS: [string, string][] = [
+  ["You design the learning map for ONE software skill for an Indian engineering student preparing for technical interviews.", "You design the learning map for ONE professional skill or competency for an Indian student or early professional preparing for interviews."],
+  ["If it is not a real software skill, return a tiny honest map", "If it is not a real skill, return a tiny honest map"],
+  ["(e.g. Foundation, Core concepts, Practical development, Advanced, Production, Architecture, Performance, Security, Debugging, Interview)", "(e.g. Foundation, Core concepts, Methods & frameworks, Applied practice, Measurement, Advanced, Interview)"],
+  ["(e.g. 'Event Loop', 'useEffect', 'Compound Indexes')", "(e.g. 'RICE scoring', 'Cohort retention', 'BATNA')"],
+  ["an interview-preparation platform for Indian engineering students", "an interview-preparation platform for Indian students and early professionals"],
+  ["Keep technical terms, product names, diagram labels and code in English.", "Keep established terms, framework and tool names, and diagram labels in English."],
+  ["Be technically correct and current; teach only established, verifiable behaviour (standards, RFCs, documented defaults).", "Be correct and current; teach only established, verifiable methods and definitions (textbook frameworks, standard formulas, accepted practice)."],
+  ["Good choices: before/after (e.g. single server vs load-balanced), request flow, failure handling, a comparison of variants.", "Good choices: a process, before/after, a comparison of methods, a decision between options."],
+  ["implementation: applicable=true ONLY if a short code or configuration example (≤ 25 lines) genuinely shows THIS concept (e.g. an nginx upstream block for a load balancer, cache-aside read code for cache-aside). Otherwise applicable=false with reason \"Code is not the best way to understand this concept.\" Never give code about a different concept.", "implementation: applicable=false with reason \"Code is not the best way to understand this concept.\" — this is not a coding skill."],
+  ["1 Beginner, 2 Developer, 3 Production, 4 System design, 5 Interview", "1 Beginner, 2 Practitioner, 3 Applied, 4 Strategy, 5 Interview"],
+  ["internals: what happens under the hood.", "internals: the reasoning or mechanics underneath."],
+  ["You are Manisha, a fair senior technical interviewer.", "You are Manisha, a fair senior interviewer in this field."],
+  ["judge only its technical substance.", "judge only its substance."],
+  ["incorrect: technically wrong statements.", "incorrect: wrong statements."],
+];
+
+/** Applies the professional framing to a prompt. */
+export function frame(prompt: { system: string; user: string }, framing: Framing) {
+  if (framing === "technical") return prompt;
+  let system = prompt.system;
+  for (const [from, to] of PROFESSIONAL_SWAPS) system = system.split(from).join(to);
+  return { ...prompt, system };
+}
+
+export function mapPrompt(skill: string) {
   return {
     system: [
       "You design the learning map for ONE software skill for an Indian engineering student preparing for technical interviews.",
@@ -96,7 +126,7 @@ export function conceptPrompt(ctx: ChapterContext & { previous: string[] }, loca
 async function writeChapter(ctx: ChapterContext & { previous: string[] }, locale: GuideLocale): Promise<ConceptChapterContent> {
   let feedback: string[] = [];
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const p = conceptPrompt(ctx, locale, feedback);
+    const p = frame(conceptPrompt(ctx, locale, feedback), skillFraming(ctx.skill));
     const raw = await aiJson("concept_chapter", p.system, p.user, conceptSchema, 12000, { timeoutMs: 120_000, fast: true });
     const v = validateChapter(raw, ctx);
     if (v.fixes.length) logger.info({ concept: ctx.concept.key, fixes: v.fixes }, "Concept chapter auto-fixed");
@@ -107,7 +137,7 @@ async function writeChapter(ctx: ChapterContext & { previous: string[] }, locale
   throw new AppError(502, "AI_BAD_OUTPUT", "We couldn't write a good enough chapter for this concept right now. Please try again in a minute.");
 }
 
-function explainPrompt(skill: string, concept: string, keyPoints: string[], answer: string) {
+export function explainPrompt(skill: string, concept: string, keyPoints: string[], answer: string) {
   return {
     system: [
       "You are Manisha, a fair senior technical interviewer. A student explained one concept in about 60 seconds (often spoken, then transcribed). Judge it.",
@@ -143,13 +173,16 @@ function tidyMap(map: SkillMapContent): SkillMapContent {
 async function loadMap(skill: { key: string; name: string; curated: boolean }): Promise<{ content: SkillMapContent; source: string }> {
   if (skill.curated) return { content: tidyMap(curated.get(skill.key)!.content), source: "CURATED" };
   const cached = await prisma.skillMap.findUnique({ where: { key: skill.key } });
-  if (cached) return { content: skillMapSchema.parse(cached.content), source: cached.source };
-  const p = mapPrompt(skill.name);
+  const framing = skillFraming(skill.name);
+  // A map written under the other framing (e.g. Excel as a software skill) is rewritten once.
+  if (cached && ((cached.content as { _framing?: string })._framing ?? "technical") === framing) return { content: skillMapSchema.parse(cached.content), source: cached.source };
+  const p = frame(mapPrompt(skill.name), skillFraming(skill.name));
   const content = tidyMap(await aiJson("skill_map", p.system, p.user, skillMapSchema, 5000, { timeoutMs: 60_000, fast: true }));
   // Unique keys across the whole map (concept pages are addressed by key).
   const seen = new Set<string>();
   content.domains = content.domains.map((d) => ({ ...d, concepts: d.concepts.filter((c) => !seen.has(c.key) && seen.add(c.key)) })).filter((d) => d.concepts.length);
-  await prisma.skillMap.upsert({ where: { key: skill.key }, create: { key: skill.key, name: skill.name, source: "AI", content: content as Prisma.InputJsonValue, model: process.env.AI_MODEL ?? null }, update: {} });
+  const stored = { ...content, _framing: framing } as Prisma.InputJsonValue;
+  await prisma.skillMap.upsert({ where: { key: skill.key }, create: { key: skill.key, name: skill.name, source: "AI", content: stored, model: process.env.AI_MODEL ?? null }, update: { content: stored } });
   return { content, source: "AI" };
 }
 
@@ -224,9 +257,12 @@ export async function conceptChapter(userId: string, name: string, conceptKey: s
   if (!found) throw notFound("Concept");
 
   let row = await prisma.skillConcept.findUnique({ where: { skillKey_conceptKey_locale: { skillKey: skill.key, conceptKey, locale } } });
-  // Chapters written under an older contract are rewritten (once) under the current one.
-  if (!row || (row.content as { _v?: number })._v !== CONCEPT_VERSION) {
-    const content = await writeChapter(chapterContext(map, skill.name, conceptKey), locale);
+  // Chapters written under an older contract (or the other framing) are rewritten once under the current one.
+  const framing = skillFraming(skill.name);
+  const stored = row?.content as { _v?: number; _framing?: string } | undefined;
+  if (!row || stored?._v !== CONCEPT_VERSION || (stored?._framing ?? "technical") !== framing) {
+    const written = await writeChapter(chapterContext(map, skill.name, conceptKey), locale);
+    const content = framing === "professional" ? { ...written, implementation: { applicable: false, reason: "Code is not the best way to understand this concept." }, _framing: framing, levelNames: LEVEL_NAMES.professional } : written;
     row = await prisma.skillConcept.upsert({
       where: { skillKey_conceptKey_locale: { skillKey: skill.key, conceptKey, locale } },
       create: { skillKey: skill.key, conceptKey, locale, title: found.concept.title, content: content as unknown as Prisma.InputJsonValue, model: process.env.AI_MODEL ?? null },
@@ -286,7 +322,7 @@ export async function explainConcept(userId: string, name: string, conceptKey: s
     (await prisma.skillConcept.findFirst({ where: { skillKey: skill.key, conceptKey } }));
   if (!chapter) throw badRequest("Open the concept first, then explain it.");
   const keyPoints = (chapter.content as unknown as ConceptChapterContent).keyPoints;
-  const p = explainPrompt(skill.name, found.concept.title, keyPoints, answer);
+  const p = frame(explainPrompt(skill.name, found.concept.title, keyPoints, answer), skillFraming(skill.name));
   const e = await aiJson("concept_explain", p.system, p.user, explainEvalSchema, 1500, { timeoutMs: 45_000, fast: true });
   const score = Math.round((e.correctness * 0.4 + e.completeness * 0.3 + e.depth * 0.15 + e.clarity * 0.15) * 10);
 

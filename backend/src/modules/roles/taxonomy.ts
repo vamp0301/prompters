@@ -102,6 +102,21 @@ export const isRoleKey = (key: string | null | undefined): key is string => !!ro
 export function competency(key: string) {
   return current.competencies.get(key) ?? null;
 }
+
+const aliasIndex = new WeakMap<Taxonomy, Map<string, Competency>>();
+/** A competency by name, canonical key or any alias ("market segmentation" → Segmentation). */
+export function findCompetency(name: string): Competency | null {
+  const key = keyOf(name);
+  const direct = current.competencies.get(key);
+  if (direct) return direct;
+  let index = aliasIndex.get(current);
+  if (!index) {
+    index = new Map();
+    for (const c of current.competencies.values()) for (const a of c.aliases) index.set(keyOf(a), c);
+    aliasIndex.set(current, index);
+  }
+  return index.get(key) ?? null;
+}
 export function listRoles(filter: { family?: FamilyKey; q?: string } = {}) {
   const q = filter.q?.trim().toLowerCase();
   return [...current.roles.values()]
