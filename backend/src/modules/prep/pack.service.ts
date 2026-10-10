@@ -10,7 +10,7 @@ import { AppError, conflict, notFound } from "../../utils/errors.js";
 import { logEvent } from "../platform/events.js";
 import { resumeParsedSchema } from "../career/schemas.js";
 import { PREP_CATEGORIES } from "./allocation.js";
-import { COLORS, createDoc, footer, keepTogether, rule, toBuffer, write, type Doc } from "./pdf.js";
+import { barChart, COLORS, drawMark, contentWidth, createDoc, flowChart, footer, heading, keepTogether, PALETTE, pill, rule, stackedBar, stepFlow, textAt, textHeight, toBuffer, write, type Doc } from "./pdf.js";
 import { prepPrompts } from "./prompts.js";
 import { translationSchema } from "./schemas.js";
 
@@ -132,6 +132,14 @@ const L = {
     focus: "Skills to revise first", plan: "7-day preparation plan", questionsWord: "questions", practiced: "practised", avg: "avg score",
     day: "Day", mock: "Mock interview with Manisha — revisit every question you couldn't answer confidently.",
     planIntro: "Work through the questions in rank order, grouped by skill. Say every answer out loud in English.",
+    priorityMix: "Priority mix", categoryMix: "Question types", howTo: "How to prepare with this pack", skillsChart: "Questions per skill",
+    flow: [
+      ["Read the question", "Start with the INTENSE ones"],
+      ["Recall the key points", "Use the hint only if stuck"],
+      ["Answer out loud", "In English, 1–2 minutes"],
+      ["Practise in Prompters", "Get a score and feedback"],
+      ["Mock interview", "With Manisha, before the real one"],
+    ],
   },
   hinglish: {
     subtitle: "Personalised Technical Interview Preparation",
@@ -145,6 +153,14 @@ const L = {
     focus: "Pehle ye skills revise karein", plan: "7-din ka preparation plan", questionsWord: "questions", practiced: "practice kiye", avg: "avg score",
     day: "Din", mock: "Manisha ke saath mock interview — jo questions confidently nahi aaye, unhe dobara dekhiye.",
     planIntro: "Questions ko rank order mein, skill ke hisaab se group karke padhiye. Har answer English mein bol kar practice kijiye.",
+    priorityMix: "Priority ka mix", categoryMix: "Question ke types", howTo: "Is pack se kaise prepare karein", skillsChart: "Har skill ke questions",
+    flow: [
+      ["Question padhiye", "INTENSE wale pehle"],
+      ["Key points yaad kijiye", "Atakne par hi hint dekhiye"],
+      ["Bol kar answer dijiye", "English mein, 1–2 minute"],
+      ["Prompters par practice", "Score aur feedback paiye"],
+      ["Mock interview", "Manisha ke saath, asli interview se pehle"],
+    ],
   },
   hi: {
     subtitle: "व्यक्तिगत तकनीकी इंटरव्यू तैयारी",
@@ -158,6 +174,14 @@ const L = {
     focus: "पहले इन skills को दोहराएँ", plan: "7-दिन की तैयारी योजना", questionsWord: "प्रश्न", practiced: "अभ्यास किए", avg: "औसत स्कोर",
     day: "दिन", mock: "Manisha के साथ mock interview — जो प्रश्न आत्मविश्वास से नहीं आए, उन्हें दोबारा देखें।",
     planIntro: "प्रश्नों को रैंक के क्रम में, skill के अनुसार समूह बनाकर पढ़ें। हर उत्तर English में बोलकर अभ्यास करें।",
+    priorityMix: "प्राथमिकता का मिश्रण", categoryMix: "प्रश्नों के प्रकार", howTo: "इस पैक से तैयारी कैसे करें", skillsChart: "हर skill के प्रश्न",
+    flow: [
+      ["प्रश्न पढ़ें", "पहले INTENSE प्रश्न"],
+      ["मुख्य बातें याद करें", "अटकें तभी संकेत देखें"],
+      ["बोलकर उत्तर दें", "English में, 1–2 मिनट"],
+      ["Prompters पर अभ्यास", "स्कोर और feedback पाएँ"],
+      ["Mock interview", "Manisha के साथ, असली interview से पहले"],
+    ],
   },
 } as const;
 
@@ -272,14 +296,18 @@ const ranksText = (ranks: number[]) => ranks.sort((a, b) => a - b).map((r) => `#
 function questionBlock(doc: Doc, q: PrepQuestion, t: Localized, packVariant: PackVariant, l: (typeof L)[PackLanguage]) {
   // Inside a topic section the revision points are already summarised, so each question shows its hint only.
   const variant = packVariant === "TOPICS" ? "HINTS" : packVariant;
-  keepTogether(doc, variant === "QUESTIONS" ? 48 : 110);
-  const meta = `${PRIORITY_NAME[q.priority]} · ${CATEGORY_NAME[q.category]} · ${q.skill} · L${q.difficulty} · ${Math.round(q.probability * 100)}%`;
-  doc.font("bold").fontSize(8).fillColor(COLORS[q.priority]).text(meta, doc.page.margins.left, doc.y);
+  keepTogether(doc, variant === "QUESTIONS" ? 56 : 120);
+  const left = doc.page.margins.left;
+  const top = doc.y;
+  const page = doc.page;
+  const pw = pill(doc, PRIORITY_NAME[q.priority], left, top, COLORS[q.priority]);
+  textAt(doc, `${CATEGORY_NAME[q.category]} · ${q.skill} · L${q.difficulty} · ${Math.round(q.probability * 100)}%`, { x: left + pw + 7, y: top + 1.5, width: contentWidth(doc) - pw - 7, size: 7.5, color: COLORS.subtle });
+  doc.y = top + 17;
   write(doc, `${q.rank}. ${t.question}`, { size: 10.5, bold: true, gap: 0.2 });
   if (variant !== "QUESTIONS") write(doc, `${l.hint}: ${t.hint}`, { size: 9, color: COLORS.muted, indent: 12, gap: 0.15 });
   if (variant === "GUIDE") {
     write(doc, `${l.why}: ${t.why}`, { size: 9, color: COLORS.muted, indent: 12, gap: 0.15 });
-    if (q.evidence) write(doc, `${l.evidence}: “${q.evidence}”`, { size: 9, color: COLORS.muted, indent: 12, gap: 0.15 });
+    if (q.evidence) write(doc, `${l.evidence}: “${q.evidence}”`, { size: 9, color: COLORS.accent, indent: 12, gap: 0.15 });
     write(doc, `${l.keyPoints}:`, { size: 9, bold: true, indent: 12 });
     for (const k of t.keyPoints) write(doc, `•  ${k}`, { size: 9, indent: 22 });
     if (t.followUps.length) {
@@ -287,7 +315,58 @@ function questionBlock(doc: Doc, q: PrepQuestion, t: Localized, packVariant: Pac
       for (const f of t.followUps) write(doc, `–  ${f}`, { size: 9, color: COLORS.muted, indent: 22 });
     }
   }
-  doc.moveDown(variant === "QUESTIONS" ? 0.5 : 0.8);
+  // A priority-coloured bar down the left edge of the block (when it stayed on one page).
+  if (doc.page === page) doc.save().roundedRect(left - 12, top, 3, doc.y - top, 1.5).fill(COLORS[q.priority]).restore();
+  doc.moveDown(variant === "QUESTIONS" ? 0.6 : 0.9);
+}
+
+/** Cover: dark brand panel, the candidate's details as cards, charts of the bank and the prep flow. */
+function cover(doc: Doc, input: { candidate: string; title: string; variant: PackVariant; date?: Date }, qs: RankedQuestion[], l: (typeof L)[PackLanguage]) {
+  const x = 40;
+  const w = doc.page.width - 80;
+  const panelH = 178;
+  doc.save().roundedRect(x, 40, w, panelH, 10).fill(COLORS.ink).restore();
+  doc.save().roundedRect(x, 40, w, panelH, 10).clip().circle(x + w - 40, 70, 90).fillOpacity(0.12).fill(COLORS.accent).restore();
+  drawMarkLight(doc, x + 24, 62);
+  doc.font("bold").fontSize(13).fillColor(COLORS.paper).text("PROMPTERS", x + 70, 72, { lineBreak: false, characterSpacing: 3 });
+  const ty = textAt(doc, l.subtitle, { x: x + 24, y: 118, width: w - 48, size: 21, bold: true, color: COLORS.paper });
+  pill(doc, l.variants[input.variant], x + 24, Math.min(ty + 8, 40 + panelH - 26), COLORS.accent, 8);
+
+  // Details as a 2 × 2 grid of cards
+  const date = (input.date ?? new Date()).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
+  const cards: [string, string][] = [[l.candidate, input.candidate], [l.target, input.title], [l.prepared, date], [l.edition, l.variants[input.variant]]];
+  const left = doc.page.margins.left;
+  const cw = (contentWidth(doc) - 12) / 2;
+  let y = 40 + panelH + 18;
+  for (let r = 0; r < 2; r++) {
+    const pair = cards.slice(r * 2, r * 2 + 2);
+    const h = Math.max(...pair.map(([, v]) => textHeight(doc, v, cw - 20, 11.5, true))) + 30;
+    pair.forEach(([k, v], i) => {
+      const cx = left + i * (cw + 12);
+      doc.save().roundedRect(cx, y, cw, h, 6).fill(COLORS.card).restore();
+      doc.save().rect(cx, y + 6, 3, h - 12).fill(PALETTE[r * 2 + i]).restore();
+      textAt(doc, k, { x: cx + 12, y: y + 8, width: cw - 20, size: 7.5, color: COLORS.subtle });
+      textAt(doc, v, { x: cx + 12, y: y + 20, width: cw - 20, size: 11.5, bold: true, color: COLORS.ink });
+    });
+    y += h + 10;
+  }
+  doc.y = y + 4;
+  doc.x = left;
+  write(doc, l.how, { size: 9, color: COLORS.muted, gap: 0.8 });
+
+  const priorities: PrepPriority[] = ["INTENSE", "IMPORTANT", "GOOD", "MAY_BE_ASKED"];
+  heading(doc, `${l.summary} — ${l.priorityMix}`, { size: 11 });
+  stackedBar(doc, priorities.map((p) => ({ label: PRIORITY_NAME[p], value: qs.filter((q) => q.priority === p).length, color: COLORS[p] })));
+  heading(doc, l.categoryMix, { size: 11 });
+  barChart(doc, PREP_CATEGORIES.filter((c) => qs.some((q) => q.category === c)).map((c, i) => ({ label: CATEGORY_NAME[c], value: qs.filter((q) => q.category === c).length, color: PALETTE[i % PALETTE.length] })), { labelWidth: 96 });
+  doc.moveDown(0.4);
+  heading(doc, l.howTo, { size: 11 });
+  flowChart(doc, l.flow.map(([title, body]) => ({ title, body })));
+}
+
+/** The mark in light colours, for the dark cover panel. */
+function drawMarkLight(doc: Doc, x: number, y: number) {
+  drawMark(doc, x, y, 40, { body: COLORS.paper, foot: "#9bc29a" });
 }
 
 export async function renderPack(input: {
@@ -300,23 +379,8 @@ export async function renderPack(input: {
 }) {
   const l = L[input.language];
   const qs = [...input.questions].sort((a, b) => a.rank - b.rank);
-  const doc = createDoc({ title: `Prompters — ${input.title}`, author: input.candidate });
-
-  // Cover
-  doc.moveDown(4);
-  write(doc, "PROMPTERS", { size: 12, bold: true, color: COLORS.accent, gap: 0.3 });
-  write(doc, l.subtitle, { size: 24, bold: true, gap: 1.5 });
-  const date = (input.date ?? new Date()).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
-  for (const [k, v] of [[l.candidate, input.candidate], [l.target, input.title], [l.prepared, date], [l.edition, l.variants[input.variant]]]) {
-    write(doc, k, { size: 9, color: COLORS.subtle });
-    write(doc, v, { size: 13, bold: true, gap: 0.6 });
-  }
-  rule(doc, 1.2);
-  write(doc, l.how, { size: 10, color: COLORS.muted, gap: 1 });
-  write(doc, l.summary, { size: 12, bold: true, gap: 0.3 });
-  const priorities: PrepPriority[] = ["INTENSE", "IMPORTANT", "GOOD", "MAY_BE_ASKED"];
-  write(doc, priorities.map((p) => `${PRIORITY_NAME[p]} ${qs.filter((q) => q.priority === p).length}`).join("   ·   "), { size: 10, gap: 0.2 });
-  write(doc, PREP_CATEGORIES.filter((c) => qs.some((q) => q.category === c)).map((c) => `${CATEGORY_NAME[c]} ${qs.filter((q) => q.category === c).length}`).join("   ·   "), { size: 10, color: COLORS.muted });
+  const doc = createDoc({ title: `Prompters — ${input.title}`, author: input.candidate, header: `${input.candidate} · ${input.title}` });
+  cover(doc, input, qs, l);
 
   const loc = (q: PrepQuestion) => localized(q, input.language) ?? localized(q, "en")!;
   if (input.variant === "TOPICS") {
@@ -324,44 +388,49 @@ export async function renderPack(input: {
   } else {
     // Ranked Top N
     doc.addPage();
-    write(doc, l.top.replace("{n}", String(qs.length)), { size: 16, bold: true, gap: 0.6 });
+    heading(doc, l.top.replace("{n}", String(qs.length)), { size: 16 });
+    doc.moveDown(0.3);
     for (const q of qs) questionBlock(doc, q, loc(q), input.variant, l);
   }
 
   // Category index
   doc.addPage();
-  write(doc, l.byCategory, { size: 14, bold: true, gap: 0.5 });
-  for (const c of PREP_CATEGORIES) {
-    const inCat = qs.filter((q) => q.category === c);
-    if (!inCat.length) continue;
-    write(doc, `${CATEGORY_NAME[c]} (${inCat.length})`, { size: 10, bold: true });
-    write(doc, ranksText(inCat.map((q) => q.rank)), { size: 9, color: COLORS.muted, gap: 0.5 });
-  }
+  heading(doc, l.byCategory);
+  barChart(
+    doc,
+    PREP_CATEGORIES.filter((c) => qs.some((q) => q.category === c)).map((c, i) => {
+      const inCat = qs.filter((q) => q.category === c);
+      return { label: CATEGORY_NAME[c], value: inCat.length, color: PALETTE[i % PALETTE.length], note: ranksText(inCat.map((q) => q.rank)) };
+    }),
+    { labelWidth: 96 },
+  );
 
   if (input.variant === "GUIDE") {
-    rule(doc, 1);
-    write(doc, l.focus, { size: 14, bold: true, gap: 0.4 });
-    for (const f of skillFocus(qs).slice(0, 12)) {
-      const practice = f.practiced ? ` · ${f.practiced} ${l.practiced}, ${l.avg} ${f.avg}%` : "";
-      write(doc, `•  ${f.skill} — ${f.count} ${l.questionsWord}${f.intense ? ` (${f.intense} INTENSE)` : ""}${practice}`, { size: 10, gap: 0.1 });
-    }
-    doc.moveDown(0.6);
+    doc.moveDown(0.8);
+    heading(doc, l.focus);
+    barChart(
+      doc,
+      skillFocus(qs).slice(0, 12).map((f, i) => ({
+        label: f.skill,
+        value: f.count,
+        color: f.intense ? COLORS.INTENSE : PALETTE[i % PALETTE.length],
+        note: [f.intense ? `${f.intense} INTENSE` : "", f.practiced ? `${f.practiced} ${l.practiced}, ${l.avg} ${f.avg}%` : ""].filter(Boolean).join(" · ") || undefined,
+      })),
+    );
   }
   if (input.variant === "GUIDE" || input.variant === "TOPICS") {
-    keepTogether(doc, 200);
-    write(doc, l.plan, { size: 14, bold: true, gap: 0.3 });
-    write(doc, l.planIntro, { size: 9.5, color: COLORS.muted, gap: 0.4 });
+    doc.moveDown(0.8);
+    keepTogether(doc, 220);
+    heading(doc, l.plan);
+    write(doc, l.planIntro, { size: 9, color: COLORS.muted, gap: 0.6 });
     const plan = sevenDayPlan(qs);
+    const steps: { label: string; title: string; detail?: string }[] = [];
     plan.days.forEach((d, i) => {
-      if (!d.ranks.length) return;
-      write(doc, `${l.day} ${i + 1}: ${d.skills.slice(0, 6).join(", ")}${d.skills.length > 6 ? "…" : ""}`, { size: 10, bold: true });
-      write(doc, ranksText(d.ranks), { size: 9, color: COLORS.muted, gap: 0.3 });
+      if (d.ranks.length) steps.push({ label: `${l.day} ${i + 1}`, title: `${d.skills.slice(0, 6).join(", ")}${d.skills.length > 6 ? "…" : ""}`, detail: ranksText(d.ranks) });
     });
-    if (plan.deepDive.length) {
-      write(doc, `${l.day} 6: ${CATEGORY_NAME.PROJECT} / ${CATEGORY_NAME.CLAIM} / ${CATEGORY_NAME.ACHIEVEMENT}`, { size: 10, bold: true });
-      write(doc, ranksText(plan.deepDive), { size: 9, color: COLORS.muted, gap: 0.3 });
-    }
-    write(doc, `${l.day} 7: ${l.mock}`, { size: 10, bold: true });
+    if (plan.deepDive.length) steps.push({ label: `${l.day} 6`, title: `${CATEGORY_NAME.PROJECT} / ${CATEGORY_NAME.CLAIM} / ${CATEGORY_NAME.ACHIEVEMENT}`, detail: ranksText(plan.deepDive) });
+    steps.push({ label: `${l.day} 7`, title: l.mock });
+    stepFlow(doc, steps);
   }
 
   footer(doc, `Prompters · ${input.candidate} · ${input.title}`);
@@ -372,16 +441,18 @@ export async function renderPack(input: {
 function renderTopics(doc: Doc, qs: RankedQuestion[], loc: (q: PrepQuestion) => Localized, l: (typeof L)[PackLanguage]) {
   const groups = topicGroups(qs, l.moreTopics);
   doc.addPage();
-  write(doc, l.byTopic, { size: 16, bold: true, gap: 0.5 });
-  write(doc, l.contents, { size: 10, bold: true, color: COLORS.muted, gap: 0.2 });
-  groups.forEach((g, i) => {
-    write(doc, `${i + 1}.  ${g.topic} — ${g.questions.length} ${l.questionsWord}${g.intense ? ` · ${g.intense} INTENSE` : ""}`, { size: 10, gap: 0.1 });
-  });
+  heading(doc, l.byTopic, { size: 16 });
+  write(doc, l.contents, { size: 9, bold: true, color: COLORS.muted, gap: 0.4 });
+  barChart(
+    doc,
+    groups.map((g, i) => ({ label: `${i + 1}. ${g.topic}`, value: g.questions.length, color: g.intense ? COLORS.INTENSE : PALETTE[i % PALETTE.length], note: g.intense ? `${g.intense} INTENSE` : undefined })),
+    { labelWidth: 150 },
+  );
 
   groups.forEach((g, i) => {
     doc.addPage();
     write(doc, `${l.topicWord} ${i + 1}`, { size: 9, color: COLORS.subtle });
-    write(doc, g.topic, { size: 18, bold: true, gap: 0.1 });
+    heading(doc, g.topic, { size: 18, color: g.intense ? COLORS.INTENSE : PALETTE[i % PALETTE.length] });
     write(doc, `${g.questions.length} ${l.questionsWord}${g.intense ? ` · ${g.intense} INTENSE` : ""}`, { size: 9.5, color: COLORS.muted, gap: 0.5 });
 
     // Personal prep box, computed from this candidate's own questions, evidence and practice.
