@@ -1,21 +1,11 @@
-import { readFileSync } from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { axe } from "./a11y";
 
 /** Adding another resume: from the dashboard's pinned note, from Career AI's resume bar and the Top-100 card. */
 test.skip(!process.env.E2E_FAKE_AI, "Needs the fake-AI stack (E2E_FAKE_AI=1)");
 
 const RESUME = "Riya Sharma — Backend developer. Built a Notes REST API with Node.js, Express, MongoDB and JWT authentication. Backend intern at Acme for 6 months building REST APIs. B.Tech CSE 2026. Skills: JavaScript, Node.js, Express, MongoDB, Docker.";
 const NEW_RESUME = `${RESUME} Also built a Campaign scheduler with Redis and BullMQ, and a GenAI interview assistant with Gemini.`;
-const AXE = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
-
-async function axe(page: Page) {
-  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity));
-  await page.addScriptTag({ content: AXE });
-  return page.evaluate(async () => {
-    const r = await (window as unknown as { axe: { run: (o: unknown) => Promise<{ violations: { id: string; nodes: { target: string[] }[] }[] }> } }).axe.run({ runOnly: ["wcag2a", "wcag2aa"] });
-    return r.violations.map((v) => `${v.id}: ${v.nodes.slice(0, 3).map((n) => n.target.join(" ")).join(" | ")}`);
-  });
-}
 
 test("a new resume can be added from the dashboard note and from Career AI", async ({ page }) => {
   test.setTimeout(120_000);

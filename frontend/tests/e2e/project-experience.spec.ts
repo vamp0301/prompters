@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { axe } from "./a11y";
 
 /**
  * Project Experience Intelligence: every resume project becomes a module — evidence-labelled
@@ -8,16 +8,6 @@ import { expect, test, type Page } from "@playwright/test";
 test.skip(!process.env.E2E_FAKE_AI, "Needs the fake-AI stack (E2E_FAKE_AI=1)");
 
 const RESUME = "Riya Sharma — Backend developer. Built a Notes REST API with Node.js, Express, MongoDB and JWT authentication. Backend intern at Acme for 6 months building REST APIs. 2★ CodeChef. B.Tech CSE 2026. Skills: JavaScript, Node.js, Express, MongoDB, Docker.";
-const AXE = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
-
-async function axe(page: Page) {
-  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity));
-  await page.addScriptTag({ content: AXE });
-  return page.evaluate(async () => {
-    const r = await (window as unknown as { axe: { run: (o: unknown) => Promise<{ violations: { id: string; nodes: { target: string[] }[] }[] }> } }).axe.run({ runOnly: ["wcag2a", "wcag2aa"] });
-    return r.violations.map((v) => `${v.id}: ${v.nodes.slice(0, 3).map((n) => n.target.join(" ")).join(" | ")}`);
-  });
-}
 
 test("a resume project becomes a full interview-prep module", async ({ page }) => {
   test.setTimeout(120_000);

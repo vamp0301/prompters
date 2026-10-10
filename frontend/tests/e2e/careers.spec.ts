@@ -1,18 +1,8 @@
-import { readFileSync } from "node:fs";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { axe } from "./a11y";
 
 /** Role-agnostic onboarding and multiple careers. Fake-AI stack only. */
 test.skip(!process.env.E2E_FAKE_AI, "Needs the fake-AI stack (E2E_FAKE_AI=1)");
-
-const AXE = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
-async function axe(page: Page) {
-  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity));
-  await page.addScriptTag({ content: AXE });
-  return page.evaluate(async () => {
-    const r = await (window as unknown as { axe: { run: (o: unknown) => Promise<{ violations: { id: string; nodes: { target: string[] }[] }[] }> } }).axe.run({ runOnly: ["wcag2a", "wcag2aa"] });
-    return r.violations.map((v) => `${v.id}: ${v.nodes.slice(0, 3).map((n) => n.target.join(" ")).join(" | ")}`);
-  });
-}
 
 test("an MBA student prepares for Product Management — no programming language asked — and adds a second career", async ({ page }) => {
   test.setTimeout(120_000);
