@@ -1,5 +1,16 @@
+import { createRequire } from "node:module";
 import { pino } from "pino";
 import { env, isProd } from "../config/env.js";
+
+/** pino-pretty is a dev dependency: production images (npm ci --omit=dev) don't have it, so fall back to JSON. */
+const hasPretty = (() => {
+  try {
+    createRequire(import.meta.url).resolve("pino-pretty");
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 export const logger = pino({
   level: env.NODE_ENV === "test" ? "silent" : isProd ? "info" : "debug",
@@ -20,5 +31,5 @@ export const logger = pino({
     ],
     censor: "[redacted]",
   },
-  transport: isProd || env.NODE_ENV === "test" ? undefined : { target: "pino-pretty", options: { colorize: true } },
+  transport: isProd || env.NODE_ENV === "test" || !hasPretty ? undefined : { target: "pino-pretty", options: { colorize: true } },
 });
