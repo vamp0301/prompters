@@ -39,6 +39,21 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body ?? {}),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body ?? {}),
   delete: <T>(path: string, body?: unknown) => request<T>("DELETE", path, body),
+  /** POST that answers with binary data (e.g. speech audio). Errors arrive as the usual JSON envelope. */
+  blob: async (path: string, body: unknown, signal?: AbortSignal): Promise<Blob> => {
+    let res: Response;
+    try {
+      res = await fetch(`/api${path}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal });
+    } catch (e) {
+      if ((e as Error).name === "AbortError") throw e;
+      throw new ApiError(0, "NETWORK_ERROR", "Can't reach Prompters right now.");
+    }
+    if (!res.ok) {
+      const e = (await res.json().catch(() => null))?.error;
+      throw new ApiError(res.status, e?.code ?? "UNKNOWN", e?.message ?? "Request failed.");
+    }
+    return res.blob();
+  },
 };
 
 export const qs = (params: Record<string, string | number | undefined | null>) => {

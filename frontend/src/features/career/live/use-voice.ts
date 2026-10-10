@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError, api } from "@/lib/api/client";
 import { addChunk, chooseVoice, speakable, type VoiceChoice } from "./voice-core";
 
 export { speakable } from "./voice-core";
@@ -9,10 +10,12 @@ const LANG = "en-IN";
 export type SpeakResult = { ok: true } | { ok: false; reason: "muted" | "unsupported" | "error" | "empty" };
 
 /**
- * Manisha's voice through the browser's own speech synthesis. Voices often load after the page
- * (Chrome fires `voiceschanged` later), so the choice is re-made whenever the list changes.
+ * Manisha's voice. With `cloud` set, each line is synthesised by the server's provider (ElevenLabs);
+ * if that fails or the allowance is used up, the browser's own speech synthesis reads it instead.
+ * Browser voices often load after the page (Chrome fires `voiceschanged` later), so the choice is
+ * re-made whenever the list changes.
  */
-export function useManishaVoice() {
+export function useManishaVoice(cloud?: { sessionId: string } | null) {
   const supported = typeof window !== "undefined" && !!window.speechSynthesis && typeof SpeechSynthesisUtterance !== "undefined";
   const [choice, setChoice] = useState<VoiceChoice<SpeechSynthesisVoice> | null>(null);
   const [voicesLoaded, setVoicesLoaded] = useState(false);
@@ -20,6 +23,12 @@ export function useManishaVoice() {
   const [muted, setMutedState] = useState(false);
   const mutedRef = useRef(false);
   const settleRef = useRef<(() => void) | null>(null);
+  // Cloud voice: the line being fetched/played, and whether to keep trying the cloud this session.
+  const genRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const cloudFailsRef = useRef(0);
+  const cloudOffRef = useRef(false);
 
   useEffect(() => {
     if (!supported) return;
@@ -41,18 +50,67 @@ export function useManishaVoice() {
   }, [supported]);
 
   const stop = useCallback(() => {
+    // Anything still loading or playing belongs to a line that's no longer wanted.
+    genRef.current++;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    audioRef.current?.pause();
+    audioRef.current = null;
     if (supported) window.speechSynthesis.cancel();
     settleRef.current?.();
     setSpeaking(false);
   }, [supported]);
 
-  const speak = useCallback(
-    (text: string) =>
+  /** One line through the cloud voice; "fallback" when the browser should read it instead. */
+  const speakCloud = useCallback(
+    async (sessionId: string, clean: string): Promise<SpeakResult | "fallback"> => {
+      const gen = ++genRef.current;
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      let blob: Blob;
+      try {
+        blob = await api.blob(`/career/voice/${sessionId}/speech`, { text: clean }, ctrl.signal);
+      } catch (e) {
+        if (gen !== genRef.current) return { ok: false, reason: "muted" }; // stopped meanwhile
+        // Allowance used up → browser voice for the rest of the interview; other errors: give it another go later.
+        if (e instanceof ApiError && e.status === 429) cloudOffRef.current = true;
+        else if (++cloudFailsRef.current >= 2) cloudOffRef.current = true;
+        return "fallback";
+      }
+      if (gen !== genRef.current) return { ok: false, reason: "muted" }; // never play a stale line
+      cloudFailsRef.current = 0;
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      return new Promise<SpeakResult | "fallback">((resolve) => {
+        let done = false;
+        const settle = (r: SpeakResult | "fallback" = { ok: true }) => {
+          if (done) return;
+          done = true;
+          window.clearTimeout(timer);
+          URL.revokeObjectURL(url);
+          if (settleRef.current === stopThis) settleRef.current = null;
+          if (audioRef.current === audio) audioRef.current = null;
+          setSpeaking(false);
+          resolve(r);
+        };
+        const stopThis = () => settle({ ok: false, reason: "muted" });
+        settleRef.current = stopThis;
+        const timer = window.setTimeout(() => settle(), 8000 + clean.split(/\s+/).length * 600);
+        audio.onplaying = () => setSpeaking(true);
+        audio.onended = () => settle();
+        audio.onerror = () => settle("fallback");
+        // Autoplay blocked or undecodable audio: the browser voice gets its turn.
+        audio.play().catch(() => settle("fallback"));
+      });
+    },
+    [],
+  );
+
+  const speakBrowser = useCallback(
+    (clean: string) =>
       new Promise<SpeakResult>((resolve) => {
         if (!supported) return resolve({ ok: false, reason: "unsupported" });
-        if (mutedRef.current) return resolve({ ok: false, reason: "muted" });
-        const clean = speakable(text);
-        if (!clean) return resolve({ ok: false, reason: "empty" });
         const synth = window.speechSynthesis;
         synth.cancel();
         let done = false;
@@ -87,6 +145,23 @@ export function useManishaVoice() {
     [supported, choice],
   );
 
+  const cloudSession = cloud?.sessionId ?? null;
+  const speak = useCallback(
+    async (text: string): Promise<SpeakResult> => {
+      if (mutedRef.current) return { ok: false, reason: "muted" };
+      const clean = speakable(text);
+      if (!clean) return { ok: false, reason: "empty" };
+      if (cloudSession && !cloudOffRef.current) {
+        stop();
+        const r = await speakCloud(cloudSession, clean);
+        if (r !== "fallback") return r;
+        if (mutedRef.current) return { ok: false, reason: "muted" };
+      }
+      return speakBrowser(clean);
+    },
+    [cloudSession, speakCloud, speakBrowser, stop],
+  );
+
   /** Mutes Manisha only — the microphone, speech-to-text and typing are unaffected. */
   const setMuted = useCallback(
     (m: boolean) => {
@@ -97,7 +172,7 @@ export function useManishaVoice() {
     [stop],
   );
 
-  return { supported, voicesLoaded, choice, speaking, muted, setMuted, speak, stop };
+  return { supported: supported || !!cloudSession, voicesLoaded, choice, speaking, muted, setMuted, speak, stop, cloud: !!cloudSession };
 }
 
 // ───────────────────────── speech-to-text ─────────────────────────

@@ -50,6 +50,17 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_ID # optional: Google sign-in
         sync: false
+      # Manisha's cloud voice — optional: leave the keys empty to keep the browser voice.
+      - key: STT_PROVIDER
+        value: deepgram
+      - key: DEEPGRAM_API_KEY # optional
+        sync: false
+      - key: TTS_PROVIDER
+        value: elevenlabs
+      - key: ELEVENLABS_API_KEY # optional
+        sync: false
+      - key: ELEVENLABS_VOICE_ID # optional; needed with ELEVENLABS_API_KEY
+        sync: false
       - key: STORAGE_DRIVER
         value: s3
       - key: S3_ENDPOINT # e.g. https://<account-id>.r2.cloudflarestorage.com

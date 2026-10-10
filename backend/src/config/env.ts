@@ -39,6 +39,22 @@ const schema = z.object({
   PREP_DAILY_PLAN_LIMIT: z.coerce.number().int().min(1).max(100).default(3),
   /** Interview audio is deleted automatically after this many days. */
   RECORDING_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  /**
+   * Manisha's ears and voice. "browser" uses the browser's own speech engines (free, the fallback).
+   * Cloud providers are used only when selected here AND their key is set.
+   */
+  STT_PROVIDER: z.enum(["browser", "deepgram"]).default("browser"),
+  DEEPGRAM_API_KEY: z.string().optional(),
+  DEEPGRAM_MODEL: z.string().default("nova-3"),
+  DEEPGRAM_LANGUAGE: z.string().default("en"),
+  TTS_PROVIDER: z.enum(["browser", "elevenlabs"]).default("browser"),
+  ELEVENLABS_API_KEY: z.string().optional(),
+  /** Voice to use (ElevenLabs → Voices → copy the voice ID). Required for ElevenLabs. */
+  ELEVENLABS_VOICE_ID: z.string().optional(),
+  ELEVENLABS_MODEL: z.string().default("eleven_flash_v2_5"),
+  /** Hard caps on synthesised characters; past them Manisha falls back to the browser voice. */
+  TTS_MONTHLY_CHAR_LIMIT: z.coerce.number().int().min(0).default(9000),
+  TTS_USER_DAILY_CHAR_LIMIT: z.coerce.number().int().min(0).default(3000),
   COOKIE_SECURE: z
     .enum(["true", "false"])
     .optional()

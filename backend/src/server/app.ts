@@ -33,6 +33,7 @@ import { promptRoutes } from "../modules/prompts/prompts.routes.js";
 import { quizRoutes } from "../modules/quiz/quiz.routes.js";
 import { readinessRoutes } from "../modules/readiness/readiness.routes.js";
 import { careerRoutes } from "../modules/career/career.routes.js";
+import { voiceRoutes } from "../modules/career/voice.routes.js";
 import { prepRoutes } from "../modules/prep/prep.routes.js";
 import { roleAdminRoutes, roleCatalogueRoutes, targetRoleRoutes } from "../modules/roles/roles.routes.js";
 
@@ -99,6 +100,7 @@ export function createApp() {
   api.use("/ai", requireAuth, aiRoutes());
   api.use("/career/prep", requireAuth, prepRoutes());
   api.use("/career/projects", requireAuth, projectExperienceRoutes());
+  api.use("/career/voice", requireAuth, voiceRoutes());
   api.use("/career", requireAuth, careerRoutes());
   api.use("/admin/roles", roleAdminRoutes());
   api.use("/admin", requireAuth, adminRoutes());

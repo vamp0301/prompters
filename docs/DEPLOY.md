@@ -67,6 +67,22 @@ Turned off on this setup, by design:
 | `S3_ACCESS_KEY_ID` | R2 API token access key | Cloudflare → R2 → Manage API tokens → *Object Read & Write*, this bucket only |
 | `S3_SECRET_ACCESS_KEY` | R2 API token secret | shown once when you create the token |
 
+**Manisha's cloud voice — optional.** Without these, Manisha uses the browser's own voice and speech recognition (as before). Each provider is used only when its `*_PROVIDER` is set **and** its key is present; if it fails or runs out, the browser takes over automatically.
+
+| Variable | Value | Where to get it |
+|---|---|---|
+| `STT_PROVIDER` | `deepgram` | (preset) |
+| `DEEPGRAM_API_KEY` | Deepgram API key (Member role is enough) | [console.deepgram.com](https://console.deepgram.com) → API Keys |
+| `DEEPGRAM_MODEL` / `DEEPGRAM_LANGUAGE` | defaults `nova-3` / `en` | — |
+| `TTS_PROVIDER` | `elevenlabs` | (preset) |
+| `ELEVENLABS_API_KEY` | ElevenLabs API key (Text to Speech permission only) | [elevenlabs.io](https://elevenlabs.io/app/settings/api-keys) |
+| `ELEVENLABS_VOICE_ID` | the voice Manisha uses | ElevenLabs → Voices → ⋯ → Copy voice ID |
+| `ELEVENLABS_MODEL` | default `eleven_flash_v2_5` (fastest) | — |
+| `TTS_MONTHLY_CHAR_LIMIT` | default `9000` — keep it under your plan's monthly characters | — |
+| `TTS_USER_DAILY_CHAR_LIMIT` | default `3000` per student per day | — |
+
+How it's wired: the browser streams microphone audio **directly to Deepgram** using a 30-second token the API issues for the candidate's own open interview (the API key never reaches the browser; `mip_opt_out` keeps audio out of Deepgram's model training). Speech is requested from the API, which checks the caps and streams ElevenLabs' audio back; usage counters live in Redis, and only character counts are logged — never text or audio. Check the free allowances in each dashboard before relying on them (at the time of writing: ElevenLabs free ≈ 10,000 characters/month ≈ 3–5 interviews; Deepgram gives starter credit). After setting keys, verify with `cd backend && npm run test:real-voice` (speaks a sentence with ElevenLabs and transcribes it back with Deepgram).
+
 **Optional:**
 
 | Variable | Default | Purpose |

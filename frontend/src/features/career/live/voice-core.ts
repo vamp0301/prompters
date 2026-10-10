@@ -164,3 +164,49 @@ export function roomReducer(room: Room, e: RoomEvent): Room {
 export const canListen = (s: RoomState) => s === "LISTENING";
 /** True while the answer box should be editable. */
 export const canEdit = (s: RoomState) => s === "REVIEW" || s === "ERROR" || s === "UNCLEAR" || s === "YOUR_TURN";
+
+// ───────────────────────── cloud speech-to-text (Deepgram) ─────────────────────────
+
+export type SttEvent =
+  | { kind: "interim"; text: string }
+  | { kind: "final"; text: string; confidence: number }
+  | { kind: "utterance-end" }
+  | { kind: "ignore" };
+
+/** One streaming message → what the room cares about. Unknown or malformed messages are ignored. */
+export function parseSttMessage(raw: unknown): SttEvent {
+  let m: { type?: string; is_final?: boolean; channel?: { alternatives?: { transcript?: string; confidence?: number }[] } };
+  try {
+    m = typeof raw === "string" ? JSON.parse(raw) : (raw as typeof m);
+  } catch {
+    return { kind: "ignore" };
+  }
+  if (!m || typeof m !== "object") return { kind: "ignore" };
+  if (m.type === "UtteranceEnd") return { kind: "utterance-end" };
+  if (m.type !== "Results") return { kind: "ignore" };
+  const alt = m.channel?.alternatives?.[0];
+  const text = (alt?.transcript ?? "").trim();
+  if (!m.is_final) return { kind: "interim", text };
+  // A final with no words (silence, noise) is not an answer fragment.
+  if (!text) return { kind: "ignore" };
+  return { kind: "final", text, confidence: typeof alt?.confidence === "number" ? alt.confidence : 1 };
+}
+
+/** Below this average confidence the transcript is treated as "didn't catch that", never scored. */
+export const LOW_CONFIDENCE = 0.55;
+
+/** Word-weighted average confidence of the final segments (1 when there are none). */
+export function averageConfidence(segments: readonly { text: string; confidence: number }[]) {
+  let words = 0;
+  let sum = 0;
+  for (const s of segments) {
+    const n = s.text.split(/\s+/).filter(Boolean).length;
+    words += n;
+    sum += n * s.confidence;
+  }
+  return words ? sum / words : 1;
+}
+
+export function listenUrl(base: string, params: Record<string, string>) {
+  return `${base}?${new URLSearchParams(params).toString()}`;
+}

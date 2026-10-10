@@ -19,7 +19,8 @@ import { TARGET_ROLES } from "@/features/marketing/start-preparing";
 import { api, ApiError } from "@/lib/api/client";
 import type { InterviewSessionView, InterviewTurnView } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
-import { microphoneStatus, useAnswerRecorder, useDictation, useManishaVoice, type RecordedAudio } from "./use-voice";
+import { microphoneStatus, useAnswerRecorder, useManishaVoice, type RecordedAudio } from "./use-voice";
+import { useInterviewDictation, useVoiceConfig } from "./cloud-voice";
 import { canEdit, initialRoom, roomReducer, transcriptQuality, type RoomError, type RoomState } from "./voice-core";
 
 type Lang = "javascript" | "python";
@@ -115,7 +116,8 @@ function StatusRow({ ok, label, value, note }: { ok: boolean | null; label: stri
 export function LiveRoom({ session }: { session: InterviewSessionView }) {
   const router = useRouter();
   const { data: me } = useMe();
-  const voice = useManishaVoice();
+  const voiceConfig = useVoiceConfig();
+  const voice = useManishaVoice(voiceConfig.tts === "elevenlabs" ? { sessionId: session.id } : null);
   const recorder = useAnswerRecorder();
   const [screen, setScreen] = useState<Screen>("setup");
   const [room, dispatch] = useReducer(roomReducer, initialRoom);
@@ -151,7 +153,7 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
   }, [answer]);
 
   const appendFinal = useCallback((t: string) => setAnswer((a) => (a ? `${a} ${t}` : t)), []);
-  const dictation = useDictation(appendFinal);
+  const dictation = useInterviewDictation(session.id, voiceConfig.stt === "deepgram", appendFinal);
   const displaySupported = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getDisplayMedia;
   const isCoding = current?.kind === "CODING";
   const isProblem = current?.kind === "PROBLEM";
@@ -345,7 +347,9 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
     await dictation.stop();
     // Let the last recognised words land in state before judging the transcript.
     await new Promise((r) => setTimeout(r, 0));
-    dispatch({ type: "TRANSCRIBED", quality: transcriptQuality(answerRef.current) });
+    // A transcript the recogniser itself wasn't sure about is "didn't catch that", never scored.
+    const quality = transcriptQuality(answerRef.current);
+    dispatch({ type: "TRANSCRIBED", quality: quality === "ok" && dictation.lowConfidence() ? "garbled" : quality });
   }, [dictation]);
 
   const typeAnswer = async () => {
@@ -597,6 +601,9 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
           <section aria-labelledby="voice-h" className="mt-6">
             <h2 id="voice-h" className="eyebrow text-accent">Voice</h2>
             <div className="divide-y divide-border">
+              {voice.cloud ? (
+                <StatusRow ok label="Manisha's voice" value="Natural voice" note="Spoken by a cloud voice service. If it's unavailable, your browser's voice reads the questions instead." />
+              ) : (
               <StatusRow
                 ok={!voice.supported || !v ? false : v.indianEnglish}
                 label="Indian English voice (en-IN)"
@@ -609,6 +616,7 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
                       : `Your device does not provide the preferred Indian English voice. Manisha will use the closest available voice: ${v.voice.name} (${v.voice.lang}).`
                 }
               />
+              )}
               <div className="flex flex-wrap items-center gap-2 py-3">
                 <Button size="sm" variant="secondary" onClick={testVoice} disabled={!voice.supported || voice.muted}>
                   {testState === "speaking" || voice.speaking ? (
@@ -641,8 +649,14 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
               <StatusRow
                 ok={dictation.supported}
                 label="Speech-to-text"
-                value={dictation.supported ? "Available" : "Not available"}
-                note={dictation.supported ? "Your spoken answer appears as text you can edit before submitting." : "Voice answering isn't available in this browser. You can type your answer instead."}
+                value={dictation.supported ? (dictation.engine === "cloud" ? "Cloud" : "Available") : "Not available"}
+                note={
+                  !dictation.supported
+                    ? "Voice answering isn't available in this browser. You can type your answer instead."
+                    : dictation.engine === "cloud"
+                      ? "Your speech is transcribed live by a cloud service (Deepgram) and appears as text you can edit before submitting. Prompters doesn't keep the audio unless you allow recording."
+                      : "Your spoken answer appears as text you can edit before submitting."
+                }
               />
               <StatusRow
                 ok={share ? true : displaySupported ? null : false}
