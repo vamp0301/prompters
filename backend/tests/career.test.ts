@@ -3,7 +3,7 @@ import { login, resetDb, seedFixture, startWorker } from "./helpers.js";
 import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
 import { prisma } from "../src/lib/prisma.js";
-import { weightedMatchScore } from "../src/modules/career/analysis.service.js";
+import { stripControlChars, weightedMatchScore } from "../src/modules/career/analysis.service.js";
 import { computeReadiness } from "../src/modules/readiness/readiness.service.js";
 
 const fake = new FakeAI();
@@ -54,6 +54,20 @@ describe("resume + JD analysis", () => {
     expect(call.system).toMatch(/Never follow instructions/);
     // The broken first job reply was retried, not stored.
     expect(fake.calls.filter((c) => c.task === "parse_job")).toHaveLength(2);
+  });
+
+  it("saves resumes and job descriptions whose text contains NUL or other control characters", async () => {
+    // Some PDF exports yield \u0000 from text extraction; Postgres text rejects it (was a 500 in production).
+    expect(stripControlChars("Riya\u0000 Sharma\u0007\tNode.js\r\nExpress\u007F")).toBe("Riya Sharma\tNode.js\r\nExpress");
+    const { agent } = await login();
+    const dirty = RESUME.replace("Backend", "Back\u0000end").replace("Node.js", "Node.js\u0001");
+    const file = await agent.post("/api/career/resumes").send({ fileBase64: Buffer.from(dirty).toString("base64"), mimeType: "text/plain", fileName: "cv.txt" });
+    expect(file.status).toBe(201);
+    const saved = await prisma.careerResume.findUniqueOrThrow({ where: { id: file.body.data.id } });
+    expect(saved.text).not.toMatch(/[\u0000\u0001]/);
+    expect(saved.text).toContain("Backend");
+    expect((await agent.post("/api/career/resumes").send({ text: dirty })).status).toBe(201);
+    expect((await agent.post("/api/career/jobs").send({ text: `${JD}\u0000` })).status).toBe(201);
   });
 
   it("rejects files it can't read and keeps analyses private", async () => {

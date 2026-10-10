@@ -29,8 +29,15 @@ export function weightedMatchScore(b: MatchAI["breakdown"]) {
 
 const MAX_UPLOAD = 5 * 1024 * 1024;
 
+/**
+ * Postgres text can't hold NUL (0x00) — some PDFs (Word/Canva exports) yield it from text extraction and the
+ * insert failed with a 500. Other invisible control characters go too; tabs and newlines stay.
+ */
+// eslint-disable-next-line no-control-regex
+export const stripControlChars = (text: string) => text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+
 export async function documentText(input: { text?: string; fileBase64?: string; mimeType?: string }) {
-  if (input.text?.trim()) return { text: input.text.trim(), file: null };
+  if (input.text?.trim()) return { text: stripControlChars(input.text).trim(), file: null };
   if (!input.fileBase64) throw badRequest("Upload a PDF or paste the text.");
   const file = Buffer.from(input.fileBase64, "base64");
   if (file.length > MAX_UPLOAD) throw badRequest("File is larger than 5 MB.");
@@ -38,14 +45,14 @@ export async function documentText(input: { text?: string; fileBase64?: string; 
     try {
       const pdf = await getDocumentProxy(new Uint8Array(file));
       const { text } = await extractText(pdf, { mergePages: true });
-      const clean = text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+      const clean = stripControlChars(text).replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
       if (clean.length < 80) throw new Error("too short");
       return { text: clean, file };
     } catch {
       throw badRequest("Couldn't read text from this PDF (it may be a scanned image). Paste the text instead.");
     }
   }
-  if (input.mimeType?.startsWith("text/")) return { text: file.toString("utf8").trim(), file };
+  if (input.mimeType?.startsWith("text/")) return { text: stripControlChars(file.toString("utf8")).trim(), file };
   throw badRequest("Upload a PDF or a .txt file, or paste the text.");
 }
 
