@@ -11,6 +11,7 @@ import { ApiError, api } from "@/lib/api/client";
 import type { Interviewer, StartInterviewResponse } from "@/lib/api/types";
 import { careerKeys, InlineError } from "./shared";
 import { useCodeExecution } from "@/features/auth/use-me";
+import { useVoiceConfig } from "./live/cloud-voice";
 
 const FALLBACK: Interviewer = { name: "Manisha", role: "Senior Technical Interviewer", company: "Prompters", tone: "Professional, calm, neutral, technical", thinkingSeconds: 30, answerSeconds: 120, codingSeconds: 900 };
 
@@ -31,6 +32,7 @@ function StartForm({ source, interviewer, onCancel }: { source: InterviewSource;
   const router = useRouter();
   const qc = useQueryClient();
   const codingOn = useCodeExecution();
+  const cloudListening = useVoiceConfig().stt === "deepgram";
   const [duration, setDuration] = useState(30);
   const [difficulty, setDifficulty] = useState<"STANDARD" | "HARD">("STANDARD");
   const [analysis, setAnalysis] = useState(false);
@@ -130,6 +132,7 @@ function StartForm({ source, interviewer, onCancel }: { source: InterviewSource;
       <p className="rounded-lg border border-border bg-surface-2/50 p-3 text-xs text-muted">
         <span className="block text-sm text-text">Voice is optional</span>
         You can answer by voice or type every answer. Before your first voice answer, Manisha asks whether your answer audio may be recorded — you can continue without recording. Recordings are deleted after 30 days.
+        {cloudListening && " When you answer by voice, your speech is sent to a transcription service (Deepgram) to turn it into text while you speak; it isn't used to train their models, and Prompters keeps the audio only if you allow recording."}
       </p>
 
       {inProgressId ? (

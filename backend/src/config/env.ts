@@ -47,6 +47,8 @@ const schema = z.object({
   DEEPGRAM_API_KEY: z.string().optional(),
   DEEPGRAM_MODEL: z.string().default("nova-3"),
   DEEPGRAM_LANGUAGE: z.string().default("en"),
+  /** Streaming connections per student per day (one per voice answer, plus reconnects). */
+  STT_USER_DAILY_TOKEN_LIMIT: z.coerce.number().int().min(0).default(150),
   TTS_PROVIDER: z.enum(["browser", "elevenlabs"]).default("browser"),
   ELEVENLABS_API_KEY: z.string().optional(),
   /** Voice to use (ElevenLabs → Voices → copy the voice ID). Required for ElevenLabs. */

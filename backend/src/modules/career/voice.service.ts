@@ -80,6 +80,10 @@ function elevenlabs(): TtsProvider | null {
   };
 }
 
+// Selected but not usable: say so once at startup instead of silently using the browser.
+if (env.STT_PROVIDER === "deepgram" && !env.DEEPGRAM_API_KEY) logger.warn("STT_PROVIDER=deepgram but DEEPGRAM_API_KEY is not set — using browser speech recognition");
+if (env.TTS_PROVIDER === "elevenlabs" && (!env.ELEVENLABS_API_KEY || !env.ELEVENLABS_VOICE_ID)) logger.warn("TTS_PROVIDER=elevenlabs needs ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID — using the browser voice");
+
 let stt: SttProvider | null | undefined;
 let tts: TtsProvider | null | undefined;
 /** Tests inject fakes; undefined goes back to env config. */
@@ -99,18 +103,24 @@ const day = () => new Date().toISOString().slice(0, 10);
 const monthKey = () => `voice:tts:chars:${month()}`;
 const userKey = (userId: string) => `voice:tts:user:${userId}:${day()}`;
 
+/**
+ * Check-and-reserve in one Redis step: both counters move together or not at all, so concurrent
+ * requests can never overspend either cap, and a request that fits is never refused because of
+ * another request's temporary over-count. The first write of a period sets its expiry.
+ */
+const RESERVE = `
+local n = tonumber(ARGV[1])
+local m = tonumber(redis.call('GET', KEYS[1]) or '0')
+local u = tonumber(redis.call('GET', KEYS[2]) or '0')
+if m + n > tonumber(ARGV[2]) or u + n > tonumber(ARGV[3]) then return 0 end
+if redis.call('INCRBY', KEYS[1], n) == n then redis.call('EXPIRE', KEYS[1], ARGV[4]) end
+if redis.call('INCRBY', KEYS[2], n) == n then redis.call('EXPIRE', KEYS[2], ARGV[5]) end
+return 1`;
+
 /** Reserves characters against both caps; false (and nothing reserved) when either would be exceeded. */
 async function reserve(userId: string, chars: number) {
-  const r = redis();
-  const [m, u] = await Promise.all([r.incrby(monthKey(), chars), r.incrby(userKey(userId), chars)]);
-  // First write of the period sets the expiry.
-  if (m === chars) await r.expire(monthKey(), 40 * 86_400);
-  if (u === chars) await r.expire(userKey(userId), 2 * 86_400);
-  if (m > env.TTS_MONTHLY_CHAR_LIMIT || u > env.TTS_USER_DAILY_CHAR_LIMIT) {
-    await release(userId, chars);
-    return false;
-  }
-  return true;
+  const ok = await redis().eval(RESERVE, 2, monthKey(), userKey(userId), chars, env.TTS_MONTHLY_CHAR_LIMIT, env.TTS_USER_DAILY_CHAR_LIMIT, 40 * 86_400, 2 * 86_400);
+  return ok === 1;
 }
 async function release(userId: string, chars: number) {
   const r = redis();
@@ -134,11 +144,26 @@ export async function voiceConfig() {
 
 // ───────────────────────── session-scoped calls ─────────────────────────
 
-/** Voice is only for the candidate's own interview while it's open. */
-async function openSession(userId: string, sessionId: string) {
+/**
+ * Voice is only for the candidate's own interview while it's open. Speech also works while paused
+ * (the voice test on the resume screen); listening only while the interview is in progress.
+ */
+async function openSession(userId: string, sessionId: string, statuses: readonly string[] = ["IN_PROGRESS", "PAUSED"]) {
   const s = await prisma.interviewSession.findFirst({ where: { id: sessionId, userId }, select: { status: true } });
   if (!s) throw notFound("Interview");
-  if (s.status !== "IN_PROGRESS" && s.status !== "PAUSED") throw conflict("This interview has ended.");
+  if (!statuses.includes(s.status)) throw conflict(s.status === "PAUSED" ? "Resume the interview to answer by voice." : "This interview has ended.");
+}
+
+/**
+ * A token only limits *opening* a stream (30 s); an open stream is billed until it closes. So the
+ * number of streams per student per day is capped too — generous for real interviews (one per
+ * answer, plus reconnects), a hard ceiling on misuse.
+ */
+async function countToken(userId: string) {
+  const key = `voice:stt:tokens:${userId}:${day()}`;
+  const n = await redis().incr(key);
+  if (n === 1) await redis().expire(key, 2 * 86_400);
+  return n <= env.STT_USER_DAILY_TOKEN_LIMIT;
 }
 
 const unavailable = (what: string) => new AppError(503, "VOICE_UNAVAILABLE", `${what} isn't available right now — using the browser instead.`);
@@ -146,7 +171,9 @@ const unavailable = (what: string) => new AppError(503, "VOICE_UNAVAILABLE", `${
 export async function sttToken(userId: string, sessionId: string) {
   const p = sttProvider();
   if (!p) throw unavailable("Cloud transcription");
-  await openSession(userId, sessionId);
+  await openSession(userId, sessionId, ["IN_PROGRESS"]);
+  // Redis down → no metering → no cloud streams (the browser recogniser still works).
+  if (!(await countToken(userId).catch(() => false))) throw new AppError(429, "VOICE_QUOTA", "Cloud transcription limit reached for today — using the browser instead.");
   try {
     const g = await p.grant();
     logger.info({ sessionId, provider: p.name }, "voice: stt token issued");

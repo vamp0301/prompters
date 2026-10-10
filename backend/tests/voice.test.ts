@@ -31,6 +31,7 @@ let a: Awaited<ReturnType<typeof login>>;
 let b: Awaited<ReturnType<typeof login>>;
 let open: string;
 let ended: string;
+let paused: string;
 
 beforeAll(async () => {
   await resetDb();
@@ -38,13 +39,14 @@ beforeAll(async () => {
   b = await login();
   open = (await prisma.interviewSession.create({ data: { userId: a.id, consent: {}, status: "IN_PROGRESS" } })).id;
   ended = (await prisma.interviewSession.create({ data: { userId: a.id, consent: {}, status: "COMPLETED" } })).id;
+  paused = (await prisma.interviewSession.create({ data: { userId: a.id, consent: {}, status: "PAUSED" } })).id;
 });
 beforeEach(async () => {
   setVoiceProviders({ stt: fakeStt, tts: fakeTts });
   grants = 0;
   spoken = [];
   failSpeech = false;
-  const keys = await redis().keys("voice:tts:*");
+  const keys = await redis().keys("voice:*");
   if (keys.length) await redis().del(...keys);
 });
 afterAll(() => setVoiceProviders(undefined));
@@ -82,6 +84,19 @@ describe("speech-to-text token", () => {
     expect((await a.agent.post(`/api/career/voice/${ended}/token`)).status).toBe(409);
     expect(grants).toBe(0);
   });
+  it("listening needs the interview in progress (paused: resume first); speaking works while paused", async () => {
+    const r = await a.agent.post(`/api/career/voice/${paused}/token`);
+    expect(r.status).toBe(409);
+    expect(grants).toBe(0);
+    expect((await say(a.agent, paused, "Welcome back.")).status).toBe(200);
+  });
+  it("caps streaming connections per student per day (a token only limits opening one)", async () => {
+    await redis().set(`voice:stt:tokens:${a.id}:${new Date().toISOString().slice(0, 10)}`, "150");
+    const r = await a.agent.post(`/api/career/voice/${open}/token`);
+    expect(r.status).toBe(429);
+    expect(r.body.error.code).toBe("VOICE_QUOTA");
+    expect(grants).toBe(0);
+  });
   it("answers 503 when the provider is off or failing, so the browser falls back", async () => {
     setVoiceProviders({ tts: fakeTts });
     expect((await a.agent.post(`/api/career/voice/${open}/token`)).body.error.code).toBe("VOICE_UNAVAILABLE");
@@ -116,6 +131,15 @@ describe("text-to-speech", () => {
     expect(spoken).toHaveLength(4);
     expect(await redis().get(`voice:tts:user:${a.id}:${new Date().toISOString().slice(0, 10)}`)).toBe("2800"); // refused request not counted
     expect((await say(a.agent, open, "Short one.")).status).toBe(200); // still fits
+  });
+  it("enforces the cap atomically under concurrent requests: exactly what fits is spoken", async () => {
+    const text = "z".repeat(700);
+    const results = await Promise.all(Array.from({ length: 10 }, () => say(a.agent, open, text)));
+    expect(results.filter((r) => r.status === 200)).toHaveLength(4); // 4 × 700 = 2800 ≤ 3000 < 3500
+    expect(results.filter((r) => r.status === 429)).toHaveLength(6);
+    expect(spoken).toHaveLength(4);
+    expect(await redis().get(`voice:tts:user:${a.id}:${new Date().toISOString().slice(0, 10)}`)).toBe("2800");
+    expect(await redis().get(`voice:tts:chars:${new Date().toISOString().slice(0, 7)}`)).toBe("2800");
   });
   it("switches everyone to the browser voice once the monthly cap is reached", async () => {
     await redis().set(`voice:tts:chars:${new Date().toISOString().slice(0, 7)}`, "9000");
