@@ -83,10 +83,9 @@ const schema = z.object({
    * Run the background workers (Top-100 generation, PDFs, maintenance) inside the API process.
    * For hosts without a separate worker service (Render free plan). Default: separate worker process.
    */
-  RUN_WORKERS_IN_API: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((v) => v === "true"),
+  RUN_WORKERS_IN_API: z.enum(["true", "false"]).optional(),
+  /** Set to "true" by Render itself. Render's free plan has no worker service, so workers default to in-process there. */
+  RENDER: z.string().optional(),
   /**
    * Reverse proxies in front of the API, so req.ip (rate limits) is the user's IP and not a proxy's.
    * Render alone = 1; Vercel rewrite → Render = 2.
@@ -103,6 +102,7 @@ const withDefaults = schema.transform((e) => ({
   ...e,
   SANDBOX_DRIVER: e.SANDBOX_DRIVER ?? (e.NODE_ENV === "production" ? "disabled" : "process"),
   STORAGE_DRIVER: e.STORAGE_DRIVER ?? (e.NODE_ENV === "production" ? "none" : "local"),
+  RUN_WORKERS_IN_API: e.RUN_WORKERS_IN_API === undefined ? e.RENDER === "true" : e.RUN_WORKERS_IN_API === "true",
 }));
 
 export type Env = z.infer<typeof withDefaults>;
@@ -118,7 +118,7 @@ function load(): Env {
   }
   // Render sets RENDER=true. A dashboard NODE_ENV=development (e.g. pasted from a local .env) would skip every
   // production guard below and run user code on the host, so refuse it outright.
-  const host = hostProblems(parsed.data.NODE_ENV, { onRender: process.env.RENDER === "true" });
+  const host = hostProblems(parsed.data);
   if (host.length) throw new Error(`Refusing to start:\n${host.map((p) => `  - ${p}`).join("\n")}`);
   if (parsed.data.NODE_ENV === "production") {
     const problems = productionProblems(parsed.data, { redisUrlSet: !!process.env.REDIS_URL });
@@ -128,8 +128,16 @@ function load(): Env {
 }
 
 /** Deployment-host checks that apply whatever NODE_ENV says. Exported for tests. */
-export function hostProblems(nodeEnv: Env["NODE_ENV"], host: { onRender: boolean }) {
-  return host.onRender && nodeEnv !== "production" ? [`NODE_ENV=${nodeEnv} on Render — set NODE_ENV=production (or remove it: the Docker image sets it).`] : [];
+export function hostProblems(e: Pick<Env, "NODE_ENV" | "RENDER" | "CORS_ORIGIN" | "APP_URL">) {
+  if (e.RENDER !== "true") return [];
+  const problems: string[] = [];
+  if (e.NODE_ENV !== "production") problems.push(`NODE_ENV=${e.NODE_ENV} on Render — set NODE_ENV=production (or remove it: the Docker image sets it).`);
+  // Copied from a local .env: the deployed frontend could never log in (CSRF_REJECTED).
+  const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/;
+  for (const [key, value] of [["CORS_ORIGIN", e.CORS_ORIGIN], ["APP_URL", e.APP_URL]] as const) {
+    if (value.split(",").every((o) => local.test(o.trim()))) problems.push(`${key}=${value} on Render — set it to the deployed frontend URL (e.g. https://prompters-steel.vercel.app).`);
+  }
+  return problems;
 }
 
 /** Placeholder secrets from .env.example / docs that must never reach production. */

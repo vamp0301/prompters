@@ -241,10 +241,20 @@ describe("production configuration guard", () => {
     const dev = parseEnv({ ...base, NODE_ENV: "development" });
     expect(dev.success && [dev.data.SANDBOX_DRIVER, dev.data.STORAGE_DRIVER]).toEqual(["process", "local"]);
   });
-  it("refuses a non-production NODE_ENV on Render", () => {
-    expect(hostProblems("development", { onRender: true })).toEqual([expect.stringMatching(/NODE_ENV=development on Render/)]);
-    expect(hostProblems("production", { onRender: true })).toEqual([]);
-    expect(hostProblems("development", { onRender: false })).toEqual([]);
+  it("on Render: refuses a non-production NODE_ENV or a localhost frontend, and runs workers in the API by default", () => {
+    const render = { NODE_ENV: "production" as const, RENDER: "true", CORS_ORIGIN: "https://app.example.com", APP_URL: "https://app.example.com" };
+    expect(hostProblems(render)).toEqual([]);
+    expect(hostProblems({ ...render, NODE_ENV: "development" })).toEqual([expect.stringMatching(/NODE_ENV=development on Render/)]);
+    expect(hostProblems({ ...render, CORS_ORIGIN: "http://localhost:3000", APP_URL: "http://localhost:3000" })).toEqual([expect.stringMatching(/CORS_ORIGIN/), expect.stringMatching(/APP_URL/)]);
+    // Not on Render (local docker-compose runs the production image against localhost): allowed.
+    expect(hostProblems({ ...render, RENDER: undefined, NODE_ENV: "development", CORS_ORIGIN: "http://localhost:3000" })).toEqual([]);
+    const base = { DATABASE_URL: "postgresql://x", JWT_SECRET: "q8Zr1v-very-long-random-production-secret-value-0001", NODE_ENV: "production" };
+    const on = parseEnv({ ...base, RENDER: "true" });
+    expect(on.success && on.data.RUN_WORKERS_IN_API).toBe(true);
+    const off = parseEnv({ ...base, RENDER: "true", RUN_WORKERS_IN_API: "false" });
+    expect(off.success && off.data.RUN_WORKERS_IN_API).toBe(false);
+    const elsewhere = parseEnv(base);
+    expect(elsewhere.success && elsewhere.data.RUN_WORKERS_IN_API).toBe(false);
   });
   it("refuses audio recording without file storage", () => {
     expect(productionProblems({ ...good, AUDIO_RECORDING: true })).toEqual([]);

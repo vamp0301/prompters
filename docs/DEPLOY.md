@@ -110,11 +110,11 @@ checks only run when `NODE_ENV=production`. Settings → **Dockerfile Path** `./
 | Variable | Value | Why |
 |---|---|---|
 | `NODE_ENV` | `production`, or delete it (the image sets it) | **Never paste the local `.env`** — its `NODE_ENV=development` turns off every production check (insecure cookies, user code running on the host). The API refuses to start on Render without it. |
-| `RUN_WORKERS_IN_API` | `true` | Without it `/health` shows `"worker": false` and Top-100 plans, PDF packs and project modules stay queued forever. |
+| `RUN_WORKERS_IN_API` | `true` (the default on Render when unset) | With `false`, `/health` shows `"worker": false` and Top-100 plans, PDF packs and project modules stay queued forever. |
 | `TRUST_PROXY_HOPS` | `2` | Vercel + Render proxies, so rate limits see the real client IP. |
 | `SANDBOX_DRIVER` | `disabled` (the production default when unset) | No Docker on Render. |
 | `STORAGE_DRIVER` / `AUDIO_RECORDING` | `none` / `false` (the production defaults when unset) | See [Without object storage](#without-object-storage). |
-| `CORS_ORIGIN`, `APP_URL` | the exact Vercel URL | Otherwise login and sign-up fail with `CSRF_REJECTED`. |
+| `CORS_ORIGIN`, `APP_URL` | the exact Vercel URL | Otherwise login and sign-up fail with `CSRF_REJECTED`. The API refuses to start on Render with a localhost value. |
 | `JWT_SECRET` | a fresh 32+ character random value | Not the one from your local `.env`. |
 
 Plus `DATABASE_URL`, `DIRECT_URL`, `REDIS_URL`, `AI_PROVIDER`/`AI_API_KEY`/`AI_MODEL`/`AI_FALLBACK_MODELS` as in the tables above.
