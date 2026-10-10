@@ -67,14 +67,14 @@ Turned off on this setup, by design:
 | `S3_ACCESS_KEY_ID` | R2 API token access key | Cloudflare → R2 → Manage API tokens → *Object Read & Write*, this bucket only |
 | `S3_SECRET_ACCESS_KEY` | R2 API token secret | shown once when you create the token |
 
-**Manisha's cloud voice — optional.** Without these, Manisha uses the browser's own voice and speech recognition (as before). Each provider is used only when its `*_PROVIDER` is set **and** its key is present; if it fails or runs out, the browser takes over automatically.
+**Manisha's cloud voice — optional, off by default.** Turn it on only after `npm run test:real-voice` passes locally and provider-side usage alerts or prepaid credit are in place. Without these, Manisha uses the browser's own voice and speech recognition (as before). Each provider is used only when its `*_PROVIDER` is set **and** its key is present; if it fails or runs out, the browser takes over automatically.
 
 | Variable | Value | Where to get it |
 |---|---|---|
-| `STT_PROVIDER` | `deepgram` | (preset) |
+| `STT_PROVIDER` | `deepgram` to enable (preset `browser` = off) | — |
 | `DEEPGRAM_API_KEY` | Deepgram API key (Member role is enough) | [console.deepgram.com](https://console.deepgram.com) → API Keys |
 | `DEEPGRAM_MODEL` / `DEEPGRAM_LANGUAGE` | defaults `nova-3` / `en` | — |
-| `TTS_PROVIDER` | `elevenlabs` | (preset) |
+| `TTS_PROVIDER` | `elevenlabs` to enable (preset `browser` = off) | — |
 | `ELEVENLABS_API_KEY` | ElevenLabs API key (Text to Speech permission only) | [elevenlabs.io](https://elevenlabs.io/app/settings/api-keys) |
 | `ELEVENLABS_VOICE_ID` | the voice Manisha uses | ElevenLabs → Voices → ⋯ → Copy voice ID |
 | `ELEVENLABS_MODEL` | default `eleven_flash_v2_5` (fastest) | — |

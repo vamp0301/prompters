@@ -50,13 +50,14 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_ID # optional: Google sign-in
         sync: false
-      # Manisha's cloud voice — optional: leave the keys empty to keep the browser voice.
+      # Manisha's cloud voice — off until verified with real providers (docs/DEPLOY.md).
+      # To enable: set STT_PROVIDER=deepgram / TTS_PROVIDER=elevenlabs and the keys below.
       - key: STT_PROVIDER
-        value: deepgram
+        value: browser
       - key: DEEPGRAM_API_KEY # optional
         sync: false
       - key: TTS_PROVIDER
-        value: elevenlabs
+        value: browser
       - key: ELEVENLABS_API_KEY # optional
         sync: false
       - key: ELEVENLABS_VOICE_ID # optional; needed with ELEVENLABS_API_KEY
