@@ -12,9 +12,10 @@ import { Textarea } from "@/components/ui/input";
 import { Markdown } from "@/components/ui/markdown";
 import { Tabs } from "@/components/ui/misc";
 import { api } from "@/lib/api/client";
-import type { Attempt, Locale, Me, TopicPage } from "@/lib/api/types";
+import type { Attempt, Locale, Me, TopicPage, TutorAnswer } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { CodePlayground } from "./code-playground";
+import { SolutionAnswer } from "./solution-answer";
 import { Visualizer } from "./visualizer";
 
 const SECTION_META: Record<string, { n: string; title: string }> = {
@@ -69,18 +70,33 @@ function InterviewItem({ q }: { q: TopicPage["interview"][number] }) {
 
 function AiTutor({ topicSlug, enabled }: { topicSlug: string; enabled: boolean }) {
   const [question, setQuestion] = useState("");
+  const [mode, setMode] = useState<"solution" | "hints">("solution");
   const status = useQuery({ queryKey: ["ai-status"], queryFn: () => api.get<{ available: boolean }>("/ai/status"), enabled });
-  const ask = useMutation({ mutationFn: () => api.post<{ answer: string }>("/ai/explain", { topicSlug, question }) });
+  const ask = useMutation({ mutationFn: () => api.post<TutorAnswer>("/ai/explain", { topicSlug, question, mode }) });
   if (!enabled || !status.data?.available) return null;
   return (
     <Card className="p-5">
       <div className="flex items-center gap-2 text-sm font-semibold"><Bot className="size-4 text-accent" /> Still confused? Ask the tutor</div>
-      <p className="mt-1 text-xs text-muted">The tutor explains concepts in your language. It never writes your build tasks or test answers, and it&apos;s switched off during tests.</p>
+      <p className="mt-1 text-xs text-muted">Get the full solution with an example, code and a diagram — or just hints if you want to try first. Based on Prompters lessons, in your language. Switched off during tests.</p>
       <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); if (question.trim().length > 2) ask.mutate(); }}>
         <Textarea value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. Closure aur normal function mein kya fark hai?" aria-label="Your question" className="min-h-20" />
-        <Button size="sm" loading={ask.isPending} type="submit">Explain</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" loading={ask.isPending} type="submit">{mode === "hints" ? "Give me hints" : "Show the solution"}</Button>
+          <div role="radiogroup" aria-label="Answer type" className="inline-flex rounded-lg border border-border p-0.5 text-xs">
+            {(["solution", "hints"] as const).map((m) => (
+              <button key={m} type="button" role="radio" aria-checked={mode === m} onClick={() => setMode(m)} className={cn("rounded-md px-2.5 py-1", mode === m ? "bg-accent text-accent-fg" : "text-muted hover:text-text")}>
+                {m === "solution" ? "Full solution" : "Hints only"}
+              </button>
+            ))}
+          </div>
+        </div>
       </form>
-      {ask.data && <div className="mt-4 rounded-lg border border-border bg-surface-2 p-4"><Markdown className="text-sm">{ask.data.answer}</Markdown></div>}
+      {ask.isError && (
+        <p role="alert" className="mt-3 text-sm text-danger">
+          {ask.error instanceof Error ? ask.error.message : "The tutor couldn't answer right now."} <button type="button" className="underline" onClick={() => ask.mutate()}>Try again</button>
+        </p>
+      )}
+      {ask.data && <SolutionAnswer data={ask.data} />}
     </Card>
   );
 }

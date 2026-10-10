@@ -1817,3 +1817,26 @@ export interface TargetRoleProfile {
   taxonomyVersion: number;
   createdAt: string;
 }
+
+/** POST /ai/explain — the solution-first tutor answer (`answer` is the same content as Markdown). */
+export interface TutorAnswer {
+  answer: string;
+  mode: "solution" | "hints";
+  structured: {
+    answer: string;
+    solution: { summary: string; steps: string[] };
+    explanation: { concept: string; whyItWorks: string; tradeoffs: string[] };
+    examples: { title: string; input: string; output: string; explanation: string }[];
+    code: { language: string; title: string; code: string; explanation: string[] }[];
+    diagram: Diagram | null;
+    testing: string[];
+    pitfalls: string[];
+    interviewAnswer: string;
+    sources: string[];
+    assumptions: string[];
+    limitations: string[];
+    nextActions: string[];
+  };
+  sources: { id: string; topicSlug: string; topicTitle: string; section: string }[];
+  verification: { sourcesRetrieved: number; sourcesCited: number; inventedSources: number; diagram: "none" | "valid" | "repaired" | "dropped"; grounded: boolean };
+}

@@ -25,6 +25,8 @@ export class FakeAI implements AIProvider {
   stubbornProject = false;
   /** Per-call faults for project_questions only (first draft, retry…), consumed in order. */
   questionDrafts: ("generic" | "genericHigh" | "hypothetical")[] = [];
+  /** Tutor answers: a diagram that can't teach anything (verifier must drop it). */
+  tutorBadDiagram = false;
 
   /** Distinct questions per call, plus a few the validator must reject. */
   private prepBatch(category: string, count: number, system = "", user = "") {
@@ -388,6 +390,27 @@ export class FakeAI implements AIProvider {
       }
       case "review_code":
         return JSON.stringify({ understanding: 8, practical: 7, communication: 6, timeComplexity: "O(n)", spaceComplexity: "O(1)", edgeCases: ["zero"], codeQuality: ["clear names"], lead: "Thanks." });
+      case "tutor_answer": {
+        const ids = [...user.matchAll(/^\[(S\d+)\]/gm)].map((m) => m[1]);
+        const hints = system.includes("HINT MODE");
+        return JSON.stringify({
+          answer: hints ? "Think about what changes when the input grows." : "Use a hash map: it gives O(1) average lookups, so the whole check runs in O(n).",
+          solution: { summary: "Store each value as you scan.", steps: ["Create an empty map", "For each value, check the map", "Insert the value"] },
+          explanation: { concept: "A hash map maps keys to buckets.", whyItWorks: "Each lookup is constant time on average.", tradeoffs: ["Uses O(n) extra memory"] },
+          examples: [{ title: "Find a duplicate", input: "[3, 1, 3]", output: "3", explanation: "3 is seen twice" }],
+          code: hints ? [] : [{ language: "javascript", title: "firstDuplicate.js", code: "function firstDuplicate(a) {\n  const seen = new Set();\n  for (const x of a) { if (seen.has(x)) return x; seen.add(x); }\n  return null;\n}", explanation: ["Set gives O(1) has()"] }],
+          diagram: this.tutorBadDiagram
+            ? { kind: "flow", title: "Flow", objective: "x", steps: [{ label: "Start" }, { label: "Start" }] }
+            : { kind: "flow", title: "Duplicate check", objective: "Show the scan", steps: [{ label: "Read next value" }, { label: "Seen before?" }, { label: "Return it or remember it" }] },
+          testing: ["Empty array returns null"],
+          pitfalls: ["Comparing objects by reference"],
+          interviewAnswer: "I would use a hash set for O(n) time.",
+          sources: [...ids.slice(0, 1), "S99"],
+          assumptions: [],
+          limitations: [],
+          nextActions: ["Try the two-sum problem"],
+        });
+      }
       default:
         return "{}";
     }
