@@ -12,8 +12,16 @@ const RESUME = "Riya Sharma — Backend developer. Built a Notes REST API with N
 const AXE = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
 
 async function axe(page: Page) {
-  // Check colours once entrance animations (page fade, chips) have finished; infinite spinners are ignored.
+  // Check colours once the page's data is in and entrance animations (page fade, chips, cards) have
+  // finished; infinite spinners are ignored. Without the network wait, cards still loading would mount
+  // and fade in mid-check.
+  await page.waitForLoadState("networkidle").catch(() => undefined);
   await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getTiming().iterations === Infinity));
+  // Card fade-ins are JavaScript-driven (inline opacity), not in getAnimations(): give those time to
+  // settle too (bounded — pages that are still generating keep pulsing on purpose).
+  await page
+    .waitForFunction(() => [...document.querySelectorAll<HTMLElement>("[style*='opacity']")].every((el) => !el.style.opacity || Number(el.style.opacity) === 0 || Number(el.style.opacity) === 1), undefined, { timeout: 5000 })
+    .catch(() => undefined);
   await page.addScriptTag({ content: AXE });
   return page.evaluate(async () => {
     const r = await (window as unknown as { axe: { run: (o: unknown) => Promise<{ violations: { id: string; nodes: { target: string[]; failureSummary?: string }[] }[] }> } }).axe.run({ runOnly: ["wcag2a", "wcag2aa"] });
