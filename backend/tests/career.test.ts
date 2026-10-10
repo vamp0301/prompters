@@ -64,7 +64,7 @@ describe("resume + JD analysis", () => {
     const file = await agent.post("/api/career/resumes").send({ fileBase64: Buffer.from(dirty).toString("base64"), mimeType: "text/plain", fileName: "cv.txt" });
     expect(file.status).toBe(201);
     const saved = await prisma.careerResume.findUniqueOrThrow({ where: { id: file.body.data.id } });
-    expect(saved.text).not.toMatch(/[\u0000\u0001]/);
+    expect(saved.text.includes("\u0000") || saved.text.includes("\u0001")).toBe(false);
     expect(saved.text).toContain("Backend");
     expect((await agent.post("/api/career/resumes").send({ text: dirty })).status).toBe(201);
     expect((await agent.post("/api/career/jobs").send({ text: `${JD}\u0000` })).status).toBe(201);
