@@ -11,3 +11,5 @@ process.env.AI_PROVIDER = "none";
 process.env.RATE_LIMIT_DISABLED = "true";
 process.env.STORAGE_DRIVER = "local";
 process.env.STORAGE_DIR = `${process.env.TMPDIR ?? "/tmp"}/prompters-test-storage`;
+// Recording is off by default in production; tests cover the "on" path (tests/no-storage.test.ts covers "off").
+process.env.AUDIO_RECORDING = "true";

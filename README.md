@@ -378,7 +378,9 @@ Only variables that the code actually reads are listed. Use placeholders. Never 
 | `AI_API_KEY` | depends | — | `config/env.ts` | Required for every provider except Ollama. |
 | `AI_BASE_URL` | no | provider default | `config/env.ts` | Override the provider endpoint. |
 | `AI_FALLBACK_MODELS` | no | `gemini-flash-lite-latest,gemini-3.5-flash-lite` | `config/env.ts` / `ai/provider.ts` | Comma-separated Gemini fallback models, tried in order. |
-| `STORAGE_DRIVER` | no | `local` | `config/env.ts` | `local` (current) or `s3`. |
+| `STORAGE_DRIVER` | no | `local` | `config/env.ts` | `local` (development), `s3`, or `none` (no files kept: resume text only, PDF packs built on download, recording off — the Render preset). `local` is refused in production unless `STORAGE_LOCAL_PERSISTENT=true`. |
+| `STORAGE_LOCAL_PERSISTENT` | no | `false` | `config/env.ts` | Production only: declare that `STORAGE_DIR` is a persistent volume. |
+| `AUDIO_RECORDING` | no | `false` | `config/env.ts` | Offer to keep interview answer audio (with consent). Needs file storage. |
 | `STORAGE_DIR` | no | `./storage` | `config/env.ts` | Root folder for the local driver (gitignored). |
 | `S3_ENDPOINT`, `S3_REGION` (default `auto`), `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | only with `s3` | — | `config/env.ts` | S3-compatible driver settings. Not configured today. |
 | `PREP_DAILY_PLAN_LIMIT` | no | `3` | `config/env.ts` | Top-100 plan generations allowed per user per rolling 24 h (each plan costs about 20–25 model calls). |
@@ -751,7 +753,7 @@ See also [docs/security.md](docs/security.md).
 | Logging | pino with request IDs; no stack traces in responses |
 | Account deletion | `DELETE /api/auth/account` first deletes every stored file the user owns (`resumes/`, `interviews/`, `prep-packs/` under their ID) through the storage abstraction, then the database rows. Idempotent, and tested. |
 | Body limits | Oversized bodies return `413 PAYLOAD_TOO_LARGE` (8 MB on `/api/career`, 1 MB elsewhere); malformed JSON returns `400 INVALID_JSON`. |
-| Production guard | The API and worker refuse to start in production with `SANDBOX_DRIVER=process` (use `docker`, or `disabled` until the Docker sandbox is deployed), an example/development `JWT_SECRET`, `COOKIE_SECURE=false`, or `STORAGE_DRIVER=s3` without a bucket. A localhost `CORS_ORIGIN` and local storage are logged as warnings. |
+| Production guard | The API and worker refuse to start in production with `SANDBOX_DRIVER=process` (use `docker`, or `disabled` until the Docker sandbox is deployed), an example/development `JWT_SECRET`, `COOKIE_SECURE=false`, `STORAGE_DRIVER=s3` without a bucket, `STORAGE_DRIVER=local` on a disk not declared persistent, or `AUDIO_RECORDING=true` without file storage. A localhost `CORS_ORIGIN` is allowed. |
 | Log redaction | Cookies, `set-cookie`, authorization, API-key headers, passwords, tokens and credentials are redacted from logs. |
 
 Cross-account access (IDOR) is covered by `tests/hardening.test.ts`: another user's resumes, JDs, analyses, interviews, audio, plans, questions, attempts, PDFs and applications all return 404, and write attempts change nothing.
@@ -969,7 +971,7 @@ Note on storage and the worker: PDF packs are written by the worker and read by 
 | `503 CODE_EXECUTION_DISABLED` | The server runs with `SANDBOX_DRIVER=disabled` on purpose. The UI disables Run/Submit and explains why; set `docker` once the sandbox host is ready. |
 | `503 SANDBOX_UNAVAILABLE` on Run | No code worker picked the job up within 20 s. Start `npm run dev:worker`. |
 | `413 PAYLOAD_TOO_LARGE` | Upload over the body limit (files must be ≤ 5 MB). |
-| `Refusing to start in production: …` | The listed setting is unsafe in production (process sandbox, example JWT secret, `COOKIE_SECURE=false`, S3 without bucket). |
+| `Refusing to start in production: …` | The listed setting is unsafe in production (process sandbox, example JWT secret, `COOKIE_SECURE=false`, S3 without bucket, non-persistent local storage, recording without storage). |
 | Plan `FAILED: Only N questions passed quality checks` | Model output was too thin or rejected. Use **Retry**; accepted questions are kept. |
 | `503 AI_UNAVAILABLE` | `AI_PROVIDER=none`, or no `AI_API_KEY`. |
 | `502 AI_UPSTREAM_ERROR` | Provider busy or rate-limited after retries and fallbacks. On the Gemini free tier, each model has a small **requests-per-day** quota. One Top-100 plan uses roughly 20–25 model calls, so a free key supports only a few plans per day per model. Wait for the daily reset, add fallback models, or use a paid key. |

@@ -13,6 +13,7 @@ if (isProd) {
   // Not fatal (docker-compose runs the production image locally), but worth saying loudly.
   if (corsOrigins.some((o) => /localhost|127\.0\.0\.1/.test(o))) logger.warn({ corsOrigins }, "CORS_ORIGIN allows localhost in production");
   if (env.STORAGE_DRIVER === "local") logger.warn("STORAGE_DRIVER=local: files live on this machine's disk — on hosts with ephemeral disks (e.g. Render free) they are lost on every deploy or restart; use STORAGE_DRIVER=s3");
+  if (env.STORAGE_DRIVER === "none") logger.info("STORAGE_DRIVER=none: no user files are kept — original resume files aren't stored, PDF packs are built on download, audio recording is off");
 }
 
 await initTaxonomy();

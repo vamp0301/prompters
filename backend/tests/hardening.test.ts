@@ -3,7 +3,7 @@ import supertest from "supertest";
 import { app, login, resetDb, seedFixture } from "./helpers.js";
 import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
-import { env, productionProblems } from "../src/config/env.js";
+import { env, hostProblems, parseEnv, productionProblems } from "../src/config/env.js";
 import { sandbox } from "../src/sandbox/index.js";
 import { Queue } from "bullmq";
 import { CODE_QUEUE, executeCode } from "../src/jobs/queues.js";
@@ -211,7 +211,7 @@ describe("account deletion", () => {
 
 describe("production configuration guard", () => {
   const good = {
-    JWT_SECRET: "q8Zr1v-very-long-random-production-secret-value-0001", SANDBOX_DRIVER: "docker" as const, STORAGE_DRIVER: "local" as const, S3_BUCKET: undefined, COOKIE_SECURE: undefined,
+    JWT_SECRET: "q8Zr1v-very-long-random-production-secret-value-0001", SANDBOX_DRIVER: "docker" as const, STORAGE_DRIVER: "s3" as const, STORAGE_LOCAL_PERSISTENT: false, S3_BUCKET: "private-bucket" as string | undefined, AUDIO_RECORDING: false, COOKIE_SECURE: undefined,
     AI_PROVIDER: "gemini" as const, AI_API_KEY: "key", CORS_ORIGIN: "https://app.example.com", APP_URL: "https://app.example.com",
   };
   it("accepts a safe production config", () => {
@@ -226,7 +226,29 @@ describe("production configuration guard", () => {
       expect(productionProblems({ ...good, JWT_SECRET: secret })).toEqual([expect.stringMatching(/JWT_SECRET/)]);
     }
     expect(productionProblems({ ...good, COOKIE_SECURE: false })).toEqual([expect.stringMatching(/COOKIE_SECURE/)]);
-    expect(productionProblems({ ...good, STORAGE_DRIVER: "s3" })).toEqual([expect.stringMatching(/S3_BUCKET/)]);
+    expect(productionProblems({ ...good, S3_BUCKET: undefined })).toEqual([expect.stringMatching(/S3_BUCKET/)]);
+  });
+  it("runs without object storage, but never keeps user files on an ephemeral disk", () => {
+    expect(productionProblems({ ...good, STORAGE_DRIVER: "none", S3_BUCKET: undefined })).toEqual([]);
+    expect(productionProblems({ ...good, STORAGE_DRIVER: "local" })).toEqual([expect.stringMatching(/STORAGE_DRIVER=local/)]);
+    // Explicitly declared persistent volume (e.g. a mounted disk) is allowed.
+    expect(productionProblems({ ...good, STORAGE_DRIVER: "local", STORAGE_LOCAL_PERSISTENT: true })).toEqual([]);
+  });
+  it("defaults to the safe choice in production when a variable is unset", () => {
+    const base = { DATABASE_URL: "postgresql://x", JWT_SECRET: "q8Zr1v-very-long-random-production-secret-value-0001" };
+    const prod = parseEnv({ ...base, NODE_ENV: "production" });
+    expect(prod.success && [prod.data.SANDBOX_DRIVER, prod.data.STORAGE_DRIVER]).toEqual(["disabled", "none"]);
+    const dev = parseEnv({ ...base, NODE_ENV: "development" });
+    expect(dev.success && [dev.data.SANDBOX_DRIVER, dev.data.STORAGE_DRIVER]).toEqual(["process", "local"]);
+  });
+  it("refuses a non-production NODE_ENV on Render", () => {
+    expect(hostProblems("development", { onRender: true })).toEqual([expect.stringMatching(/NODE_ENV=development on Render/)]);
+    expect(hostProblems("production", { onRender: true })).toEqual([]);
+    expect(hostProblems("development", { onRender: false })).toEqual([]);
+  });
+  it("refuses audio recording without file storage", () => {
+    expect(productionProblems({ ...good, AUDIO_RECORDING: true })).toEqual([]);
+    expect(productionProblems({ ...good, STORAGE_DRIVER: "none", AUDIO_RECORDING: true })).toEqual([expect.stringMatching(/AUDIO_RECORDING/)]);
   });
   it("refuses a keyless AI provider, an implicit localhost Redis and plain-HTTP remote origins", () => {
     expect(productionProblems({ ...good, AI_API_KEY: undefined })).toEqual([expect.stringMatching(/AI_API_KEY/)]);

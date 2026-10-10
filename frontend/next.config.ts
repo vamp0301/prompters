@@ -4,6 +4,10 @@ import type { NextConfig } from "next";
 // The browser talks to /api on the frontend's own origin; Next proxies it to the backend.
 // This keeps the session cookie first-party (works on Vercel → Render without third-party cookies).
 const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000").replace(/\/$/, "");
+// On Vercel a missing or plain-HTTP backend URL would silently proxy /api to nowhere: fail the build instead.
+if (process.env.VERCEL && !/^https:\/\//.test(process.env.NEXT_PUBLIC_API_URL ?? "")) {
+  throw new Error("NEXT_PUBLIC_API_URL must be set to the backend's https:// URL (e.g. https://prompters.onrender.com) in the Vercel project settings.");
+}
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,

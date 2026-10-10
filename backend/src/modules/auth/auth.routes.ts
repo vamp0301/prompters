@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../../lib/prisma.js";
-import { codeExecutionEnabled } from "../../config/env.js";
+import { audioRecordingEnabled, codeExecutionEnabled, fileStorageEnabled } from "../../config/env.js";
 import { deleteUserObjects } from "../../lib/storage.js";
 import { authLimiter } from "../../middleware/rate-limit.js";
 import { clearSession, currentUser, issueSession, requireAuth } from "../../middleware/auth.js";
@@ -62,8 +62,9 @@ export function authRoutes() {
   r.get("/me", requireAuth, handler(async (req) => {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: currentUser(req).id }, select: { ...auth.publicUser, passwordHash: true } });
     const { passwordHash, ...rest } = user;
-    // CODE_EXECUTION is server config, not a DB flag: lets the UI explain why "Run" is unavailable.
-    return { ...rest, hasPassword: !!passwordHash, flags: { ...(await flagsFor(user.id)), CODE_EXECUTION: codeExecutionEnabled() } };
+    // Server config, not DB flags: lets the UI explain why "Run", file keeping or recording is unavailable.
+    const server = { CODE_EXECUTION: codeExecutionEnabled(), FILE_STORAGE: fileStorageEnabled(), AUDIO_RECORDING: audioRecordingEnabled() };
+    return { ...rest, hasPassword: !!passwordHash, flags: { ...(await flagsFor(user.id)), ...server } };
   }));
 
   r.post("/change-password", requireAuth, limiter, handler(async (req, res) => {

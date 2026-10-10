@@ -1,6 +1,6 @@
 import { Prisma, type BuildTask, type InterviewSession, type InterviewTurn } from "@prisma/client";
 import { aiJson, requireAI } from "../../ai/json.js";
-import { codeExecutionEnabled, env } from "../../config/env.js";
+import { audioRecordingEnabled, codeExecutionEnabled, env } from "../../config/env.js";
 import { executeCode } from "../../jobs/queues.js";
 import { prisma } from "../../lib/prisma.js";
 import { storage } from "../../lib/storage.js";
@@ -465,8 +465,8 @@ async function sessionView(session: FullSession) {
     job: titleOf(session),
     matchId: session.matchId,
     resumeId: session.resumeId,
-    /** null = not asked yet; the room asks before the first voice answer. */
-    recordAudio: (session.consent as Consent).recordAudio ?? ((session.consent as Consent).analysis === undefined ? audioAllowed(session.consent as Consent) : null),
+    /** null = not asked yet; the room asks before the first voice answer. false while recording is off on this server. */
+    recordAudio: !audioRecordingEnabled() ? false : (session.consent as Consent).recordAudio ?? ((session.consent as Consent).analysis === undefined ? audioAllowed(session.consent as Consent) : null),
     progress: { answered: answered.length, target: session.questionTarget },
     current: live ? await currentTurnView(session.turns) : null,
     readinessScore: session.readinessScore,
@@ -500,6 +500,9 @@ async function sessionView(session: FullSession) {
 
 /** The candidate's answer to "Your answer audio may be recorded…" — recording is never required. */
 export async function setRecordingConsent(userId: string, sessionId: string, allow: boolean) {
+  if (allow && !audioRecordingEnabled()) {
+    throw new AppError(503, "RECORDING_DISABLED", "Audio recording is turned off on this server. Answer by voice or text as usual — your transcript is kept and counts the same.");
+  }
   const session = await ownedSession(userId, sessionId);
   if (session.status !== "IN_PROGRESS" && session.status !== "PAUSED") throw conflict("This interview has ended.");
   const consent = { ...(session.consent as Consent), recordAudio: allow, recordAudioAt: new Date().toISOString() };
@@ -595,9 +598,9 @@ export async function submitAnswer(userId: string, sessionId: string, input: Ans
   });
   if (!claimed.count) throw new AppError(409, "ANSWER_PROCESSING", "Your answer is already being processed.");
 
-  // Audio is stored only with recording consent; never required.
+  // Audio is stored only with recording consent, and only while recording is on; never required.
   let audioKey: string | null = turn.audioKey;
-  if (input.audioBase64 && audioAllowed(consent)) {
+  if (input.audioBase64 && audioRecordingEnabled() && audioAllowed(consent)) {
     const audio = Buffer.from(input.audioBase64, "base64");
     const mime = (input.audioMime ?? "audio/webm").split(";")[0];
     if (audio.length > MAX_AUDIO_BYTES || !AUDIO_TYPES.includes(mime)) {

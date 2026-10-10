@@ -13,6 +13,20 @@ export function useCodeExecution() {
   return me?.flags?.CODE_EXECUTION !== false;
 }
 
+/** False when the server keeps no files (STORAGE_DRIVER=none): only the text of an upload is saved. */
+export function useFileStorage() {
+  const { data: me } = useMe();
+  return me?.flags?.FILE_STORAGE !== false;
+}
+
+/** Interview audio recording is offered only when the server says so. Assumed off while loading. */
+export function useAudioRecording() {
+  const { data: me } = useMe();
+  return me?.flags?.AUDIO_RECORDING === true;
+}
+
+export const FILE_STORAGE_OFF = "Only the text is saved — this server doesn't keep the original file.";
+
 export const CODE_EXECUTION_OFF = "Running code is turned off on this server for now. You can still read, write and explain your code — everything else keeps working.";
 
 export function useLogout() {

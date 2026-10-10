@@ -5,6 +5,7 @@ import { FileText, Loader2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { Tabs } from "@/components/ui/misc";
+import { FILE_STORAGE_OFF, useFileStorage } from "@/features/auth/use-me";
 import { api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 import { ResumeReader } from "./prep/resume-reader";
@@ -18,6 +19,7 @@ export function DocumentForm({ kind, disabled, onDone }: { kind: Kind; disabled?
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<"file" | "text">(kind === "resume" ? "file" : "text");
+  const keepsFiles = useFileStorage();
   const [file, setFile] = useState<PickedFile | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -112,6 +114,7 @@ export function DocumentForm({ kind, disabled, onDone }: { kind: Kind; disabled?
               <Upload className="size-5 text-muted" aria-hidden />
               <p className="text-sm text-muted">Drag & drop your {noun} here</p>
               <p className="text-xs text-subtle">PDF or .txt, up to 5 MB</p>
+              {kind === "resume" && !keepsFiles && <p className="text-xs text-subtle">{FILE_STORAGE_OFF}</p>}
             </>
           )}
           <input

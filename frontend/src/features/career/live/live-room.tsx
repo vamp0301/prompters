@@ -14,7 +14,7 @@ import { Markdown } from "@/components/ui/markdown";
 import { paperCard } from "@/components/ui/paper";
 import { Dialog, Tabs } from "@/components/ui/misc";
 import { Progress } from "@/components/ui/progress";
-import { useMe } from "@/features/auth/use-me";
+import { useAudioRecording, useMe } from "@/features/auth/use-me";
 import { TARGET_ROLES } from "@/features/marketing/start-preparing";
 import { api, ApiError } from "@/lib/api/client";
 import type { InterviewSessionView, InterviewTurnView } from "@/lib/api/types";
@@ -116,6 +116,7 @@ function StatusRow({ ok, label, value, note }: { ok: boolean | null; label: stri
 export function LiveRoom({ session }: { session: InterviewSessionView }) {
   const router = useRouter();
   const { data: me } = useMe();
+  const recordingOn = useAudioRecording();
   const voiceConfig = useVoiceConfig();
   const voice = useManishaVoice(voiceConfig.tts === "elevenlabs" ? { sessionId: session.id } : null);
   const recorder = useAnswerRecorder();
@@ -314,6 +315,8 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
       dispatch({ type: "FAIL", error: "recognition-unavailable" });
       return;
     }
+    // Recording off on this server: never ask, never record.
+    if (!recordingOn) choice = false;
     if (choice === null) {
       setAskRecording(true);
       return;
@@ -654,7 +657,7 @@ export function LiveRoom({ session }: { session: InterviewSessionView }) {
                   !dictation.supported
                     ? "Voice answering isn't available in this browser. You can type your answer instead."
                     : dictation.engine === "cloud"
-                      ? "Your speech is transcribed live by a cloud service (Deepgram) and appears as text you can edit before submitting. Prompters doesn't keep the audio unless you allow recording."
+                      ? `Your speech is transcribed live by a cloud service (Deepgram) and appears as text you can edit before submitting. Prompters doesn't keep the audio${recordingOn ? " unless you allow recording" : ""}.`
                       : "Your spoken answer appears as text you can edit before submitting."
                 }
               />

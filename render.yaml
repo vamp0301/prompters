@@ -36,7 +36,7 @@ services:
         sync: false
       - key: REDIS_URL # rediss://... (Upstash over TCP, or a Render Key Value internal URL)
         sync: false
-      - key: CORS_ORIGIN # your Vercel URL, e.g. https://prompters.vercel.app
+      - key: CORS_ORIGIN # your Vercel URL, e.g. https://prompters-steel.vercel.app
         sync: false
       - key: APP_URL # same Vercel URL
         sync: false
@@ -62,15 +62,13 @@ services:
         sync: false
       - key: ELEVENLABS_VOICE_ID # optional; needed with ELEVENLABS_API_KEY
         sync: false
+      # No object storage needed: resume text is parsed and saved in Postgres (the original file isn't kept),
+      # PDF packs are built on download, and audio recording is off. Render's disk is wiped on every
+      # deploy/restart, so the API refuses STORAGE_DRIVER=local in production.
+      # To keep files, add STORAGE_DRIVER=s3 + S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY
+      # in the dashboard (any S3-compatible bucket; see docs/DEPLOY.md).
       - key: STORAGE_DRIVER
-        value: s3
-      - key: S3_ENDPOINT # e.g. https://<account-id>.r2.cloudflarestorage.com
-        sync: false
-      - key: S3_REGION
-        value: auto
-      - key: S3_BUCKET
-        sync: false
-      - key: S3_ACCESS_KEY_ID
-        sync: false
-      - key: S3_SECRET_ACCESS_KEY
-        sync: false
+        value: none
+      # Interview answer audio is never kept on this setup (needs file storage).
+      - key: AUDIO_RECORDING
+        value: "false"

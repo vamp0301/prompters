@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DeleteObjectCommand, DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { env } from "../config/env.js";
+import { AppError } from "../utils/errors.js";
 
 export interface StoredObject {
   body: Buffer;
@@ -105,11 +106,29 @@ export class S3Storage implements StorageDriver {
   }
 }
 
+/**
+ * STORAGE_DRIVER=none: nothing is kept. Reads find nothing and deletes are no-ops, so cleanup paths
+ * (account deletion, retention) keep working; a write is a bug in the caller and fails loudly.
+ */
+class NoStorage implements StorageDriver {
+  async put(): Promise<void> {
+    throw new AppError(503, "FILE_STORAGE_DISABLED", "File storage is turned off on this server, so this file can't be kept.");
+  }
+  async get() {
+    return null;
+  }
+  async delete() {}
+  async deletePrefix(prefix: string) {
+    safePrefix(prefix);
+    return 0;
+  }
+}
+
 let driver: StorageDriver | undefined;
 export function storage(): StorageDriver {
   if (!driver) {
     if (env.STORAGE_DRIVER === "s3" && !env.S3_BUCKET) throw new Error("STORAGE_DRIVER=s3 requires S3_BUCKET");
-    driver = env.STORAGE_DRIVER === "s3" ? new S3Storage() : new LocalStorage();
+    driver = env.STORAGE_DRIVER === "s3" ? new S3Storage() : env.STORAGE_DRIVER === "none" ? new NoStorage() : new LocalStorage();
   }
   return driver;
 }

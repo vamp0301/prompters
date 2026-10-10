@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { extractText, getDocumentProxy } from "unpdf";
 import { aiJson } from "../../ai/json.js";
+import { fileStorageEnabled } from "../../config/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { storage } from "../../lib/storage.js";
 import { badRequest, notFound } from "../../utils/errors.js";
@@ -54,7 +55,8 @@ export async function createResume(userId: string, input: { label?: string; file
   const p = prompts.parseResume(text);
   const parsed = await aiJson("parse_resume", p.system, p.user, resumeParsedSchema, 4000, { fast: true });
   let storageKey: string | null = null;
-  if (file) {
+  // Without file storage only the original file is dropped: the extracted text and the analysis are saved as usual.
+  if (file && fileStorageEnabled()) {
     storageKey = `resumes/${userId}/${randomUUID()}.${input.mimeType === "application/pdf" ? "pdf" : "txt"}`;
     await storage().put(storageKey, file, input.mimeType ?? "application/octet-stream");
   }

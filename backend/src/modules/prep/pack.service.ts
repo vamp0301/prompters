@@ -1,5 +1,6 @@
 import type { PrepCategory, PrepPriority, PrepQuestion, Prisma } from "@prisma/client";
 import { aiJson } from "../../ai/json.js";
+import { fileStorageEnabled } from "../../config/env.js";
 import { enqueuePrep } from "../../jobs/prep-queue.js";
 import { LockBusyError, withLock } from "../../lib/lock.js";
 import { logger } from "../../lib/logger.js";
@@ -50,11 +51,12 @@ async function requestPackLocked(userId: string, planId: string, variant: PackVa
 export async function packFile(userId: string, planId: string, packId: string) {
   const pack = await prisma.prepPack.findFirst({ where: { id: packId, planId, userId }, include: { plan: { select: { title: true } } } });
   if (!pack) throw notFound("Interview pack");
-  if (pack.status !== "READY" || !pack.storageKey) throw conflict("This pack isn't ready yet.");
-  const obj = await storage().get(pack.storageKey);
-  if (!obj) throw notFound("Interview pack");
+  if (pack.status !== "READY") throw conflict("This pack isn't ready yet.");
+  // Without file storage (or if a stored copy is gone) the PDF is rebuilt from the saved plan and translations.
+  const stored = pack.storageKey ? await storage().get(pack.storageKey) : null;
+  const body = stored?.body ?? (await buildPdf(pack.id));
   const slug = pack.plan.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "interview";
-  return { body: obj.body, fileName: `prompters-${slug}-${pack.variant.toLowerCase()}-${pack.language}.pdf` };
+  return { body, fileName: `prompters-${slug}-${pack.variant.toLowerCase()}-${pack.language}.pdf` };
 }
 
 export async function deletePackFiles(planIds: string[]) {
@@ -405,25 +407,35 @@ function renderTopics(doc: Doc, qs: RankedQuestion[], loc: (q: PrepQuestion) => 
 
 // ───────────────────────── worker ─────────────────────────
 
+/** Renders a pack from the database. Non-English packs need their translations saved first (ensureTranslations). */
+async function buildPdf(packId: string, opts: { translate?: boolean } = {}) {
+  const pack = await prisma.prepPack.findUniqueOrThrow({ where: { id: packId }, include: { plan: { include: { resume: true, user: { select: { name: true } } } } } });
+  const questions = await prisma.prepQuestion.findMany({ where: { planId: pack.planId, rank: { gt: 0 } }, orderBy: { rank: "asc" }, include: { attempts: { select: { score: true } } } });
+  const language = pack.language as PackLanguage;
+  if (opts.translate && language !== "en") await ensureTranslations(questions, language);
+  const parsed = resumeParsedSchema.safeParse(pack.plan.resume.parsed);
+  return renderPack({
+    candidate: (parsed.success && parsed.data.name) || pack.plan.user.name,
+    title: pack.plan.title,
+    variant: pack.variant as PackVariant,
+    language,
+    questions: questions.map(({ attempts, ...q }) => ({ ...q, bestScore: attempts.length ? Math.max(...attempts.map((a) => a.score)) : null })),
+  });
+}
+
 export async function runPack(packId: string) {
-  const pack = await prisma.prepPack.findUnique({ where: { id: packId }, include: { plan: { include: { resume: true, user: { select: { name: true } } } } } });
+  const pack = await prisma.prepPack.findUnique({ where: { id: packId } });
   if (!pack) return;
   const { count } = await prisma.prepPack.updateMany({ where: { id: pack.id, status: "QUEUED" }, data: { status: "RUNNING", error: null } });
   if (!count) return; // a duplicate or stale job: someone else has it, or it's done
   try {
-    const questions = await prisma.prepQuestion.findMany({ where: { planId: pack.planId, rank: { gt: 0 } }, orderBy: { rank: "asc" }, include: { attempts: { select: { score: true } } } });
-    const language = pack.language as PackLanguage;
-    if (language !== "en") await ensureTranslations(questions, language);
-    const parsed = resumeParsedSchema.safeParse(pack.plan.resume.parsed);
-    const pdf = await renderPack({
-      candidate: (parsed.success && parsed.data.name) || pack.plan.user.name,
-      title: pack.plan.title,
-      variant: pack.variant as PackVariant,
-      language,
-      questions: questions.map(({ attempts, ...q }) => ({ ...q, bestScore: attempts.length ? Math.max(...attempts.map((a) => a.score)) : null })),
-    });
-    const key = `prep-packs/${pack.userId}/${pack.id}.pdf`;
-    await storage().put(key, pdf, "application/pdf");
+    // Rendering here also proves the pack builds, even when it isn't kept (STORAGE_DRIVER=none).
+    const pdf = await buildPdf(pack.id, { translate: true });
+    let key: string | null = null;
+    if (fileStorageEnabled()) {
+      key = `prep-packs/${pack.userId}/${pack.id}.pdf`;
+      await storage().put(key, pdf, "application/pdf");
+    }
     await prisma.prepPack.update({ where: { id: pack.id }, data: { status: "READY", storageKey: key, completedAt: new Date() } });
   } catch (e) {
     logger.error({ err: e, packId }, "Prep pack failed");
