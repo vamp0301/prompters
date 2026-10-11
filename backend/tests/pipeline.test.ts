@@ -154,10 +154,14 @@ describe("project build pipelines", () => {
     expect(first.body.data.pipeline).toMatchObject({ status: "QUEUED", stages: [] });
     const second = await agent.post("/api/projects/todo-api/pipeline").send({});
     expect(["QUEUED", "RUNNING", "READY"]).toContain(second.body.data.pipeline.status);
-    // A stage can't be touched before the plan exists.
-    if (second.body.data.pipeline.status !== "READY") expect((await patch(agent, "setup", { status: "IN_PROGRESS" })).status).toBe(409);
     const done = await create(agent);
     expect(done.body.data.pipeline.status).toBe("READY");
+    // A stage can't be touched before the plan exists (a queued row with no stages yet — no race with the worker).
+    const other = await login();
+    const me = await prisma.user.findFirstOrThrow({ where: { email: other.email } });
+    const todo = await prisma.project.findUniqueOrThrow({ where: { slug: "todo-api" } });
+    await prisma.projectPipeline.create({ data: { userId: me.id, projectId: todo.id, status: "QUEUED" } });
+    expect((await patch(other.agent, "setup", { status: "IN_PROGRESS" })).status).toBe(409);
   });
 
   it("records a failed generation honestly and lets the student retry", async () => {
