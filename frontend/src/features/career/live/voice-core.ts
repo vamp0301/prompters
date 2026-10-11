@@ -37,12 +37,15 @@ const langOf = (v: VoiceLike) => v.lang.replace("_", "-").toLowerCase();
  * Picks Manisha's voice. Order: an en-IN voice (likely-female names first), then other English voices
  * (likely-female first), then anything. Returns null when the browser has no voices at all.
  */
-export function chooseVoice<V extends VoiceLike>(voices: readonly V[]): VoiceChoice<V> | null {
+export function chooseVoice<V extends VoiceLike>(voices: readonly V[], prefer: "en-in" | "hi-in" = "en-in"): VoiceChoice<V> | null {
   if (!voices.length) return null;
   const score = (v: V) => {
     const lang = langOf(v);
     let s = 0;
-    if (lang === "en-in") s += 100;
+    // Hindi script needs a Hindi voice; otherwise Indian English first.
+    if (lang === prefer) s += 100;
+    else if (prefer === "hi-in" && lang === "en-in") s += 60;
+    else if (prefer === "en-in" && lang === "hi-in") s += 40;
     else if (lang.startsWith("en")) s += 50;
     if (LIKELY_FEMALE.test(v.name)) s += 20;
     else if (LIKELY_MALE.test(v.name)) s -= 20;

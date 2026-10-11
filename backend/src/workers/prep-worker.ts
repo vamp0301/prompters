@@ -5,7 +5,7 @@ import { logger } from "../lib/logger.js";
 import { runPlan } from "../modules/prep/generation.service.js";
 import { runPack } from "../modules/prep/pack.service.js";
 import { runPipeline } from "../modules/projects/pipeline.service.js";
-import { runFullAnswer } from "../modules/prep/practice.service.js";
+import { runFullAnswer, runPlanAnswers } from "../modules/prep/practice.service.js";
 
 const run = ({ data }: { data: PrepJob }) => {
   switch (data.kind) {
@@ -17,6 +17,8 @@ const run = ({ data }: { data: PrepJob }) => {
       return runPipeline(data.pipelineId);
     case "fullAnswer":
       return runFullAnswer(data.questionId, data.lang);
+    case "planAnswers":
+      return runPlanAnswers(data.planId);
   }
 };
 

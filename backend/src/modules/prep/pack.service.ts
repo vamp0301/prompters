@@ -10,11 +10,16 @@ import { AppError, conflict, notFound } from "../../utils/errors.js";
 import { logEvent } from "../platform/events.js";
 import { resumeParsedSchema } from "../career/schemas.js";
 import { PREP_CATEGORIES } from "./allocation.js";
-import { barChart, COLORS, drawMark, contentWidth, createDoc, flowChart, footer, heading, keepTogether, PALETTE, pill, rule, stackedBar, stepFlow, textAt, textHeight, toBuffer, write, type Doc } from "./pdf.js";
+import { barChart, codeBlock, COLORS, drawDiagram, drawMark, contentWidth, createDoc, flowChart, footer, heading, keepTogether, PALETTE, pill, rule, stackedBar, stepFlow, textAt, textHeight, toBuffer, write, type Doc } from "./pdf.js";
 import { prepPrompts } from "./prompts.js";
 import { translationSchema } from "./schemas.js";
+import { ensureFullAnswers, savedAnswer } from "./practice.service.js";
+import type { PdfDiagram } from "./pdf.js";
+import type { StructuredAnswer } from "../../ai/answer.js";
 
-export const PACK_VARIANTS = ["QUESTIONS", "HINTS", "GUIDE", "TOPICS"] as const;
+export const PACK_VARIANTS = ["QUESTIONS", "HINTS", "GUIDE", "TOPICS", "ANSWERS"] as const;
+/** "Complete answers" edition: how many top-ranked questions get a full answer. */
+export const ANSWER_SCOPES = [10, 25, 50, 100] as const;
 export const PACK_LANGUAGES = ["en", "hinglish", "hi"] as const;
 export type PackVariant = (typeof PACK_VARIANTS)[number];
 export type PackLanguage = (typeof PACK_LANGUAGES)[number];
@@ -23,28 +28,32 @@ type Localized = { question: string; hint: string; why: string; keyPoints: strin
 
 // ───────────────────────── API-facing ─────────────────────────
 
-export async function requestPack(userId: string, planId: string, variant: PackVariant, language: PackLanguage) {
+export async function requestPack(userId: string, planId: string, variant: PackVariant, language: PackLanguage, scope?: number) {
   // Check-then-create below: one request at a time per plan, so a double-click makes one PDF.
-  return withLock(`lock:prep-pack:${userId}:${planId}`, 15_000, () => requestPackLocked(userId, planId, variant, language), 5_000).catch((e) => {
+  return withLock(`lock:prep-pack:${userId}:${planId}`, 15_000, () => requestPackLocked(userId, planId, variant, language, scope), 5_000).catch((e) => {
     if (e instanceof LockBusyError) throw conflict("Your PDF is already being requested. Try again in a moment.");
     throw e;
   });
 }
 
-async function requestPackLocked(userId: string, planId: string, variant: PackVariant, language: PackLanguage) {
+async function requestPackLocked(userId: string, planId: string, variant: PackVariant, language: PackLanguage, scope?: number) {
+  const answers = variant === "ANSWERS";
+  const size = answers ? (ANSWER_SCOPES as readonly number[]).includes(scope ?? 0) ? scope! : 25 : null;
   const plan = await prisma.prepPlan.findFirst({ where: { id: planId, userId } });
   if (!plan) throw notFound("Preparation plan");
   if (plan.status !== "READY") throw conflict("Your questions are still being prepared.");
   // Practice progress is printed in the pack, so a pack is reused only until the next practice attempt.
   const lastAttempt = await prisma.prepAttempt.findFirst({ where: { userId, question: { planId } }, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
+  // A finished "Complete answers" pack is never reused: asking again gives missing answers another try
+  // (answers already written are reused inside the job, so it costs nothing extra).
   const reusable = await prisma.prepPack.findFirst({
-    where: { planId, variant, language, status: { in: ["QUEUED", "RUNNING", "READY"] }, ...(lastAttempt ? { createdAt: { gt: lastAttempt.createdAt } } : {}) },
+    where: { planId, variant, language, ...(answers ? { scope: size, status: { in: ["QUEUED", "RUNNING"] } } : { status: { in: ["QUEUED", "RUNNING", "READY"] } }), ...(lastAttempt ? { createdAt: { gt: lastAttempt.createdAt } } : {}) },
     orderBy: { createdAt: "desc" },
   });
   if (reusable) return reusable;
-  const pack = await prisma.prepPack.create({ data: { planId, userId, variant, language } });
-  await enqueuePrep({ kind: "pack", packId: pack.id });
-  await logEvent(userId, "prep_pack_requested", { meta: { planId, variant, language } });
+  const pack = await prisma.prepPack.create({ data: { planId, userId, variant, language, scope: size } });
+  await enqueuePrep({ kind: "pack", packId: pack.id, long: answers });
+  await logEvent(userId, "prep_pack_requested", { meta: { planId, variant, language, ...(size ? { scope: size } : {}) } });
   return pack;
 }
 
@@ -123,7 +132,8 @@ const L = {
   en: {
     subtitle: "Personalised Technical Interview Preparation",
     candidate: "Candidate", target: "Target", prepared: "Prepared", edition: "Edition",
-    variants: { QUESTIONS: "Questions only", HINTS: "Questions + hints", GUIDE: "Complete preparation guide", TOPICS: "Topic-wise preparation guide" },
+    variants: { QUESTIONS: "Questions only", HINTS: "Questions + hints", GUIDE: "Complete preparation guide", TOPICS: "Topic-wise preparation guide", ANSWERS: "Complete answers with examples & flowcharts" },
+    answers: { title: "Complete answers — top {n} questions", answer: "Answer", steps: "Step by step", why: "Why it works", tradeoffs: "Trade-offs", example: "Worked example", input: "Input", output: "Output", code: "Code", followUps: "Follow-up questions", interview: "Say it in an interview", illustrative: "Illustrative — not run", missing: "Answer not written yet — open this question in Prompters and press “Full answer”, then download again.", generated: "Generated" },
     byTopic: "Your preparation, topic by topic", topicWord: "Topic", startWith: "Start with", revise: "Revise these points", fromResume: "From your resume",
     yourPractice: "Your practice so far", notPractised: "Not practised yet", moreTopics: "More topics", contents: "Topics in this pack",
     how: "These questions were generated from YOUR resume and target. They are ranked by how likely an interviewer is to ask them. Prepare the INTENSE ones first.",
@@ -144,7 +154,8 @@ const L = {
   hinglish: {
     subtitle: "Personalised Technical Interview Preparation",
     candidate: "Candidate", target: "Target", prepared: "Prepared", edition: "Edition",
-    variants: { QUESTIONS: "Sirf questions", HINTS: "Questions + hints", GUIDE: "Complete preparation guide", TOPICS: "Topic-wise preparation guide" },
+    variants: { QUESTIONS: "Sirf questions", HINTS: "Questions + hints", GUIDE: "Complete preparation guide", TOPICS: "Topic-wise preparation guide", ANSWERS: "Poore answers — examples aur flowcharts ke saath" },
+    answers: { title: "Poore answers — top {n} questions", answer: "Answer", steps: "Step by step", why: "Ye kaam kyun karta hai", tradeoffs: "Trade-offs", example: "Example", input: "Input", output: "Output", code: "Code", followUps: "Follow-up questions", interview: "Interview mein aise boliye", illustrative: "Illustrative — run nahi kiya gaya", missing: "Is question ka answer abhi nahi likha gaya — Prompters mein question khol kar “Full answer” dabaiye, phir dobara download kijiye.", generated: "Generated" },
     byTopic: "Aapki preparation, topic ke hisaab se", topicWord: "Topic", startWith: "Yahan se shuru karein", revise: "Ye points revise karein", fromResume: "Aapke resume se",
     yourPractice: "Ab tak ki practice", notPractised: "Abhi practice nahi ki", moreTopics: "Aur topics", contents: "Is pack ke topics",
     how: "Ye questions AAPKE resume aur target ke basis par banaye gaye hain, aur is order mein rank kiye gaye hain ki interviewer inhe kitna likely poochega. Pehle INTENSE wale prepare kijiye.",
@@ -165,7 +176,8 @@ const L = {
   hi: {
     subtitle: "व्यक्तिगत तकनीकी इंटरव्यू तैयारी",
     candidate: "उम्मीदवार", target: "लक्ष्य", prepared: "तैयार किया गया", edition: "संस्करण",
-    variants: { QUESTIONS: "केवल प्रश्न", HINTS: "प्रश्न + संकेत", GUIDE: "संपूर्ण तैयारी गाइड", TOPICS: "विषय-वार तैयारी गाइड" },
+    variants: { QUESTIONS: "केवल प्रश्न", HINTS: "प्रश्न + संकेत", GUIDE: "संपूर्ण तैयारी गाइड", TOPICS: "विषय-वार तैयारी गाइड", ANSWERS: "पूरे उत्तर — उदाहरण और फ़्लोचार्ट के साथ" },
+    answers: { title: "पूरे उत्तर — शीर्ष {n} प्रश्न", answer: "उत्तर", steps: "चरण दर चरण", why: "यह क्यों काम करता है", tradeoffs: "Trade-offs", example: "उदाहरण", input: "इनपुट", output: "आउटपुट", code: "कोड", followUps: "आगे पूछे जाने वाले प्रश्न", interview: "इंटरव्यू में ऐसे बोलें", illustrative: "उदाहरण — चलाया नहीं गया", missing: "इस प्रश्न का उत्तर अभी नहीं लिखा गया — Prompters में प्रश्न खोलकर “Full answer” दबाएँ, फिर दोबारा डाउनलोड करें।", generated: "बनाया गया" },
     byTopic: "आपकी तैयारी, विषय के अनुसार", topicWord: "विषय", startWith: "यहाँ से शुरू करें", revise: "इन बातों को दोहराएँ", fromResume: "आपके resume से",
     yourPractice: "अब तक का अभ्यास", notPractised: "अभी अभ्यास नहीं किया", moreTopics: "अन्य विषय", contents: "इस पैक के विषय",
     how: "ये प्रश्न आपके resume और लक्ष्य के आधार पर बनाए गए हैं, और इस क्रम में रखे गए हैं कि interviewer इन्हें कितनी संभावना से पूछेगा। पहले INTENSE प्रश्न तैयार करें।",
@@ -376,6 +388,8 @@ export async function renderPack(input: {
   language: PackLanguage;
   questions: (PrepQuestion & { bestScore: number | null })[];
   date?: Date;
+  /** ANSWERS edition: how many top questions get their complete answer printed. */
+  scope?: number;
 }) {
   const l = L[input.language];
   const qs = [...input.questions].sort((a, b) => a.rank - b.rank);
@@ -383,7 +397,9 @@ export async function renderPack(input: {
   cover(doc, input, qs, l);
 
   const loc = (q: PrepQuestion) => localized(q, input.language) ?? localized(q, "en")!;
-  if (input.variant === "TOPICS") {
+  if (input.variant === "ANSWERS") {
+    renderAnswers(doc, qs.slice(0, input.scope ?? 25), loc, l, input.language);
+  } else if (input.variant === "TOPICS") {
     renderTopics(doc, qs, loc, l);
   } else {
     // Ranked Top N
@@ -433,8 +449,92 @@ export async function renderPack(input: {
     stepFlow(doc, steps);
   }
 
-  footer(doc, `Prompters · ${input.candidate} · ${input.title}`);
+  const stamp = (input.date ?? new Date()).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  footer(doc, `Prompters · ${input.candidate} · ${input.title} · ${l.answers.generated} ${stamp} IST`);
   return toBuffer(doc);
+}
+
+/** Small labelled heading inside an answer. */
+function answerLabel(doc: Doc, text: string, color: string = COLORS.accent) {
+  keepTogether(doc, 46);
+  doc.moveDown(0.3);
+  doc.y = textAt(doc, text.toUpperCase(), { x: doc.page.margins.left, y: doc.y, width: contentWidth(doc), size: 7.5, bold: true, color }) + 2;
+}
+
+/**
+ * "Complete answers" edition: for each top question, the saved full answer — the answer itself, the
+ * steps, why it works, a worked example, code, a drawn flowchart, answered follow-ups and the short
+ * interview version. Examples and code are labelled illustrative; a missing answer says so plainly.
+ */
+function renderAnswers(doc: Doc, qs: RankedQuestion[], loc: (q: PrepQuestion) => Localized, l: (typeof L)[PackLanguage], language: PackLanguage) {
+  const left = () => doc.page.margins.left;
+  doc.addPage();
+  heading(doc, l.answers.title.replace("{n}", String(qs.length)), { size: 16 });
+  qs.forEach((q, i) => {
+    if (i > 0) doc.addPage();
+    const t = loc(q);
+    const top = doc.y;
+    const pw = pill(doc, PRIORITY_NAME[q.priority], left(), top, COLORS[q.priority]);
+    textAt(doc, `${CATEGORY_NAME[q.category]} · ${q.skill} · L${q.difficulty}`, { x: left() + pw + 7, y: top + 1.5, width: contentWidth(doc) - pw - 7, size: 7.5, color: COLORS.subtle });
+    doc.y = top + 17;
+    write(doc, `${q.rank}. ${t.question}`, { size: 12, bold: true, gap: 0.4 });
+    const a: StructuredAnswer | null = savedAnswer(q.fullAnswers, language);
+    if (!a) {
+      write(doc, l.answers.missing, { size: 9.5, color: COLORS.INTENSE, gap: 0.3 });
+      write(doc, `${l.hint}: ${t.hint}`, { size: 9, color: COLORS.muted, gap: 0.2 });
+      write(doc, `${l.keyPoints}:`, { size: 9, bold: true });
+      for (const k of t.keyPoints) write(doc, `•  ${k}`, { size: 9, indent: 10 });
+      return;
+    }
+    answerLabel(doc, l.answers.answer);
+    write(doc, a.answer, { size: 10, gap: 0.2 });
+    if (a.solution.summary || a.solution.steps.length) {
+      answerLabel(doc, l.answers.steps);
+      if (a.solution.summary) write(doc, a.solution.summary, { size: 9.5, color: COLORS.muted, gap: 0.15 });
+      a.solution.steps.forEach((st, j) => write(doc, `${j + 1}.  ${st}`, { size: 9.5, indent: 8, gap: 0.05 }));
+    }
+    if (a.explanation.concept || a.explanation.whyItWorks) {
+      answerLabel(doc, l.answers.why);
+      if (a.explanation.concept) write(doc, a.explanation.concept, { size: 9.5, gap: 0.15 });
+      if (a.explanation.whyItWorks) write(doc, a.explanation.whyItWorks, { size: 9.5, gap: 0.15 });
+      if (a.explanation.tradeoffs.length) {
+        write(doc, `${l.answers.tradeoffs}:`, { size: 9, bold: true });
+        for (const x of a.explanation.tradeoffs) write(doc, `•  ${x}`, { size: 9, indent: 10 });
+      }
+    }
+    for (const ex of a.examples) {
+      answerLabel(doc, `${l.answers.example} — ${ex.title}`, COLORS.accent2);
+      const x = left();
+      const w = contentWidth(doc);
+      const parts = [ex.input && `${l.answers.input}: ${ex.input}`, ex.output && `${l.answers.output}: ${ex.output}`, ex.explanation].filter(Boolean) as string[];
+      const h = parts.reduce((n, p) => n + textHeight(doc, p, w - 20, 9) + 3, 0) + 22;
+      keepTogether(doc, h + 4);
+      const y0 = doc.y;
+      doc.save().roundedRect(x, y0, w, h, 5).fill(COLORS.card).restore();
+      let y = y0 + 6;
+      for (const p of parts) y = textAt(doc, p, { x: x + 10, y, width: w - 20, size: 9, color: COLORS.text }) + 3;
+      textAt(doc, l.answers.illustrative, { x: x + 10, y: y + 1, width: w - 20, size: 7, color: COLORS.subtle });
+      doc.y = y0 + h + 4;
+    }
+    for (const c of a.code) {
+      answerLabel(doc, l.answers.code);
+      codeBlock(doc, c.code, `${c.title || c.language} · ${c.language} · ${l.answers.illustrative}`);
+      for (const x of c.explanation) write(doc, `•  ${x}`, { size: 8.5, color: COLORS.muted, indent: 10 });
+    }
+    if (a.diagram) drawDiagram(doc, a.diagram as unknown as PdfDiagram);
+    if (a.followUps?.length) {
+      answerLabel(doc, l.answers.followUps);
+      for (const f of a.followUps) {
+        keepTogether(doc, 40);
+        write(doc, `Q. ${f.question}`, { size: 9.5, bold: true, gap: 0.05 });
+        write(doc, f.answer, { size: 9, color: COLORS.muted, indent: 10, gap: 0.2 });
+      }
+    }
+    if (a.interviewAnswer) {
+      answerLabel(doc, l.answers.interview, COLORS.INTENSE);
+      write(doc, `“${a.interviewAnswer}”`, { size: 9.5, gap: 0.2 });
+    }
+  });
 }
 
 /** Topic-wise edition: a contents page, then per topic a personal prep box followed by its questions. */
@@ -479,11 +579,21 @@ function renderTopics(doc: Doc, qs: RankedQuestion[], loc: (q: PrepQuestion) => 
 // ───────────────────────── worker ─────────────────────────
 
 /** Renders a pack from the database. Non-English packs need their translations saved first (ensureTranslations). */
-async function buildPdf(packId: string, opts: { translate?: boolean } = {}) {
+async function buildPdf(packId: string, opts: { translate?: boolean; withAnswers?: boolean } = {}) {
   const pack = await prisma.prepPack.findUniqueOrThrow({ where: { id: packId }, include: { plan: { include: { resume: true, user: { select: { name: true } } } } } });
   const questions = await prisma.prepQuestion.findMany({ where: { planId: pack.planId, rank: { gt: 0 } }, orderBy: { rank: "asc" }, include: { attempts: { select: { score: true } } } });
   const language = pack.language as PackLanguage;
   if (opts.translate && language !== "en") await ensureTranslations(questions, language);
+  if (opts.withAnswers && pack.variant === "ANSWERS") {
+    // Write (or reuse) the complete answers first, reporting progress the dialog shows.
+    const top = questions.slice(0, pack.scope ?? 25).map((q) => q.id);
+    const total = top.length;
+    await prisma.prepPack.update({ where: { id: pack.id }, data: { progress: { done: 0, missing: 0, total } } });
+    await ensureFullAnswers(top, language, (done, missing) => prisma.prepPack.update({ where: { id: pack.id }, data: { progress: { done, missing, total } } }).then(() => undefined));
+    const fresh = await prisma.prepQuestion.findMany({ where: { id: { in: top } }, select: { id: true, fullAnswers: true } });
+    const byId = new Map(fresh.map((f) => [f.id, f.fullAnswers]));
+    for (const q of questions) if (byId.has(q.id)) q.fullAnswers = byId.get(q.id)!;
+  }
   const parsed = resumeParsedSchema.safeParse(pack.plan.resume.parsed);
   return renderPack({
     candidate: (parsed.success && parsed.data.name) || pack.plan.user.name,
@@ -491,6 +601,7 @@ async function buildPdf(packId: string, opts: { translate?: boolean } = {}) {
     variant: pack.variant as PackVariant,
     language,
     questions: questions.map(({ attempts, ...q }) => ({ ...q, bestScore: attempts.length ? Math.max(...attempts.map((a) => a.score)) : null })),
+    scope: pack.scope ?? undefined,
   });
 }
 
@@ -501,7 +612,7 @@ export async function runPack(packId: string) {
   if (!count) return; // a duplicate or stale job: someone else has it, or it's done
   try {
     // Rendering here also proves the pack builds, even when it isn't kept (STORAGE_DRIVER=none).
-    const pdf = await buildPdf(pack.id, { translate: true });
+    const pdf = await buildPdf(pack.id, { translate: true, withAnswers: true });
     let key: string | null = null;
     if (fileStorageEnabled()) {
       key = `prep-packs/${pack.userId}/${pack.id}.pdf`;

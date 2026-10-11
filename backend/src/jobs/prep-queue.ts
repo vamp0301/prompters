@@ -5,7 +5,7 @@ export const PREP_QUEUE = "career-prep";
 /** PDF packs: separate from plan generation so a long plan never blocks a PDF. */
 export const PACK_QUEUE = "career-pack";
 
-export type PrepJob = { kind: "plan"; planId: string } | { kind: "pack"; packId: string } | { kind: "pipeline"; pipelineId: string } | { kind: "fullAnswer"; questionId: string; lang: "en" | "hinglish" | "hi" };
+export type PrepJob = { kind: "plan"; planId: string } | { kind: "pack"; packId: string; long?: boolean } | { kind: "pipeline"; pipelineId: string } | { kind: "fullAnswer"; questionId: string; lang: "en" | "hinglish" | "hi" } | { kind: "planAnswers"; planId: string };
 
 const queues = new Map<string, Queue<PrepJob>>();
 
@@ -27,9 +27,10 @@ const packQueue = () => queueFor(PACK_QUEUE);
 export async function enqueuePrep(job: PrepJob) {
   // Unique per enqueue: BullMQ silently ignores an add whose jobId still exists (kept completed/failed
   // jobs), which would make a re-queue after recovery a no-op.
-  const target = job.kind === "plan" ? job.planId : job.kind === "pack" ? job.packId : job.kind === "pipeline" ? job.pipelineId : `${job.questionId}-${job.lang}`;
+  const target = job.kind === "plan" || job.kind === "planAnswers" ? job.planId : job.kind === "pack" ? job.packId : job.kind === "pipeline" ? job.pipelineId : `${job.questionId}-${job.lang}`;
   // Project pipelines share the plan queue: both are long AI generations.
-  await (job.kind === "pack" ? packQueue() : prepQueue()).add(job.kind, job, { jobId: `${job.kind}-${target}-${Date.now()}` });
+  // A "Complete answers" pack writes many AI answers: it runs with the long jobs, never blocking quick PDFs.
+  await (job.kind === "pack" && !job.long ? packQueue() : prepQueue()).add(job.kind, job, { jobId: `${job.kind}-${target}-${Date.now()}` });
 }
 
 /** Plan/pack ids that currently have a live job (waiting, active, delayed…). */

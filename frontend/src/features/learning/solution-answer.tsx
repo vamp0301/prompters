@@ -1,11 +1,36 @@
 "use client";
 import { useState } from "react";
-import { AlertTriangle, BookOpen, Check, ChevronDown, Copy, Lightbulb, ShieldCheck } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, ChevronDown, Copy, Lightbulb, Pause, Play, ShieldCheck, Square, Volume2 } from "lucide-react";
 import { toast } from "sonner";
 import { CodeBlock } from "@/components/ui/code-editor";
 import { DiagramView } from "@/features/knowledge/diagram";
 import type { TutorAnswer } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
+import { answerScript, useReadAloud } from "./read-aloud";
+
+/** Listen / Pause / Stop: reads the answer aloud in an Indian female voice where the device has one. */
+function ListenButton({ answer }: { answer: TutorAnswer["structured"] }) {
+  const voice = useReadAloud();
+  if (!voice.supported) return null;
+  const btn = "inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-text";
+  if (voice.state === "idle")
+    return (
+      <button type="button" className={btn} onClick={() => voice.play(answerScript(answer))} aria-label="Listen to this answer">
+        <Volume2 className="size-3.5" aria-hidden /> Listen
+      </button>
+    );
+  return (
+    <span className="inline-flex items-center">
+      <button type="button" className={btn} onClick={voice.toggle} aria-label={voice.state === "playing" ? "Pause reading" : "Resume reading"}>
+        {voice.state === "playing" ? <Pause className="size-3.5" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
+        {voice.state === "playing" ? "Pause" : "Resume"}
+      </button>
+      <button type="button" className={btn} onClick={voice.stop} aria-label="Stop reading">
+        <Square className="size-3" aria-hidden /> Stop
+      </button>
+    </span>
+  );
+}
 
 /** Copies text and briefly shows a tick. */
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -62,7 +87,10 @@ export function SolutionAnswer({ data }: { data: TutorAnswer }) {
             {hints ? <Lightbulb className="size-3.5" aria-hidden /> : <Check className="size-3.5" aria-hidden />}
             {hints ? "Hint" : "Solution"}
           </span>
-          <CopyButton text={data.answer} label="Copy the whole answer" />
+          <span className="inline-flex items-center">
+            <ListenButton answer={a} />
+            <CopyButton text={data.answer} label="Copy the whole answer" />
+          </span>
         </div>
         <p className="text-[15px] font-medium leading-relaxed">{a.answer}</p>
         {a.solution.summary && <p className="mt-2 text-sm text-muted">{a.solution.summary}</p>}

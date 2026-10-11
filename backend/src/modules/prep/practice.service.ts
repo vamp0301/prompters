@@ -5,6 +5,7 @@ import { enqueuePrep } from "../../jobs/prep-queue.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
 import { AppError, badRequest, notFound } from "../../utils/errors.js";
+import { env } from "../../config/env.js";
 import { logEvent } from "../platform/events.js";
 import { turnScore } from "../career/interview.service.js";
 import { prompts } from "../career/prompts.js";
@@ -116,6 +117,17 @@ export async function requestFullAnswer(userId: string, planId: string, question
 export async function runFullAnswer(questionId: string, lang: FullAnswerLocale) {
   const claimed = await prisma.$executeRaw`UPDATE "PrepQuestion" SET "fullAnswers" = jsonb_set("fullAnswers", ARRAY[${lang}, 'status']::text[], '"RUNNING"'::jsonb) WHERE id = ${questionId} AND "fullAnswers" #>> ARRAY[${lang}, 'status']::text[] = 'QUEUED'`;
   if (!claimed) return; // duplicate or stale job
+  await writeFullAnswer(questionId, lang);
+}
+
+/** The AI service is down/busy or out of quota — not a problem with this question. */
+const unavailable = (e: unknown) => e instanceof AppError && (e.code === "AI_UPSTREAM_ERROR" || e.code === "AI_UNAVAILABLE");
+
+/**
+ * Writes and saves one complete answer (or records the failure, keeping any earlier answer readable).
+ * Shared by the Full answer job and the "Complete answers" PDF pack. Returns whether it is READY.
+ */
+export async function writeFullAnswer(questionId: string, lang: FullAnswerLocale, opts: { background?: boolean } = {}): Promise<"ready" | "failed" | "unavailable"> {
   const q = await prisma.prepQuestion.findUniqueOrThrow({ where: { id: questionId }, include: { plan: { select: { id: true, userId: true } } } });
   const previous = ((q.fullAnswers ?? {}) as Record<string, AnswerEntry>)[lang];
   try {
@@ -134,10 +146,67 @@ export async function runFullAnswer(questionId: string, lang: FullAnswerLocale) 
     );
     await setEntry(q.id, lang, { status: "READY", at: new Date().toISOString(), structured: result.structured, sources: result.sources, verification: { ...result.verification, retrieval: mode } });
     await logEvent(q.plan.userId, "prep_full_answer", { meta: { planId: q.plan.id, questionId: q.id, language: lang, grounded: result.verification.grounded } });
+    return "ready";
   } catch (e) {
+    // Background writing never leaves an error behind for an AI outage: the question keeps its button.
+    if (opts.background && unavailable(e)) {
+      // An earlier answer stays readable; otherwise the entry (incl. its RUNNING marker) goes away.
+      if (previous?.structured) await setEntry(q.id, lang, { ...previous, status: "READY", error: undefined });
+      else await prisma.$executeRaw`UPDATE "PrepQuestion" SET "fullAnswers" = "fullAnswers" - ${lang} WHERE id = ${q.id}`;
+      return "unavailable";
+    }
     logger.error({ err: e, questionId, lang }, "Full answer failed");
-    // A failed rewrite keeps the earlier answer readable.
     const keep = previous?.structured ? { structured: previous.structured, sources: previous.sources, verification: previous.verification } : {};
     await setEntry(q.id, lang, { ...keep, status: "FAILED", at: new Date().toISOString(), error: e instanceof AppError ? e.message : "Couldn't write the answer. Please try again." });
+    return "failed";
   }
+}
+
+/**
+ * Background: after a plan is ready, writes complete answers for its top questions in rank order, in
+ * the owner's language, one at a time. Skips answers already saved or being written; marks each as
+ * RUNNING while it is written (the page shows "writing"); stops quietly when the AI is unavailable.
+ */
+export async function runPlanAnswers(planId: string) {
+  const plan = await prisma.prepPlan.findUnique({ where: { id: planId }, select: { id: true, userId: true, status: true } });
+  if (!plan || plan.status !== "READY") return;
+  const profile = await prisma.userProfile.findUnique({ where: { userId: plan.userId }, select: { explanationLocale: true } });
+  const lang = fullAnswerLocale(profile?.explanationLocale);
+  const questions = await prisma.prepQuestion.findMany({ where: { planId, rank: { gt: 0 } }, orderBy: { rank: "asc" }, take: env.PREP_AUTO_FULL_ANSWERS, select: { id: true } });
+  let written = 0;
+  for (const { id } of questions) {
+    const q = await prisma.prepQuestion.findUnique({ where: { id }, select: { fullAnswers: true } });
+    if (!q) continue; // plan deleted meanwhile
+    const entry = ((q.fullAnswers ?? {}) as Record<string, AnswerEntry>)[lang];
+    if (entry?.status === "READY") continue;
+    if (entry && (entry.status === "QUEUED" || entry.status === "RUNNING") && Date.now() - Date.parse(entry.at) < STALE_MS) continue;
+    await setEntry(id, lang, { ...(entry?.structured ? entry : {}), status: "RUNNING", at: new Date().toISOString() });
+    const result = await writeFullAnswer(id, lang, { background: true });
+    if (result === "unavailable") {
+      logger.warn({ planId, written, remaining: questions.length - written }, "Automatic answers paused: AI unavailable or out of quota");
+      return;
+    }
+    if (result === "ready") written++;
+  }
+  logger.info({ planId, written }, "Automatic answers written");
+}
+
+/** The saved, READY answer for a question in a language (or null) — what the PDF prints. */
+export function savedAnswer(fullAnswers: Prisma.JsonValue, lang: FullAnswerLocale): StructuredAnswer | null {
+  const e = ((fullAnswers ?? {}) as Record<string, AnswerEntry>)[lang];
+  return e?.structured ?? null;
+}
+
+/** Answers already saved are reused; missing ones are written one at a time (bounded, quota-friendly). */
+export async function ensureFullAnswers(questionIds: string[], lang: FullAnswerLocale, onProgress: (done: number, missing: number) => Promise<void>) {
+  let done = 0;
+  let missing = 0;
+  for (const id of questionIds) {
+    const q = await prisma.prepQuestion.findUnique({ where: { id }, select: { fullAnswers: true } });
+    const ok = savedAnswer(q?.fullAnswers ?? {}, lang) ? true : (await writeFullAnswer(id, lang)) === "ready";
+    if (ok) done++;
+    else missing++;
+    await onProgress(done, missing);
+  }
+  return { done, missing };
 }

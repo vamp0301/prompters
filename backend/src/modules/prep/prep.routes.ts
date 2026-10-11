@@ -10,7 +10,7 @@ import { handler, param, parse } from "../../utils/http.js";
 import { ensureAiInterviewEnabled } from "../career/career.routes.js";
 import { CATEGORY_LABEL, DEFAULT_ALLOCATION, PREP_CATEGORIES, TOTAL_QUESTIONS } from "./allocation.js";
 import { createPlan, generationUsage, retryPlan } from "./generation.service.js";
-import { deletePackFiles, PACK_LANGUAGES, PACK_VARIANTS, packFile, requestPack } from "./pack.service.js";
+import { ANSWER_SCOPES, deletePackFiles, PACK_LANGUAGES, PACK_VARIANTS, packFile, requestPack } from "./pack.service.js";
 import { getFullAnswer, practice, PRACTICE_STATUSES, questionDetail, requestFullAnswer, setStatus } from "./practice.service.js";
 import { aiProvider } from "../../ai/provider.js";
 import { activeTimedAttempt } from "../quiz/quiz.service.js";
@@ -89,7 +89,7 @@ export function prepRoutes() {
   r.get("/:id", handler(async (req) => {
     const plan = await prisma.prepPlan.findFirst({
       where: { id: param(req, "id"), userId: currentUser(req).id },
-      include: { resume: { select: { id: true, label: true } }, job: { select: { id: true, title: true, company: true } }, packs: { orderBy: { createdAt: "desc" }, take: 20, select: { id: true, variant: true, language: true, status: true, error: true, createdAt: true } } },
+      include: { resume: { select: { id: true, label: true } }, job: { select: { id: true, title: true, company: true } }, packs: { orderBy: { createdAt: "desc" }, take: 20, select: { id: true, variant: true, language: true, status: true, error: true, scope: true, progress: true, createdAt: true } } },
     });
     if (!plan) throw notFound("Preparation plan");
     // Only published questions count: candidates still being checked are invisible.
@@ -212,16 +212,20 @@ export function prepRoutes() {
   // ───── Downloadable interview pack ─────
   r.post("/:id/packs", ai, handler(async (req, res) => {
     const me = currentUser(req);
-    const body = parse(z.object({ variant: z.enum(PACK_VARIANTS), language: z.enum(PACK_LANGUAGES).default("en") }), req.body);
-    if (body.language !== "en") await ensureAiInterviewEnabled(me.id);
+    const body = parse(
+      z.object({ variant: z.enum(PACK_VARIANTS), language: z.enum(PACK_LANGUAGES).default("en"), scope: z.coerce.number().refine((n) => (ANSWER_SCOPES as readonly number[]).includes(n), "Choose 10, 25, 50 or 100.").optional() }),
+      req.body,
+    );
+    // Translations and complete answers both use the AI.
+    if (body.language !== "en" || body.variant === "ANSWERS") await ensureAiInterviewEnabled(me.id);
     res.status(201);
-    return requestPack(me.id, param(req, "id"), body.variant, body.language);
+    return requestPack(me.id, param(req, "id"), body.variant, body.language, body.scope);
   }));
 
   r.get("/:id/packs/:packId", handler(async (req) => {
     const pack = await prisma.prepPack.findFirst({
       where: { id: param(req, "packId"), planId: param(req, "id"), userId: currentUser(req).id },
-      select: { id: true, variant: true, language: true, status: true, error: true, createdAt: true, completedAt: true },
+      select: { id: true, variant: true, language: true, status: true, error: true, scope: true, progress: true, createdAt: true, completedAt: true },
     });
     if (!pack) throw notFound("Interview pack");
     return pack;

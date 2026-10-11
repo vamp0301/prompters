@@ -86,6 +86,7 @@ How it's wired: the browser streams microphone audio **directly to Deepgram** us
 |---|---|---|
 | `GOOGLE_CLIENT_ID` | — | "Sign in with Google". Must equal the frontend's `NEXT_PUBLIC_GOOGLE_CLIENT_ID`. |
 | `PREP_DAILY_PLAN_LIMIT` | `3` | Top-100 plans per user per 24 h (each is ~20–25 Gemini calls) |
+| `PREP_AUTO_FULL_ANSWERS` | `100` | After a Top-100 plan is ready, the worker writes complete answers for this many top questions in the background (1 Gemini call each, ~40–80 s apiece), so students don't wait on "Full answer". On the free tier this is the biggest quota user: lower it (e.g. `25`) if daily limits are hit; `0` = answers only on request. When the AI is busy or out of quota the run stops quietly and the remaining questions keep their "Full answer" button. |
 | `RECORDING_RETENTION_DAYS` | `30` | Interview audio is deleted after this many days (only matters with `AUDIO_RECORDING=true`) |
 
 **Do not set:** `PORT` (Render sets it), `RATE_LIMIT_DISABLED`, `COOKIE_SECURE=false`, `SANDBOX_DRIVER=process`, `ML_*`.

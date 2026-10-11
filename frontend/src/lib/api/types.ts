@@ -1210,7 +1210,7 @@ export type PrepCategory = "GENERAL" | "SKILL" | "PROJECT" | "CLAIM" | "ACHIEVEM
 export type PrepPriority = "INTENSE" | "IMPORTANT" | "GOOD" | "MAY_BE_ASKED";
 export type PrepStatus = "QUEUED" | "RUNNING" | "READY" | "FAILED";
 export type PrepPracticeStatus = "NEW" | "PRACTICED" | "CONFIDENT";
-export type PrepPackVariant = "QUESTIONS" | "HINTS" | "GUIDE" | "TOPICS";
+export type PrepPackVariant = "QUESTIONS" | "HINTS" | "GUIDE" | "TOPICS" | "ANSWERS";
 export type PrepPackLanguage = "en" | "hinglish" | "hi";
 type StepState = "pending" | "running" | "done" | "failed";
 
@@ -1237,6 +1237,10 @@ export interface PrepPackItem {
   id: string;
   variant: PrepPackVariant;
   language: PrepPackLanguage;
+  /** ANSWERS edition: how many top questions get a complete answer. */
+  scope?: number | null;
+  /** ANSWERS edition: answers written so far. */
+  progress?: { done: number; missing: number; total: number } | null;
   status: PrepStatus;
   error: string | null;
   createdAt: string;

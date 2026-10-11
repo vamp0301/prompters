@@ -1088,8 +1088,12 @@ model PrepPack {
   plan        PrepPlan       @relation(fields: [planId], references: [id], onDelete: Cascade)
   userId      String
   user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  /// QUESTIONS | HINTS | GUIDE
+  /// QUESTIONS | HINTS | GUIDE | TOPICS | ANSWERS (complete answers with examples and flowcharts)
   variant     String
+  /// ANSWERS edition: how many top-ranked questions get a complete answer.
+  scope       Int?
+  /// ANSWERS edition: { done, total, missing } while answers are being written.
+  progress    Json?
   /// en | hinglish | hi
   language    String
   status      PrepPlanStatus @default(QUEUED)

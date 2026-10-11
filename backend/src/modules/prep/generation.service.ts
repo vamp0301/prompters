@@ -512,6 +512,8 @@ export async function runPlan(planId: string) {
     const published = nextRank - 1;
     await prisma.prepPlan.update({ where: { id: plan.id }, data: { status: "READY", completedAt: new Date() } });
     await logEvent(plan.userId, "prep_plan_ready", { meta: { planId: plan.id, questions: published, band: profile.band } });
+    // Write complete answers in the background so opening a question shows its answer straight away.
+    if (env.PREP_AUTO_FULL_ANSWERS > 0) await enqueuePrep({ kind: "planAnswers", planId: plan.id }).catch((err) => logger.warn({ err, planId: plan.id }, "Couldn't queue automatic answers"));
   } catch (e) {
     logger.error({ err: e, planId }, "Prep plan failed");
     for (const step of [progress.value.resume, progress.value.dedupe, progress.value.ranking, ...(progress.value.stages ?? [])]) if (step?.state === "running") step.state = "failed";

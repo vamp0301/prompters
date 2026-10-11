@@ -4,6 +4,7 @@ import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
 import { prisma } from "../src/lib/prisma.js";
 import { startPrepWorker } from "../src/workers/prep-worker.js";
+import { extractText, getDocumentProxy } from "unpdf";
 
 const fake = new FakeAI();
 const RESUME = [
@@ -120,4 +121,75 @@ describe("Top-100 full answers", () => {
     expect(failed.data).toMatchObject({ status: "FAILED", error: expect.stringMatching(/couldn't use/) });
     expect((await full(agent, planId, qid)).data.status).toBe("READY");
   });
+
+  it("downloads a Complete answers PDF: full answer, example, code, flowchart and follow-ups for the top questions", async () => {
+    const { agent } = await login();
+    const { planId } = await planWithQuestion(agent);
+    expect((await agent.post(`/api/career/prep/${planId}/packs`).send({ variant: "ANSWERS", language: "hinglish", scope: 7 })).status).toBe(400);
+    const before = fake.calls.filter((c) => c.task === "tutor_answer").length;
+    const req = await agent.post(`/api/career/prep/${planId}/packs`).send({ variant: "ANSWERS", language: "hinglish", scope: 10 });
+    expect(req.status).toBe(201);
+    expect(req.body.data).toMatchObject({ variant: "ANSWERS", scope: 10 });
+    const until = Date.now() + 30_000;
+    let pack = req.body.data;
+    while (Date.now() < until && !["READY", "FAILED"].includes(pack.status)) {
+      await new Promise((r) => setTimeout(r, 150));
+      pack = (await agent.get(`/api/career/prep/${planId}/packs/${req.body.data.id}`)).body.data;
+    }
+    expect(pack.status).toBe("READY");
+    expect(pack.progress).toEqual({ done: 10, missing: 0, total: 10 });
+    expect(fake.calls.filter((c) => c.task === "tutor_answer").length).toBe(before + 10);
+    const file = await agent.get(`/api/career/prep/${planId}/packs/${pack.id}/download`).buffer(true).parse((res, cb) => {
+      const parts: Buffer[] = [];
+      res.on("data", (b: Buffer) => parts.push(b));
+      res.on("end", () => cb(null, Buffer.concat(parts)));
+    });
+    expect(file.headers["content-type"]).toBe("application/pdf");
+    const { text } = await extractText(await getDocumentProxy(new Uint8Array(file.body as Buffer)), { mergePages: true });
+    expect(text).toContain("Poore answers"); // edition title
+    expect(text).toContain("Use a hash map"); // the answer itself
+    expect(text).toContain("[3, 1, 3]"); // worked example input
+    expect(text).toContain("new Set()"); // code
+    expect(text).toContain("Duplicate check"); // the flowchart's title
+    expect(text).toContain("Read next value"); // a flowchart node
+    expect(text).toContain("What if memory is limited?"); // answered follow-up
+    expect(text).toMatch(/Generated .* IST/);
+    // A second pack reuses every saved answer: no new AI calls.
+    const again = await agent.post(`/api/career/prep/${planId}/packs`).send({ variant: "ANSWERS", language: "hinglish", scope: 10 });
+    expect(again.body.data.id).not.toBe(pack.id);
+    let p2 = again.body.data;
+    while (!["READY", "FAILED"].includes(p2.status)) {
+      await new Promise((r) => setTimeout(r, 150));
+      p2 = (await agent.get(`/api/career/prep/${planId}/packs/${again.body.data.id}`)).body.data;
+    }
+    expect(p2.status).toBe("READY");
+    expect(fake.calls.filter((c) => c.task === "tutor_answer").length).toBe(before + 10);
+  });
+
+  it("still builds the PDF when some answers can't be written, and says which", async () => {
+    const { agent } = await login();
+    const { planId } = await planWithQuestion(agent);
+    const real = fake.complete.bind(fake);
+    let n = 0;
+    // The first 5 answers succeed; after that every call fails (including the engine's one retry).
+    fake.complete = async (system: string, user: string) => (system.includes("[task:tutor_answer]") && ++n > 5 ? "not json" : real(system, user));
+    const req = await agent.post(`/api/career/prep/${planId}/packs`).send({ variant: "ANSWERS", language: "en", scope: 10 });
+    let pack = req.body.data;
+    while (!["READY", "FAILED"].includes(pack.status)) {
+      await new Promise((r) => setTimeout(r, 150));
+      pack = (await agent.get(`/api/career/prep/${planId}/packs/${req.body.data.id}`)).body.data;
+    }
+    fake.complete = real;
+    expect(pack.status).toBe("READY");
+    expect(pack.progress.done + pack.progress.missing).toBe(10);
+    expect(pack.progress).toEqual({ done: 5, missing: 5, total: 10 });
+    const file = await agent.get(`/api/career/prep/${planId}/packs/${pack.id}/download`).buffer(true).parse((res, cb) => {
+      const parts: Buffer[] = [];
+      res.on("data", (b: Buffer) => parts.push(b));
+      res.on("end", () => cb(null, Buffer.concat(parts)));
+    });
+    const { text } = await extractText(await getDocumentProxy(new Uint8Array(file.body as Buffer)), { mergePages: true });
+    expect(text).toContain("Answer not written yet");
+  });
 });
+

@@ -26,11 +26,12 @@ function PackForm({ plan }: { plan: PrepPlanDetail }) {
   const qc = useQueryClient();
   const [variant, setVariant] = useState<PrepPackVariant>("GUIDE");
   const [language, setLanguage] = useState<PrepPackLanguage>("en");
+  const [scope, setScope] = useState<number>(25);
   const [packId, setPackId] = useState<string | null>(null);
 
   const request = useMutation({
     meta: { silent: true },
-    mutationFn: () => api.post<PrepPackItem>(`/career/prep/${plan.id}/packs`, { variant, language }),
+    mutationFn: () => api.post<PrepPackItem>(`/career/prep/${plan.id}/packs`, { variant, language, ...(variant === "ANSWERS" ? { scope } : {}) }),
     onSuccess: (p) => setPackId(p.id),
   });
   const pack = useQuery({
@@ -62,6 +63,21 @@ function PackForm({ plan }: { plan: PrepPlanDetail }) {
         ))}
       </fieldset>
 
+      {variant === "ANSWERS" && (
+        <fieldset>
+          <legend className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">How many questions</legend>
+          <div className="flex flex-wrap gap-2">
+            {[10, 25, 50, 100].map((n) => (
+              <label key={n} className={cn("cursor-pointer rounded-md border px-3 py-1.5 text-xs", scope === n ? "border-accent bg-accent-soft text-accent" : "border-border text-muted hover:text-text")}>
+                <input type="radio" name="scope" value={n} checked={scope === n} onChange={() => setScope(n)} className="sr-only" disabled={busy} />
+                Top {n}
+              </label>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-subtle">Answers you already opened are reused instantly. Each missing answer takes about a minute to write, so Top {scope} can take up to ~{scope} minutes on the free AI tier — you can close this and come back.</p>
+        </fieldset>
+      )}
+
       <fieldset>
         <legend className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">Language</legend>
         <div className="flex flex-wrap gap-2">
@@ -90,6 +106,7 @@ function PackForm({ plan }: { plan: PrepPlanDetail }) {
       {busy && (
         <p role="status" className="flex items-center gap-2 text-xs text-muted">
           <Loader2 className="size-3.5 animate-spin text-accent" aria-hidden /> Building your {variantLabel(variant).toLowerCase()} in {languageLabel(language)}…
+          {p?.progress && <span className="tabular-nums"> {p.progress.done + p.progress.missing} / {p.progress.total} answers{p.progress.missing ? ` (${p.progress.missing} couldn't be written)` : ""}</span>}
         </p>
       )}
       {p?.status === "READY" && (

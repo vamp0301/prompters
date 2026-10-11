@@ -55,6 +55,11 @@ const schema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   /** Top-100 plan generations allowed per user per rolling 24 hours (each costs ~20–25 model calls). */
   PREP_DAILY_PLAN_LIMIT: z.coerce.number().int().min(1).max(100).default(3),
+  /**
+   * After a Top-100 plan is ready, the worker writes complete answers for this many top questions in
+   * the background (one AI call each), so students don't wait on "Full answer". 0 = only on request.
+   */
+  PREP_AUTO_FULL_ANSWERS: z.coerce.number().int().min(0).max(100).default(100),
   /** Interview audio is deleted automatically after this many days. */
   RECORDING_RETENTION_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   /** Offer to keep interview answer audio (with consent). Off by default; needs file storage. */

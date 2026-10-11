@@ -15,3 +15,5 @@ process.env.STORAGE_DIR = `${process.env.TMPDIR ?? "/tmp"}/prompters-test-storag
 process.env.AUDIO_RECORDING = "true";
 // Never call a real embedding API from tests; tests/semantic.test.ts injects a deterministic provider.
 process.env.EMBEDDINGS_PROVIDER = "none";
+// Automatic background answers are tested in tests/auto-answers.test.ts; off elsewhere (exact AI call counts).
+process.env.PREP_AUTO_FULL_ANSWERS = "0";

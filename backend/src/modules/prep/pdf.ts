@@ -343,3 +343,226 @@ export function toBuffer(doc: Doc): Promise<Buffer> {
     doc.end();
   });
 }
+
+// ───────────────────────── code blocks ─────────────────────────
+
+/**
+ * Monospace code on a tinted panel. Long lines wrap (indentation kept), and a long block continues
+ * on the next page with its own panel. Non-Latin lines fall back to the text fonts.
+ */
+export function codeBlock(doc: Doc, code: string, label?: string) {
+  const left = doc.page.margins.left;
+  const width = contentWidth(doc);
+  const size = 7.8;
+  const lineH = 10.2;
+  doc.font("Courier").fontSize(size);
+  const maxChars = Math.max(20, Math.floor((width - 16) / doc.widthOfString("M")));
+  const lines: string[] = [];
+  for (const raw of code.replace(/\t/g, "  ").split("\n")) {
+    if (raw.length <= maxChars) lines.push(raw);
+    else {
+      const indent = raw.match(/^\s*/)![0].slice(0, 12);
+      for (let i = 0; i < raw.length; i += maxChars - indent.length - 2) lines.push((i ? `${indent}  ` : "") + raw.slice(i, i + maxChars - (i ? indent.length + 2 : 0)));
+    }
+  }
+  if (label) {
+    keepTogether(doc, 40);
+    doc.y = textAt(doc, label, { x: left, y: doc.y, width, size: 7.5, bold: true, color: COLORS.muted }) + 2;
+  }
+  let i = 0;
+  while (i < lines.length) {
+    keepTogether(doc, lineH * Math.min(3, lines.length - i) + 12);
+    const room = Math.floor((doc.page.height - doc.page.margins.bottom - doc.y - 12) / lineH);
+    const chunk = lines.slice(i, i + Math.max(1, room));
+    const h = chunk.length * lineH + 10;
+    const y = doc.y;
+    doc.save().roundedRect(left, y, width, h, 4).fill("#f3f1ec").restore();
+    doc.save().rect(left, y, 2.5, h).fill(COLORS.accent).restore();
+    chunk.forEach((line, j) => {
+      const ty = y + 5 + j * lineH;
+      // eslint-disable-next-line no-control-regex
+      if (/[^\x00-\x7F]/.test(line)) textAt(doc, line, { x: left + 9, y: ty, width: width - 14, size: size - 0.3, color: COLORS.text });
+      else doc.font("Courier").fontSize(size).fillColor(COLORS.text).text(line, left + 9, ty, { lineBreak: false });
+    });
+    doc.y = y + h + 4;
+    i += chunk.length;
+  }
+  doc.font("regular");
+  doc.x = left;
+}
+
+// ───────────────────────── diagrams ─────────────────────────
+
+/** The diagram shapes produced by the answer engine (see career/knowledge.schemas.ts). */
+export type PdfDiagram =
+  | { kind: "flow"; title: string; objective: string; steps: { label: string; note?: string; branches?: { label: string; steps: string[] }[] }[] }
+  | { kind: "architecture"; title: string; objective: string; layers: { label?: string; nodes: { label: string; note?: string }[] }[] }
+  | { kind: "comparison"; title: string; objective: string; left: { title: string; points: string[] }; right: { title: string; points: string[] } }
+  | { kind: "timeline"; title: string; objective: string; actors: string[]; events: { from: string; to: string; label: string }[] }
+  | { kind: "state"; title: string; objective: string; states: string[]; transitions: { from: string; to: string; label?: string }[] }
+  | { kind: "decision"; title: string; objective: string; question: string; branches: { answer: string; result?: string; question?: string }[] };
+
+function box(doc: Doc, x: number, y: number, w: number, label: string, note: string | undefined, color: string) {
+  const inner = w - 12;
+  const h = 10 + textHeight(doc, label, inner, 8.5, true) + (note ? textHeight(doc, note, inner, 7) + 2 : 0);
+  doc.save().roundedRect(x, y, w, h, 5).fill("#ffffff").restore();
+  doc.save().lineWidth(1).strokeColor(color).roundedRect(x, y, w, h, 5).stroke().restore();
+  const ty = textAt(doc, label, { x: x + 6, y: y + 5, width: inner, size: 8.5, bold: true, color: COLORS.ink, align: "center" });
+  if (note) textAt(doc, note, { x: x + 6, y: ty + 1, width: inner, size: 7, color: COLORS.muted, align: "center" });
+  return h;
+}
+const boxHeight = (doc: Doc, w: number, label: string, note?: string) => 10 + textHeight(doc, label, w - 12, 8.5, true) + (note ? textHeight(doc, note, w - 12, 7) + 2 : 0);
+
+function downArrow(doc: Doc, x: number, y1: number, y2: number, color: string) {
+  doc.save().lineWidth(1.2).strokeColor(color).moveTo(x, y1).lineTo(x, y2 - 4).stroke();
+  doc.moveTo(x, y2).lineTo(x - 3.5, y2 - 5).lineTo(x + 3.5, y2 - 5).fill(color).restore();
+}
+
+/** Height a diagram will take, so it is never split across pages. */
+function diagramHeight(doc: Doc, d: PdfDiagram, width: number): number {
+  switch (d.kind) {
+    case "flow":
+      return d.steps.reduce((h, s) => h + boxHeight(doc, Math.min(300, width), s.label, s.note) + 16 + (s.branches?.length ? s.branches.length * 14 : 0), 0);
+    case "architecture": {
+      return d.layers.reduce((h, l) => {
+        const w = (width - 80 - (l.nodes.length - 1) * 8) / Math.max(1, l.nodes.length);
+        return h + Math.max(...l.nodes.map((n) => boxHeight(doc, w, n.label, n.note))) + 18;
+      }, 0);
+    }
+    case "comparison": {
+      const w = (width - 12) / 2;
+      const col = (c: { title: string; points: string[] }) => 22 + c.points.reduce((h, p) => h + textHeight(doc, `• ${p}`, w - 14, 8) + 2, 0);
+      return Math.max(col(d.left), col(d.right)) + 6;
+    }
+    case "timeline":
+      return 30 + d.events.length * 24 + 8;
+    case "state":
+      return 34 * Math.ceil(d.states.length / 4) + d.transitions.length * 12 + 10;
+    case "decision":
+      return 40 + Math.max(...d.branches.map((b) => boxHeight(doc, (width - (d.branches.length - 1) * 10) / d.branches.length, b.answer, b.result ?? b.question))) + 10;
+  }
+}
+
+/** Draws a teaching diagram natively (vector, readable at A4) with its title and caption. */
+export function drawDiagram(doc: Doc, d: PdfDiagram) {
+  const left = doc.page.margins.left;
+  const width = contentWidth(doc);
+  const body = diagramHeight(doc, d, width);
+  const caption = textHeight(doc, d.objective, width - 24, 7.5);
+  keepTogether(doc, Math.min(body + caption + 46, doc.page.height - doc.page.margins.top - doc.page.margins.bottom - 10));
+  const top = doc.y;
+  doc.y = textAt(doc, d.title, { x: left + 10, y: top + 8, width: width - 20, size: 9.5, bold: true, color: COLORS.ink }) + 6;
+  let y = doc.y;
+  switch (d.kind) {
+    case "flow": {
+      const w = Math.min(300, width - 20);
+      const x = left + (width - w) / 2;
+      d.steps.forEach((s, i) => {
+        const color = PALETTE[i % PALETTE.length];
+        const h = box(doc, x, y, w, `${i + 1}. ${s.label}`, s.note, color);
+        y += h;
+        for (const b of s.branches ?? []) {
+          y = textAt(doc, `↳ ${b.label}: ${b.steps.join(" → ")}`, { x: x + 10, y: y + 2, width: w - 10, size: 7, color: COLORS.muted }) + 1;
+        }
+        if (i < d.steps.length - 1) {
+          downArrow(doc, x + w / 2, y + 2, y + 14, color);
+          y += 16;
+        }
+      });
+      y += 6;
+      break;
+    }
+    case "architecture": {
+      d.layers.forEach((l, i) => {
+        const color = PALETTE[i % PALETTE.length];
+        const labelW = 70;
+        const w = (width - labelW - 10 - (l.nodes.length - 1) * 8) / Math.max(1, l.nodes.length);
+        const h = Math.max(...l.nodes.map((n) => boxHeight(doc, w, n.label, n.note)));
+        if (l.label) textAt(doc, l.label, { x: left + 4, y: y + h / 2 - 5, width: labelW - 6, size: 7.5, bold: true, color });
+        l.nodes.forEach((n, j) => box(doc, left + labelW + j * (w + 8), y, w, n.label, n.note, color));
+        y += h;
+        if (i < d.layers.length - 1) {
+          downArrow(doc, left + labelW + (width - labelW) / 2, y + 2, y + 14, color);
+          y += 16;
+        }
+      });
+      y += 6;
+      break;
+    }
+    case "comparison": {
+      const w = (width - 12) / 2;
+      const cols = [d.left, d.right];
+      const hs = cols.map((c, i) => {
+        const x = left + i * (w + 12);
+        let ty = y + 6;
+        ty = textAt(doc, c.title, { x: x + 8, y: ty, width: w - 16, size: 9, bold: true, color: PALETTE[i] }) + 3;
+        for (const p of c.points) ty = textAt(doc, `• ${p}`, { x: x + 8, y: ty, width: w - 14, size: 8, color: COLORS.text }) + 2;
+        return ty - y + 6;
+      });
+      const h = Math.max(...hs);
+      cols.forEach((_, i) => doc.save().lineWidth(1).strokeColor(PALETTE[i]).roundedRect(left + i * (w + 12), y, w, h, 5).stroke().restore());
+      y += h + 6;
+      break;
+    }
+    case "timeline": {
+      const n = d.actors.length;
+      const colW = width / n;
+      const xOf = (a: string) => left + colW * Math.max(0, d.actors.findIndex((x) => x.toLowerCase() === a.toLowerCase())) + colW / 2;
+      d.actors.forEach((a, i) => {
+        const x = left + i * colW + 6;
+        doc.save().roundedRect(x, y, colW - 12, 18, 4).fill(PALETTE[i % PALETTE.length]).restore();
+        textAt(doc, a, { x, y: y + 4.5, width: colW - 12, size: 7.5, bold: true, color: "#ffffff", align: "center" });
+      });
+      const lineTop = y + 18;
+      y += 26;
+      const lineBottom = y + d.events.length * 24;
+      d.actors.forEach((a) => doc.save().lineWidth(0.6).dash(2, { space: 2 }).strokeColor(COLORS.subtle).moveTo(xOf(a), lineTop).lineTo(xOf(a), lineBottom).stroke().undash().restore());
+      d.events.forEach((e, i) => {
+        const x1 = xOf(e.from);
+        const x2 = xOf(e.to);
+        const ay = y + 14;
+        const color = PALETTE[i % PALETTE.length];
+        textAt(doc, `${i + 1}. ${e.label}`, { x: Math.min(x1, x2) + 4, y: y + 2, width: Math.max(80, Math.abs(x2 - x1) - 8), size: 7, color: COLORS.ink });
+        if (x1 === x2) doc.save().lineWidth(1.1).strokeColor(color).moveTo(x1, ay).lineTo(x1 + 18, ay).lineTo(x1 + 18, ay + 6).lineTo(x1 + 3, ay + 6).stroke().restore();
+        else {
+          const dir = x2 > x1 ? 1 : -1;
+          doc.save().lineWidth(1.1).strokeColor(color).moveTo(x1, ay).lineTo(x2 - dir * 4, ay).stroke();
+          doc.moveTo(x2, ay).lineTo(x2 - dir * 5, ay - 3.5).lineTo(x2 - dir * 5, ay + 3.5).fill(color).restore();
+        }
+        y += 24;
+      });
+      y += 8;
+      break;
+    }
+    case "state": {
+      const per = 4;
+      const w = (width - (per - 1) * 10) / per;
+      d.states.forEach((st, i) => {
+        const x = left + (i % per) * (w + 10);
+        const sy = y + Math.floor(i / per) * 34;
+        doc.save().roundedRect(x, sy, w, 26, 13).fill(PALETTE[i % PALETTE.length]).restore();
+        textAt(doc, st, { x: x + 4, y: sy + 8, width: w - 8, size: 7.5, bold: true, color: "#ffffff", align: "center" });
+      });
+      y += 34 * Math.ceil(d.states.length / per) + 2;
+      for (const t of d.transitions) y = textAt(doc, `${t.from} → ${t.to}${t.label ? `  (${t.label})` : ""}`, { x: left + 10, y, width: width - 20, size: 7.5, color: COLORS.text }) + 2;
+      y += 6;
+      break;
+    }
+    case "decision": {
+      const qw = Math.min(320, width - 20);
+      const qh = box(doc, left + (width - qw) / 2, y, qw, d.question, undefined, COLORS.accent2);
+      y += qh;
+      const n = d.branches.length;
+      const w = (width - (n - 1) * 10) / n;
+      downArrow(doc, left + width / 2, y + 2, y + 14, COLORS.accent2);
+      y += 16;
+      const hs = d.branches.map((b, i) => box(doc, left + i * (w + 10), y, w, b.answer, b.result ?? b.question, PALETTE[i % PALETTE.length]));
+      y += Math.max(...hs) + 8;
+      break;
+    }
+  }
+  doc.y = textAt(doc, d.objective, { x: left + 10, y, width: width - 24, size: 7.5, color: COLORS.muted }) + 6;
+  doc.save().lineWidth(0.6).strokeColor(COLORS.rule).roundedRect(left, top, width, doc.y - top, 6).stroke().restore();
+  doc.y += 8;
+  doc.x = left;
+}

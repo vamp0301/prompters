@@ -29,6 +29,7 @@ export const PACK_VARIANTS: { value: PrepPackVariant; label: string; description
   { value: "QUESTIONS", label: "Questions only", description: "All questions ranked by likelihood, with priority, category and skill." },
   { value: "HINTS", label: "Questions + hints", description: "Each question with a short nudge towards a strong answer." },
   { value: "GUIDE", label: "Complete preparation guide", description: "Hints, why you'll be asked, resume evidence, key points, follow-ups, skills to revise and a 7-day plan." },
+  { value: "ANSWERS", label: "Complete answers — examples & flowcharts", description: "Every question's full model answer: step-by-step solution, why it works, a worked example, code, a drawn flowchart, follow-up questions with answers, and the short interview version." },
   { value: "TOPICS", label: "Topic-wise preparation guide", description: "Questions split by topic. Each topic opens with your plan: where to start, the points to revise, your resume lines and your practice so far." },
 ];
 
