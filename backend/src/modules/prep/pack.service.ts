@@ -61,9 +61,9 @@ export async function packFile(userId: string, planId: string, packId: string) {
   const pack = await prisma.prepPack.findFirst({ where: { id: packId, planId, userId }, include: { plan: { select: { title: true } } } });
   if (!pack) throw notFound("Interview pack");
   if (pack.status !== "READY") throw conflict("This pack isn't ready yet.");
-  // Without file storage (or if a stored copy is gone) the PDF is rebuilt from the saved plan and translations.
+  // Stored file → the bytes kept on the row (no file storage) → rebuilt from the saved plan (older packs).
   const stored = pack.storageKey ? await storage().get(pack.storageKey) : null;
-  const body = stored?.body ?? (await buildPdf(pack.id));
+  const body = stored?.body ?? (pack.pdf ? Buffer.from(pack.pdf) : await buildPdf(pack.id));
   const slug = pack.plan.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "interview";
   return { body, fileName: `prompters-${slug}-${pack.variant.toLowerCase()}-${pack.language}.pdf` };
 }
@@ -618,7 +618,9 @@ export async function runPack(packId: string) {
       key = `prep-packs/${pack.userId}/${pack.id}.pdf`;
       await storage().put(key, pdf, "application/pdf");
     }
-    await prisma.prepPack.update({ where: { id: pack.id }, data: { status: "READY", storageKey: key, completedAt: new Date() } });
+    // Without file storage the bytes live on the row: downloads are instant (re-rendering a long pack
+    // on a small CPU took ~80 s live, close to the 120 s proxy limit).
+    await prisma.prepPack.update({ where: { id: pack.id }, data: { status: "READY", storageKey: key, pdf: key ? null : new Uint8Array(pdf), completedAt: new Date() } });
   } catch (e) {
     logger.error({ err: e, packId }, "Prep pack failed");
     await prisma.prepPack.update({ where: { id: packId }, data: { status: "FAILED", error: e instanceof AppError ? e.message : "Couldn't build the PDF. Please try again." } });

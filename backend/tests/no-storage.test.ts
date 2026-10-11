@@ -97,7 +97,7 @@ describe("STORAGE_DRIVER=none", () => {
     expect((await agent.delete(`/api/career/sessions/${sessionId}/recordings`)).body.data.deleted).toBe(0);
   });
 
-  it("builds PDF packs on download instead of storing them", async () => {
+  it("keeps finished PDFs on the pack row and serves those exact bytes (no file storage, no re-render)", async () => {
     const { agent } = await login();
     const other = await login();
     const resumeId = (await uploadResume(agent)).body.data.id;
@@ -108,7 +108,9 @@ describe("STORAGE_DRIVER=none", () => {
       const req = await agent.post(`/api/career/prep/${plan.id}/packs`).send({ variant: "GUIDE", language });
       const pack = await waitFor(() => agent.get(`/api/career/prep/${plan.id}/packs/${req.body.data.id}`).then((r) => r.body.data), (p) => p.status === "READY" || p.status === "FAILED");
       expect(pack.status).toBe("READY");
-      expect((await prisma.prepPack.findUniqueOrThrow({ where: { id: pack.id } })).storageKey).toBeNull();
+      const row = await prisma.prepPack.findUniqueOrThrow({ where: { id: pack.id } });
+      expect(row.storageKey).toBeNull();
+      expect(row.pdf?.length).toBeGreaterThan(1000);
       const file = await agent.get(`/api/career/prep/${plan.id}/packs/${pack.id}/download`).buffer(true).parse((res, cb) => {
         const parts: Buffer[] = [];
         res.on("data", (b: Buffer) => parts.push(b));
@@ -116,6 +118,8 @@ describe("STORAGE_DRIVER=none", () => {
       });
       expect(file.status).toBe(200);
       expect((file.body as Buffer).subarray(0, 5).toString()).toBe("%PDF-");
+      // The download is the stored PDF byte for byte (a re-render would differ, e.g. in its timestamp).
+      expect(Buffer.compare(file.body as Buffer, Buffer.from(row.pdf!))).toBe(0);
       expect((await other.agent.get(`/api/career/prep/${plan.id}/packs/${pack.id}/download`)).status).toBe(404);
     }
     // Downloading again doesn't call the model: translations were saved by the worker.

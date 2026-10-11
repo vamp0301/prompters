@@ -1094,6 +1094,9 @@ model PrepPack {
   scope       Int?
   /// ANSWERS edition: { done, total, missing } while answers are being written.
   progress    Json?
+  /// The finished PDF, kept when there is no file storage (STORAGE_DRIVER=none) so a download is
+  /// instant instead of re-rendering on a slow CPU. ~100 KB; deleted with its plan.
+  pdf         Bytes?
   /// en | hinglish | hi
   language    String
   status      PrepPlanStatus @default(QUEUED)
