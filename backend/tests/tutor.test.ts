@@ -3,7 +3,7 @@ import { login, resetDb, seedFixture } from "./helpers.js";
 import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
 import { prisma } from "../src/lib/prisma.js";
-import { keywords, retrieve, verify, answerSchema } from "../src/ai/answer.js";
+import { keywords, retrieve, verify, answerSchema, guessLanguage } from "../src/ai/answer.js";
 
 const fake = new FakeAI();
 beforeAll(async () => {
@@ -78,6 +78,18 @@ describe("solution-first tutor", () => {
     const { answer, verification } = verify(raw, []);
     expect(verification).toMatchObject({ grounded: false, inventedSources: 1, sourcesRetrieved: 0 });
     expect(answer.assumptions[0]).toMatch(/general knowledge/);
+  });
+
+  it("labels code it wasn't told the language of", () => {
+    expect(guessLanguage("import json\n\ndef load():\n    data = {}\n    return data\n")).toBe("python");
+    expect(guessLanguage("const x = () => 1;")).toBe("javascript");
+    expect(guessLanguage("SELECT * FROM notes WHERE user_id = $1")).toBe("sql");
+    expect(guessLanguage("$ npm install express")).toBe("bash");
+    expect(guessLanguage("# My CLI\nRun it and see")).toBe("text");
+    // Shapes models really send: a bare string, a list of strings, or objects.
+    const a = answerSchema.parse({ answer: "x", code: "def f():\n    return 1" });
+    expect(a.code).toEqual([expect.objectContaining({ language: "python", code: "def f():\n    return 1" })]);
+    expect(answerSchema.parse({ answer: "x", code: ["const a = 1;", { snippet: "let b = 2;" }] }).code.map((c) => c.language)).toEqual(["javascript", "javascript"]);
   });
 
   it("extracts useful search terms", () => {

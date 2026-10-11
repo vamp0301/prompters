@@ -12,6 +12,7 @@ import { ErrorState, PageSkeleton } from "@/components/ui/misc";
 import { Progress, ScoreRing } from "@/components/ui/progress";
 import { WorkStatusBadge } from "@/features/shared/status-badge";
 import { api } from "@/lib/api/client";
+import { BuildPipeline } from "./build-pipeline";
 import type { ProjectDetail, ProjectHintResult, ProjectSubmitResult } from "@/lib/api/types";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -182,6 +183,8 @@ function ProjectWork({ project, result, onResult }: { project: ProjectDetail; re
           <CheckList items={project.milestones} label="Milestones" initialDone={milestonesDone} onChange={setMilestonesDone} />
         </CardBody>
       </Card>
+
+      <BuildPipeline project={project} />
 
       <Card>
         <CardHeader title="Hints" />

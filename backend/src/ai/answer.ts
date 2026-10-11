@@ -84,17 +84,48 @@ export async function retrieve(topicId: string, question: string, locale: string
 }
 
 /** Model output is forgiving: object items become text and long lists are cut, never thrown away whole. */
-const toText = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : v && typeof v === "object" ? Object.values(v).filter((x) => typeof x === "string" || typeof x === "number").join(" — ") : "").trim();
-const list = (max: number, n: number) =>
+export const toText = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : v && typeof v === "object" ? Object.values(v).filter((x) => typeof x === "string" || typeof x === "number").join(" — ") : "").trim();
+export const list = (max: number, n: number) =>
   z.unknown().transform((v) => (Array.isArray(v) ? v : typeof v === "string" && v.trim() ? [v] : []).map(toText).filter(Boolean).slice(0, n).map((x) => x.slice(0, max)));
-const upTo = <T extends z.ZodTypeAny>(item: T, n: number) => z.unknown().transform((v) => (Array.isArray(v) ? v : []).flatMap((x) => { const r = item.safeParse(x); return r.success ? [r.data as z.infer<T>] : []; }).slice(0, n));
+export const upTo = <T extends z.ZodTypeAny>(item: T, n: number) => z.unknown().transform((v) => (Array.isArray(v) ? v : []).flatMap((x) => { const r = item.safeParse(x); return r.success ? [r.data as z.infer<T>] : []; }).slice(0, n));
+
+/** Guesses a code block's language when the model doesn't say. */
+export const guessLanguage = (code: string) => {
+  const js = /\b(function|const|let|var)\b|=>|require\(|^\s*import .* from ['"]/m.test(code);
+  const py = /^\s*(def |class \w+.*:\s*$|import \w+|from [\w.]+ import|if __name__)|\bprint\(|\belif\b/m.test(code);
+  if (py && !js) return "python";
+  if (js) return "javascript";
+  if (/^\s*(SELECT|CREATE|INSERT|UPDATE)\b/im.test(code)) return "sql";
+  if (/^\s*</.test(code)) return "html";
+  if (/^\s*(\$ |npm |pip |python |node |curl |git )/m.test(code)) return "bash";
+  return "text";
+};
+
+const codeItem = z.object({
+  language: z.coerce.string().trim().default(""),
+  title: z.coerce.string().trim().transform((x) => x.slice(0, 120)).default(""),
+  code: z.string().trim().min(1).transform((x) => x.slice(0, 6000)),
+  explanation: list(300, 8),
+});
+/** Code as models actually send it: a list of {language,title,code}, a list of strings, or one string. */
+export const codeBlocks = (n: number) =>
+  z.unknown().transform((v) => {
+    const items = Array.isArray(v) ? v : v === undefined || v === null ? [] : [v];
+    return items
+      .map((x) => (typeof x === "string" ? { code: x } : x && typeof x === "object" && !("code" in x) && ("snippet" in x || "content" in x || "source" in x) ? { ...x, code: (x as Record<string, unknown>).snippet ?? (x as Record<string, unknown>).content ?? (x as Record<string, unknown>).source } : x))
+      .flatMap((x) => {
+        const r = codeItem.safeParse(x);
+        return r.success ? [{ ...r.data, language: (r.data.language || guessLanguage(r.data.code)).slice(0, 30) }] : [];
+      })
+      .slice(0, n);
+  });
 
 export const answerSchema = z.object({
   answer: z.string().trim().min(1).transform((x) => x.slice(0, 1500)),
   solution: z.object({ summary: z.unknown().transform(toText).transform((x) => x.slice(0, 800)), steps: list(400, 10) }).catch({ summary: "", steps: [] }).default({ summary: "", steps: [] }),
   explanation: z.object({ concept: z.unknown().transform(toText).transform((x) => x.slice(0, 1500)), whyItWorks: z.unknown().transform(toText).transform((x) => x.slice(0, 1000)), tradeoffs: list(300, 5) }).catch({ concept: "", whyItWorks: "", tradeoffs: [] }).default({ concept: "", whyItWorks: "", tradeoffs: [] }),
   examples: upTo(z.object({ title: z.coerce.string().trim().transform((x) => x.slice(0, 120) || "Example").default("Example"), input: z.unknown().transform(toText).transform((x) => x.slice(0, 600)), output: z.unknown().transform(toText).transform((x) => x.slice(0, 600)), explanation: z.unknown().transform(toText).transform((x) => x.slice(0, 600)) }), 3),
-  code: upTo(z.object({ language: z.coerce.string().trim().transform((x) => x.slice(0, 30) || "text").default("text"), title: z.coerce.string().trim().transform((x) => x.slice(0, 120)).default(""), code: z.string().trim().min(1).transform((x) => x.slice(0, 6000)), explanation: list(300, 8) }), 3),
+  code: codeBlocks(3),
   diagram: lenientDiagram.nullable().catch(null).default(null),
   testing: list(300, 6),
   pitfalls: list(300, 6),
@@ -138,6 +169,14 @@ function prompt(input: { topicTitle: string; question: string; locale: string; l
   return { system, user };
 }
 
+/** Keeps a diagram only if it teaches something, repairing name mismatches first. */
+export function checkDiagram(d: Diagram | null): { diagram: Diagram | null; state: "none" | "valid" | "repaired" | "dropped" } {
+  if (!d) return { diagram: null, state: "none" };
+  if (coherent(d) && !diagramFault(d)) return { diagram: d, state: "valid" };
+  const repaired = repairDiagram(d);
+  return coherent(repaired) && !diagramFault(repaired) ? { diagram: repaired, state: "repaired" } : { diagram: null, state: "dropped" };
+}
+
 export interface Verification {
   sourcesRetrieved: number;
   sourcesCited: number;
@@ -152,18 +191,7 @@ export function verify(raw: z.infer<typeof answerSchema>, sources: Source[]): { 
   const known = new Set(sources.map((s) => s.id));
   const cited = [...new Set(raw.sources.map((s) => s.trim().toUpperCase()))];
   const real = cited.filter((s) => known.has(s));
-  let diagram: Diagram | null = raw.diagram ?? null;
-  let state: Verification["diagram"] = diagram ? "valid" : "none";
-  if (diagram && (!coherent(diagram) || diagramFault(diagram))) {
-    const repaired = repairDiagram(diagram);
-    if (coherent(repaired) && !diagramFault(repaired)) {
-      diagram = repaired;
-      state = "repaired";
-    } else {
-      diagram = null;
-      state = "dropped";
-    }
-  }
+  const { diagram, state } = checkDiagram(raw.diagram ?? null);
   const assumptions = [...raw.assumptions];
   if (!real.length) assumptions.unshift(sources.length ? "This answer isn't backed by a specific Prompters lesson — treat it as general knowledge." : "No Prompters lesson covers this question yet — this answer is general knowledge.");
   return {

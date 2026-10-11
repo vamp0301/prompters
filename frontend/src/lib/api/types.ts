@@ -1840,3 +1840,37 @@ export interface TutorAnswer {
   sources: { id: string; topicSlug: string; topicTitle: string; section: string }[];
   verification: { sourcesRetrieved: number; sourcesCited: number; inventedSources: number; diagram: "none" | "valid" | "repaired" | "dropped"; grounded: boolean };
 }
+
+/** A Project Ladder build pipeline (GET/POST /projects/:slug/pipeline). */
+export interface PipelineStage {
+  key: string;
+  title: string;
+  goal: string;
+  dependsOn: string[];
+  covers: number[];
+  tasks: string[];
+  acceptance: { id: string; text: string }[];
+  status: "TODO" | "IN_PROGRESS" | "DONE";
+  blockedBy: string[];
+  evidence: Record<string, { note: string; url?: string; at: string }>;
+  solutionViewed: boolean;
+  solution: PipelineSolution | null;
+}
+export interface PipelineSolution {
+  summary: string;
+  steps: string[];
+  code: { language: string; title: string; code: string; explanation: string[] }[];
+  diagram: Diagram | null;
+  pitfalls: string[];
+}
+export interface ProjectPipeline {
+  status: "QUEUED" | "RUNNING" | "READY" | "FAILED";
+  error: string | null;
+  current: string | null;
+  stale: boolean;
+  done: number;
+  total: number;
+  requirements: string[];
+  updatedAt: string;
+  stages: PipelineStage[];
+}

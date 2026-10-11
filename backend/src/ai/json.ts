@@ -9,11 +9,28 @@ export function requireAI() {
   return p;
 }
 
-function extractJson(raw: string) {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const body = (fenced ? fenced[1] : raw).trim();
-  const start = body.search(/[[{]/);
-  return JSON.parse(start > 0 ? body.slice(start) : body);
+/**
+ * The reply as JSON. Tried whole first: a JSON reply whose strings contain Markdown fences (code
+ * examples often do) must not be cut at the first ``` inside a string. Then a fenced block, then
+ * from the first bracket.
+ */
+export function extractJson(raw: string) {
+  const text = raw.trim();
+  try {
+    return JSON.parse(text);
+  } catch {
+    // fall through
+  }
+  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)```\s*$/) ?? text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch {
+      // fall through
+    }
+  }
+  const start = text.search(/[[{]/);
+  return JSON.parse(start > 0 ? text.slice(start) : text);
 }
 
 /**

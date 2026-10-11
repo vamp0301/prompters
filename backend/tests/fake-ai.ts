@@ -27,6 +27,9 @@ export class FakeAI implements AIProvider {
   questionDrafts: ("generic" | "genericHigh" | "hypothetical")[] = [];
   /** Tutor answers: a diagram that can't teach anything (verifier must drop it). */
   tutorBadDiagram = false;
+  /** Pipelines: drafts that leave requirement 2 uncovered (every attempt), or ignore the stack (first attempt). */
+  pipelineSkipReq2 = false;
+  pipelineGenericFirst = false;
 
   /** Distinct questions per call, plus a few the validator must reject. */
   private prepBatch(category: string, count: number, system = "", user = "") {
@@ -390,6 +393,28 @@ export class FakeAI implements AIProvider {
       }
       case "review_code":
         return JSON.stringify({ understanding: 8, practical: 7, communication: 6, timeComplexity: "O(n)", spaceComplexity: "O(1)", edgeCases: ["zero"], codeQuality: ["clear names"], lead: "Thanks." });
+      case "project_pipeline": {
+        const techs = (user.match(/^Technologies: (.+)$/m)?.[1] ?? "").split(",").map((t) => t.trim()).filter((t) => t && !t.startsWith("("));
+        const reqCount = (user.match(/<requirements>\n([\s\S]*?)\n<\/requirements>/)?.[1] ?? "").split("\n").filter((l) => /^\d+\./.test(l)).length;
+        const retry = user.includes("Your previous plan had problems");
+        const stack = this.pipelineGenericFirst && !retry ? "the tools" : techs.join(" + ") || "plain code";
+        const all = Array.from({ length: reqCount }, (_, i) => i + 1);
+        const covers = this.pipelineSkipReq2 ? all.filter((n) => n !== 2) : all;
+        const stage = (key: string, title: string, dependsOn: string[], c: number[]) => ({
+          key, title, goal: `${title} for this project`, dependsOn, covers: c,
+          tasks: [`Do ${title.toLowerCase()} with ${stack}`],
+          acceptance: [`${title} works end to end`],
+          solution: { summary: `How to ${title.toLowerCase()}`, steps: ["Step one", "Step two"], code: [{ language: "javascript", title: `${key}.js`, code: `// ${title} using ${stack}\nconsole.log("${key}");`, explanation: ["Logs the stage"] }], diagram: { kind: "flow", title, objective: "Show the stage", steps: [{ label: "Plan" }, { label: "Build" }, { label: "Verify" }] }, pitfalls: ["Skipping tests"] },
+        });
+        return JSON.stringify({
+          stages: [
+            stage("setup", "Project setup", ["core"], []), // forward reference: must be dropped
+            stage("core", "Core logic", ["setup"], covers.slice(0, 1)),
+            stage("api", "HTTP API", ["core", "api"], covers.slice(1)), // self-reference: must be dropped
+            stage("tests", "Tests and deploy", ["api", "ghost"], []), // unknown stage: must be dropped
+          ],
+        });
+      }
       case "tutor_answer": {
         const ids = [...user.matchAll(/^\[(S\d+)\]/gm)].map((m) => m[1]);
         const hints = system.includes("HINT MODE");

@@ -8,7 +8,7 @@ const GRACE_MS = 3 * 60_000;
 /** After this many interruptions in a day the item is failed honestly instead of looping. */
 const MAX_RECOVERIES = 3;
 
-async function recoveries(kind: "plan" | "pack", id: string) {
+async function recoveries(kind: "plan" | "pack" | "pipeline", id: string) {
   const key = `prep:recover:${kind}:${id}`;
   const n = await redis().incr(key);
   if (n === 1) await redis().expire(key, 24 * 60 * 60);
@@ -22,9 +22,10 @@ async function recoveries(kind: "plan" | "pack", id: string) {
  */
 export async function recoverStuckPrepWork() {
   const cutoff = new Date(Date.now() - GRACE_MS);
-  const [plans, packs, live] = await Promise.all([
+  const [plans, packs, pipelines, live] = await Promise.all([
     prisma.prepPlan.findMany({ where: { status: { in: ["QUEUED", "RUNNING"] }, createdAt: { lt: cutoff } }, select: { id: true } }),
     prisma.prepPack.findMany({ where: { status: { in: ["QUEUED", "RUNNING"] }, createdAt: { lt: cutoff } }, select: { id: true } }),
+    prisma.projectPipeline.findMany({ where: { status: { in: ["QUEUED", "RUNNING"] }, updatedAt: { lt: cutoff } }, select: { id: true } }),
     liveTargets(),
   ]);
   const result = { requeued: 0, failed: 0 };
@@ -50,6 +51,17 @@ export async function recoverStuckPrepWork() {
     const { count } = await prisma.prepPack.updateMany({ where: { id: p.id, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "QUEUED" } });
     if (!count) continue;
     await enqueuePrep({ kind: "pack", packId: p.id });
+    result.requeued++;
+  }
+  for (const p of pipelines.filter((x) => !live.pipelines.has(x.id))) {
+    if ((await recoveries("pipeline", p.id)) > MAX_RECOVERIES) {
+      await prisma.projectPipeline.updateMany({ where: { id: p.id, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "FAILED", error: "Building the plan was interrupted. Please try again — your progress is kept." } });
+      result.failed++;
+      continue;
+    }
+    const { count } = await prisma.projectPipeline.updateMany({ where: { id: p.id, status: { in: ["QUEUED", "RUNNING"] } }, data: { status: "QUEUED" } });
+    if (!count) continue;
+    await enqueuePrep({ kind: "pipeline", pipelineId: p.id });
     result.requeued++;
   }
   if (result.requeued || result.failed) logger.warn(result, "Recovered stuck Top-100 work");

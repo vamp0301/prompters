@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { extractJson } from "../src/ai/json.js";
 import type { Question } from "@prisma/client";
 import { gradeQuestion, scoreOf } from "../src/modules/quiz/grading.js";
 import { keywordScore } from "../src/modules/platform/text.js";
@@ -92,5 +93,17 @@ describe("Gemini provider fallback", () => {
     } finally {
       globalThis.fetch = realFetch;
     }
+  });
+});
+
+describe("extractJson", () => {
+  it("parses a JSON reply whose strings contain Markdown code fences", () => {
+    const reply = JSON.stringify({ stages: [{ code: "Run it:\n```bash\npython main.py add x\n```" }] });
+    expect(extractJson(reply)).toEqual({ stages: [{ code: "Run it:\n```bash\npython main.py add x\n```" }] });
+  });
+  it("still unwraps a fenced reply and skips leading prose", () => {
+    expect(extractJson('```json\n{"a":1}\n```')).toEqual({ a: 1 });
+    expect(extractJson('Here you go: {"a":2}')).toEqual({ a: 2 });
+    expect(extractJson('Sure!\n```\n{"a":3}\n```\nDone.')).toEqual({ a: 3 });
   });
 });

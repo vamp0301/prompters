@@ -57,6 +57,7 @@ model User {
   quizAttempts       QuizAttempt[]
   submissions        Submission[]
   projectSubmissions ProjectSubmission[]
+  projectPipelines   ProjectPipeline[]
   readiness          ReadinessSnapshot[]
   events             LearningEvent[]
   applications       Application[]
@@ -499,6 +500,31 @@ model Project {
   updatedAt        DateTime      @updatedAt
 
   submissions ProjectSubmission[]
+  pipelines   ProjectPipeline[]
+}
+
+/// A student's build pipeline for one Project Ladder project, generated from that project's own
+/// requirements, milestones and stack. Progress changes only with evidence for every acceptance criterion.
+model ProjectPipeline {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// QUEUED | RUNNING | READY | FAILED — generation runs on the background worker, never in the request.
+  status      String   @default("QUEUED")
+  error       String?
+  /// [{ key, title, goal, dependsOn[], covers[], tasks[], acceptance[{ id, text }], solution{…} }]
+  stages      Json     @default("[]")
+  /// { [stageKey]: { status: TODO | IN_PROGRESS | DONE, evidence: { [criterionId]: { note, url?, at } }, solutionViewedAt? } }
+  progress    Json     @default("{}")
+  /// Hash of the project brief the stages were generated from: an edited brief makes the pipeline stale.
+  sourceHash  String   @default("")
+  model       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, projectId])
 }
 
 model ProjectSubmission {

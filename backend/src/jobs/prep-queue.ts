@@ -5,7 +5,7 @@ export const PREP_QUEUE = "career-prep";
 /** PDF packs: separate from plan generation so a long plan never blocks a PDF. */
 export const PACK_QUEUE = "career-pack";
 
-export type PrepJob = { kind: "plan"; planId: string } | { kind: "pack"; packId: string };
+export type PrepJob = { kind: "plan"; planId: string } | { kind: "pack"; packId: string } | { kind: "pipeline"; pipelineId: string };
 
 const queues = new Map<string, Queue<PrepJob>>();
 
@@ -27,8 +27,9 @@ const packQueue = () => queueFor(PACK_QUEUE);
 export async function enqueuePrep(job: PrepJob) {
   // Unique per enqueue: BullMQ silently ignores an add whose jobId still exists (kept completed/failed
   // jobs), which would make a re-queue after recovery a no-op.
-  const id = job.kind === "plan" ? `plan-${job.planId}-${Date.now()}` : `pack-${job.packId}-${Date.now()}`;
-  await (job.kind === "plan" ? prepQueue() : packQueue()).add(job.kind, job, { jobId: id });
+  const target = job.kind === "plan" ? job.planId : job.kind === "pack" ? job.packId : job.pipelineId;
+  // Project pipelines share the plan queue: both are long AI generations.
+  await (job.kind === "pack" ? packQueue() : prepQueue()).add(job.kind, job, { jobId: `${job.kind}-${target}-${Date.now()}` });
 }
 
 /** Plan/pack ids that currently have a live job (waiting, active, delayed…). */
@@ -37,12 +38,14 @@ export async function liveTargets() {
   const jobs = [...(await prepQueue().getJobs([...states])), ...(await packQueue().getJobs([...states]))];
   const plans = new Set<string>();
   const packs = new Set<string>();
+  const pipelines = new Set<string>();
   for (const j of jobs) {
     if (!j?.data) continue;
     if (j.data.kind === "plan") plans.add(j.data.planId);
-    else packs.add(j.data.packId);
+    else if (j.data.kind === "pack") packs.add(j.data.packId);
+    else pipelines.add(j.data.pipelineId);
   }
-  return { plans, packs };
+  return { plans, packs, pipelines };
 }
 
 export async function closePrepQueue() {
