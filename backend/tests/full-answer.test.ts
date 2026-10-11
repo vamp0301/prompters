@@ -38,16 +38,31 @@ async function planWithQuestion(agent: Agent) {
   const qs = (await agent.get(`/api/career/prep/${id}/questions`)).body.data as { id: string }[];
   return { planId: id, qid: qs[0].id };
 }
-const full = (agent: Agent, planId: string, qid: string, body: object = {}) => agent.post(`/api/career/prep/${planId}/questions/${qid}/full-answer`).send(body);
+/** Requests the answer, then polls like the page does until it is READY or FAILED. */
+async function full(agent: Agent, planId: string, qid: string, body: { language?: string; regenerate?: boolean } = {}) {
+  const res = await agent.post(`/api/career/prep/${planId}/questions/${qid}/full-answer`).send(body);
+  if (res.status !== 200) return { status: res.status, data: null, first: null };
+  const first = res.body.data.fullAnswer;
+  const until = Date.now() + 20_000;
+  for (;;) {
+    const r = await agent.get(`/api/career/prep/${planId}/questions/${qid}/full-answer${body.language ? `?language=${body.language}` : ""}`);
+    const fa = r.body.data.fullAnswer;
+    if (fa?.status === "READY" || fa?.status === "FAILED" || Date.now() > until) return { status: 200, data: fa, first };
+    await new Promise((x) => setTimeout(x, 100));
+  }
+}
 
 describe("Top-100 full answers", () => {
   it("writes a complete answer with an example, code, an animatable diagram and answered follow-ups", async () => {
     const { agent } = await login();
     const { planId, qid } = await planWithQuestion(agent);
+    expect((await agent.get(`/api/career/prep/${planId}/questions/${qid}/full-answer`)).body.data.fullAnswer).toBeNull();
     const res = await full(agent, planId, qid);
     expect(res.status).toBe(200);
-    const d = res.body.data;
-    expect(d.cached).toBe(false);
+    // Queued for the worker, not written inside the request.
+    expect(res.first).toMatchObject({ status: "QUEUED" });
+    const d = res.data;
+    expect(d.status).toBe("READY");
     expect(d.structured.answer).toBeTruthy();
     expect(d.structured.examples[0]).toMatchObject({ input: "[3, 1, 3]", output: "3" });
     expect(d.structured.code[0].code).toContain("new Set()");
@@ -68,11 +83,18 @@ describe("Top-100 full answers", () => {
     await full(agent, planId, qid);
     const before = fake.calls.filter((c) => c.task === "tutor_answer").length;
     const again = await full(agent, planId, qid);
-    expect(again.body.data.cached).toBe(true);
+    expect(again.first).toMatchObject({ status: "READY" });
     expect(fake.calls.filter((c) => c.task === "tutor_answer").length).toBe(before);
-    // Another language is a separate answer; regenerate forces a fresh one.
-    expect((await full(agent, planId, qid, { language: "en" })).body.data).toMatchObject({ cached: false, language: "en" });
-    expect((await full(agent, planId, qid, { regenerate: true })).body.data.cached).toBe(false);
+    // Another language is a separate answer; regenerate writes a fresh one.
+    expect((await full(agent, planId, qid, { language: "en" })).data).toMatchObject({ status: "READY", language: "en" });
+    expect(fake.calls.filter((c) => c.task === "tutor_answer").length).toBe(before + 1);
+    const fresh = await full(agent, planId, qid, { regenerate: true });
+    expect(fresh.first.status).toBe("QUEUED");
+    expect(fresh.first.structured).toBeTruthy(); // the earlier answer stays visible while rewriting
+    expect(fake.calls.filter((c) => c.task === "tutor_answer").length).toBe(before + 2);
+    // Both languages survive side by side.
+    const row = await prisma.prepQuestion.findUniqueOrThrow({ where: { id: qid } });
+    expect(Object.keys(row.fullAnswers as object).sort()).toEqual(["en", "hinglish"]);
     // The question detail stays light: cached answers aren't sent with it.
     expect((await agent.get(`/api/career/prep/${planId}/questions/${qid}`)).body.data).not.toHaveProperty("fullAnswers");
   });
@@ -82,8 +104,20 @@ describe("Top-100 full answers", () => {
     const { planId, qid } = await planWithQuestion(owner.agent);
     const other = await login();
     expect((await full(other.agent, planId, qid)).status).toBe(404);
+    expect((await other.agent.get(`/api/career/prep/${planId}/questions/${qid}/full-answer`)).status).toBe(404);
     setAIProvider(null);
-    expect((await full(owner.agent, planId, qid, { regenerate: true })).status).toBe(503);
+    expect((await full(owner.agent, planId, qid)).status).toBe(503);
     setAIProvider(fake);
+  });
+
+  it("records a failed answer honestly and lets the student try again", async () => {
+    const { agent } = await login();
+    const { planId, qid } = await planWithQuestion(agent);
+    const real = fake.complete.bind(fake);
+    fake.complete = async (system: string, user: string) => (system.includes("[task:tutor_answer]") ? "not json" : real(system, user));
+    const failed = await full(agent, planId, qid);
+    fake.complete = real;
+    expect(failed.data).toMatchObject({ status: "FAILED", error: expect.stringMatching(/couldn't use/) });
+    expect((await full(agent, planId, qid)).data.status).toBe("READY");
   });
 });

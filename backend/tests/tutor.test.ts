@@ -3,7 +3,7 @@ import { login, resetDb, seedFixture } from "./helpers.js";
 import { FakeAI } from "./fake-ai.js";
 import { setAIProvider } from "../src/ai/provider.js";
 import { prisma } from "../src/lib/prisma.js";
-import { keywords, retrieve, verify, answerSchema, guessLanguage } from "../src/ai/answer.js";
+import { keywords, retrieve, verify, answerSchema, guessLanguage, checkDiagram } from "../src/ai/answer.js";
 
 const fake = new FakeAI();
 beforeAll(async () => {
@@ -90,6 +90,16 @@ describe("solution-first tutor", () => {
     const a = answerSchema.parse({ answer: "x", code: "def f():\n    return 1" });
     expect(a.code).toEqual([expect.objectContaining({ language: "python", code: "def f():\n    return 1" })]);
     expect(answerSchema.parse({ answer: "x", code: ["const a = 1;", { snippet: "let b = 2;" }] }).code.map((c) => c.language)).toEqual(["javascript", "javascript"]);
+  });
+
+  it("makes every diagram playable: derives walkthrough steps when the model leaves them out", () => {
+    const flow = checkDiagram({ kind: "flow", title: "t", objective: "o", steps: [{ label: "A" }, { label: "B", note: "why" }, { label: "C" }] } as never).diagram!;
+    expect(flow.walkthrough).toEqual([{ label: "A", highlight: "A" }, { label: "B — why", highlight: "B" }, { label: "C", highlight: "C" }]);
+    const cmp = checkDiagram({ kind: "comparison", title: "L4 vs L7", objective: "o", left: { title: "L4", points: ["fast", "IP/port"] }, right: { title: "L7", points: ["HTTP-aware"] } } as never).diagram!;
+    expect(cmp.walkthrough).toHaveLength(2);
+    // A model-provided walkthrough is kept as is.
+    const own = checkDiagram({ kind: "flow", title: "t", objective: "o", steps: [{ label: "A" }, { label: "B" }, { label: "C" }], walkthrough: [{ label: "x", highlight: "A" }, { label: "y", highlight: "B" }] } as never).diagram!;
+    expect(own.walkthrough).toEqual([{ label: "x", highlight: "A" }, { label: "y", highlight: "B" }]);
   });
 
   it("extracts useful search terms", () => {

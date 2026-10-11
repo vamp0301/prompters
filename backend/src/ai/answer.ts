@@ -173,12 +173,35 @@ function prompt(input: AnswerInput & { sources: Source[] }) {
   return { system, user };
 }
 
-/** Keeps a diagram only if it teaches something, repairing name mismatches first. */
+/**
+ * Walkthrough steps derived from the diagram itself, for models that leave them out — so every
+ * diagram can be played as an animation. Each step highlights a part the diagram actually shows.
+ */
+export function deriveWalkthrough(d: Diagram): { label: string; highlight?: string }[] {
+  const cut = (x: string) => x.slice(0, 140);
+  switch (d.kind) {
+    case "flow":
+      return d.steps.slice(0, 8).map((s) => ({ label: cut(s.note ? `${s.label} — ${s.note}` : s.label), highlight: s.label.slice(0, 40) }));
+    case "timeline":
+      return d.events.slice(0, 8).map((e) => ({ label: cut(`${e.from} → ${e.to}: ${e.label}`), highlight: e.to.slice(0, 40) }));
+    case "state":
+      return [{ label: cut(`Starts in ${d.states[0]}`), highlight: d.states[0].slice(0, 40) }, ...d.transitions.slice(0, 7).map((t) => ({ label: cut(`${t.from} → ${t.to}${t.label ? ` (${t.label})` : ""}`), highlight: t.to.slice(0, 40) }))];
+    case "architecture":
+      return d.layers.slice(0, 8).map((l) => ({ label: cut(`${l.label ? `${l.label}: ` : ""}${l.nodes.map((n) => n.label).join(", ")}`), highlight: l.nodes[0]?.label.slice(0, 40) }));
+    case "comparison":
+      return [{ label: cut(`${d.left.title}: ${d.left.points.join("; ")}`) }, { label: cut(`${d.right.title}: ${d.right.points.join("; ")}`) }];
+    case "decision":
+      return [{ label: cut(d.question) }, ...d.branches.slice(0, 7).map((b) => ({ label: cut(`${b.answer} → ${b.result ?? b.question ?? ""}`) }))];
+  }
+}
+
+/** Keeps a diagram only if it teaches something (repairing name mismatches first), and makes sure it can be animated. */
 export function checkDiagram(d: Diagram | null): { diagram: Diagram | null; state: "none" | "valid" | "repaired" | "dropped" } {
   if (!d) return { diagram: null, state: "none" };
-  if (coherent(d) && !diagramFault(d)) return { diagram: d, state: "valid" };
+  const playable = (x: Diagram): Diagram => ((x.walkthrough?.length ?? 0) >= 2 ? x : { ...x, walkthrough: deriveWalkthrough(x) });
+  if (coherent(d) && !diagramFault(d)) return { diagram: playable(d), state: "valid" };
   const repaired = repairDiagram(d);
-  return coherent(repaired) && !diagramFault(repaired) ? { diagram: repaired, state: "repaired" } : { diagram: null, state: "dropped" };
+  return coherent(repaired) && !diagramFault(repaired) ? { diagram: playable(repaired), state: "repaired" } : { diagram: null, state: "dropped" };
 }
 
 export interface Verification {

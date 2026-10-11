@@ -5,8 +5,20 @@ import { logger } from "../lib/logger.js";
 import { runPlan } from "../modules/prep/generation.service.js";
 import { runPack } from "../modules/prep/pack.service.js";
 import { runPipeline } from "../modules/projects/pipeline.service.js";
+import { runFullAnswer } from "../modules/prep/practice.service.js";
 
-const run = (job: { data: PrepJob }) => (job.data.kind === "plan" ? runPlan(job.data.planId) : job.data.kind === "pack" ? runPack(job.data.packId) : runPipeline(job.data.pipelineId));
+const run = ({ data }: { data: PrepJob }) => {
+  switch (data.kind) {
+    case "plan":
+      return runPlan(data.planId);
+    case "pack":
+      return runPack(data.packId);
+    case "pipeline":
+      return runPipeline(data.pipelineId);
+    case "fullAnswer":
+      return runFullAnswer(data.questionId, data.lang);
+  }
+};
 
 /**
  * Top-100 plan generation and interview-pack PDFs, on separate queues with their own concurrency

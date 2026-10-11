@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpenCheck, ChevronLeft, ChevronRight, Lightbulb, Mic, MicOff, Quote } from "lucide-react";
+import { BookOpenCheck, ChevronLeft, ChevronRight, Lightbulb, Loader2, Mic, MicOff, Quote } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Textarea } from "@/components/ui/input";
@@ -43,32 +43,57 @@ export function QuestionDialog({ planId, questionId, list, onNavigate, onClose }
   );
 }
 
-type FullAnswerResult = Omit<TutorAnswer, "mode"> & { cached: boolean; language: string };
+type FullAnswerEntry = Partial<Omit<TutorAnswer, "mode">> & { status: "QUEUED" | "RUNNING" | "READY" | "FAILED"; error: string | null; language: string; at: string };
 
-/** Complete model answer: example, code, an animated diagram walkthrough and answered follow-ups. Saved once written. */
-function FullAnswer({ planId, questionId }: { planId: string; questionId: string }) {
-  const get = useMutation({
-    meta: { silent: true },
-    mutationFn: (regenerate: boolean) => api.post<FullAnswerResult>(`/career/prep/${planId}/questions/${questionId}/full-answer`, { regenerate }),
+/**
+ * Complete model answer: example, code, an animated diagram walkthrough and answered follow-ups.
+ * Written in the background (it can take a minute or two when the AI is busy), then saved.
+ */
+export function FullAnswer({ planId, questionId }: { planId: string; questionId: string }) {
+  const qc = useQueryClient();
+  const key = ["prep-full-answer", planId, questionId];
+  const url = `/career/prep/${planId}/questions/${questionId}/full-answer`;
+  const saved = useQuery({
+    queryKey: key,
+    queryFn: () => api.get<{ fullAnswer: FullAnswerEntry | null }>(url),
+    refetchInterval: (q) => (["QUEUED", "RUNNING"].includes(q.state.data?.fullAnswer?.status ?? "") ? 3000 : false),
   });
+  const ask = useMutation({
+    meta: { silent: true },
+    mutationFn: (regenerate: boolean) => api.post<{ fullAnswer: FullAnswerEntry }>(url, { regenerate }),
+    onSuccess: (r) => qc.setQueryData(key, r),
+  });
+  const fa = saved.data?.fullAnswer ?? null;
+  const writing = fa?.status === "QUEUED" || fa?.status === "RUNNING";
+  const ready = fa?.structured && fa.sources && fa.verification && fa.answer !== undefined;
   return (
     <section aria-label="Full answer" className="space-y-2 border-t border-border pt-4">
-      {!get.data && (
-        <>
-          <Button size="sm" loading={get.isPending} onClick={() => get.mutate(false)}>
-            <BookOpenCheck className="size-3.5" aria-hidden /> Full answer — with example, code and an animated diagram
-          </Button>
-          {get.isPending && <p role="status" className="text-xs text-muted">Writing the complete answer… usually 10–30 seconds. It&apos;s saved, so next time it opens instantly.</p>}
-        </>
+      {!fa && !saved.isLoading && (
+        <Button size="sm" loading={ask.isPending} onClick={() => ask.mutate(false)}>
+          <BookOpenCheck className="size-3.5" aria-hidden /> Full answer — with example, code and an animated diagram
+        </Button>
       )}
-      {get.error && <InlineError error={get.error} />}
-      {get.data && (
+      {writing && (
+        <p role="status" className="flex items-center gap-2 text-xs text-muted">
+          <Loader2 className="size-3.5 animate-spin" aria-hidden /> Writing the complete answer… usually under a minute, longer when the AI is busy. You can close this and come back — it&apos;s saved.
+        </p>
+      )}
+      {fa?.status === "FAILED" && (
+        <p role="alert" className="text-sm text-danger">
+          {fa.error ?? "Couldn't write the answer."}{" "}
+          <button type="button" className="underline" disabled={ask.isPending} onClick={() => ask.mutate(true)}>Try again</button>
+        </p>
+      )}
+      {ask.error && <InlineError error={ask.error} />}
+      {ready && (
         <>
-          <SolutionAnswer data={{ ...get.data, mode: "solution" }} />
-          <p className="text-[11px] text-subtle">
-            {get.data.cached ? "Saved answer." : "Just written for you and saved."}{" "}
-            <button type="button" className="underline" disabled={get.isPending} onClick={() => get.mutate(true)}>Write a fresh one</button>
-          </p>
+          <SolutionAnswer data={{ answer: fa.answer!, structured: fa.structured!, sources: fa.sources!, verification: fa.verification!, mode: "solution" }} />
+          {!writing && (
+            <p className="text-[11px] text-subtle">
+              Saved answer.{" "}
+              <button type="button" className="underline" disabled={ask.isPending} onClick={() => ask.mutate(true)}>Write a fresh one</button>
+            </p>
+          )}
         </>
       )}
     </section>
