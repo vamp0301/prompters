@@ -71,7 +71,10 @@ export function SolutionAnswer({ data }: { data: TutorAnswer }) {
 
       {a.examples.map((e, i) => (
         <div key={i} className="rounded-lg border border-border bg-surface p-3 text-sm">
-          <div className="mb-1 font-semibold">{e.title}</div>
+          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+            <span className="font-semibold">{e.title}</span>
+            <span className="font-mono text-[10px] uppercase tracking-wider text-subtle">Illustrative — not run</span>
+          </div>
           <dl className="grid gap-1 sm:grid-cols-[auto_1fr] sm:gap-x-3">
             {e.input && <><dt className="font-mono text-[11px] uppercase text-subtle">Input</dt><dd className="font-mono text-[13px]">{e.input}</dd></>}
             {e.output && <><dt className="font-mono text-[11px] uppercase text-subtle">Output</dt><dd className="font-mono text-[13px]">{e.output}</dd></>}
@@ -83,7 +86,9 @@ export function SolutionAnswer({ data }: { data: TutorAnswer }) {
       {a.code.map((c, i) => (
         <div key={i}>
           <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="text-xs font-medium">{c.title || "Code"} <span className="font-mono text-[10px] uppercase text-subtle">{c.language}</span></span>
+            <span className="text-xs font-medium">
+              {c.title || "Code"} <span className="font-mono text-[10px] uppercase text-subtle">{c.language} · illustrative, not run</span>
+            </span>
             <CopyButton text={c.code} label={`Copy ${c.title || "code"}`} />
           </div>
           <CodeBlock code={c.code} language={c.language} />
