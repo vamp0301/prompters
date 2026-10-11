@@ -30,6 +30,11 @@ const schema = z.object({
   /** Comma-separated Gemini models tried when the primary is overloaded (default gemini-flash-lite-latest, gemini-3.5-flash-lite). */
   AI_FALLBACK_MODELS: z.string().optional(),
   /**
+   * Embeddings for meaning-based lesson search. "gemini" reuses AI_API_KEY (no new secret);
+   * "none" turns semantic search off and the tutor uses keyword search only.
+   */
+  EMBEDDINGS_PROVIDER: z.enum(["gemini", "none"]).default("gemini"),
+  /**
    * Where per-user files go (resume originals, PDF packs, interview audio).
    * local: STORAGE_DIR on this machine (development). s3: any S3-compatible bucket.
    * none: no file storage — resume text is still parsed and saved, PDF packs are built on download,

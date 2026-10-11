@@ -54,6 +54,7 @@ Turned off on this setup, by design:
 | `AI_API_KEY` | your Gemini API key | [Google AI Studio](https://aistudio.google.com/apikey) |
 | `AI_MODEL` | `gemini-flash-latest` | (preset) |
 | `AI_FALLBACK_MODELS` | `gemini-flash-lite-latest,gemini-3.5-flash-lite` | (preset) |
+| `EMBEDDINGS_PROVIDER` | `gemini` (default when unset) or `none` | Meaning-based lesson search for the tutor and full answers, using the same `AI_API_KEY` (`gemini-embedding-001`, 768 dims). `none` = keyword search only. No new secret. |
 
 **File storage — none on this setup (preset):**
 
@@ -187,6 +188,23 @@ against a local database; not yet verified on a live Render deployment.
 To keep files later, add any S3-compatible bucket in the Render dashboard (`STORAGE_DRIVER=s3`, `S3_ENDPOINT`,
 `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`); only then can `AUDIO_RECORDING=true`
 be set. Packs made before that keep working (they are rebuilt on download).
+
+## Meaning-based search (embeddings)
+
+The worker embeds every section of every **published** topic version (never drafts) about 30 s after
+start and then every 15 minutes, re-embedding only sections whose text changed. Gemini's free tier
+allows **100 embedding requests per minute** (each text counts), so the indexer sends 45 at a time with
+a 30 s pause: the first full index of ~420 sections takes about 5 minutes; later runs are usually free.
+Each new tutor question costs one embedding call (~0.5 s; repeats are cached for an hour). If the
+quota is used up or the service fails, answers fall back to keyword search automatically and record
+`retrieval: "keyword"` in their verification.
+
+Measured on 42 real questions in English, Hinglish and Hindi (`cd backend && npx tsx scripts/eval-retrieval.ts`
+against a local database seeded with the curriculum): keyword search found the right lesson in the top
+5 for 40%; meaning-based search 100% (MRR 0.96); the hybrid used in the app 100% (MRR 0.94).
+
+Vectors are stored as a plain array column and compared in memory (~1 ms at this size). There is no
+vector index: switch to `pgvector` (available on Neon) once the curriculum reaches tens of thousands of sections.
 
 ## What runs automatically on start (safe to repeat)
 

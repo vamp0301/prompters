@@ -202,6 +202,7 @@ model Topic {
 
   @@index([moduleId, order])
   @@index([status])
+  embeddings ContentEmbedding[]
 }
 
 model TopicPrerequisite {
@@ -1496,4 +1497,25 @@ model TargetRoleProfile {
 
   @@unique([userId, roleKey])
   @@index([userId, status])
+}
+
+/// Meaning-based search index: one vector per section of a PUBLISHED topic version. Rebuilt by the
+/// worker only when the published text (or the model/dimensions) changes. Vectors are a plain array:
+/// at a few thousand rows an in-memory comparison takes ~1 ms; move to pgvector at tens of thousands.
+model ContentEmbedding {
+  id          String   @id @default(cuid())
+  topicId     String
+  topic       Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  version     Int
+  section     String
+  /// sha256 of model + dimensions + embedded text: unchanged hash = no new embedding call.
+  contentHash String
+  model       String
+  dimensions  Int
+  vector      Float[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([topicId, section, model])
+  @@index([model])
 }

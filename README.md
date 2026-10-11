@@ -381,6 +381,7 @@ Only variables that the code actually reads are listed. Use placeholders. Never 
 | `STORAGE_DRIVER` | no | `local` | `config/env.ts` | `local` (development), `s3`, or `none` (no files kept: resume text only, PDF packs built on download, recording off — the Render preset). `local` is refused in production unless `STORAGE_LOCAL_PERSISTENT=true`. |
 | `STORAGE_LOCAL_PERSISTENT` | no | `false` | `config/env.ts` | Production only: declare that `STORAGE_DIR` is a persistent volume. |
 | `AUDIO_RECORDING` | no | `false` | `config/env.ts` | Offer to keep interview answer audio (with consent). Needs file storage. |
+| `EMBEDDINGS_PROVIDER` | no | `gemini` | `config/env.ts` | Meaning-based lesson search (`gemini-embedding-001` via `AI_API_KEY`), or `none` for keyword search only. |
 | `STORAGE_DIR` | no | `./storage` | `config/env.ts` | Root folder for the local driver (gitignored). |
 | `S3_ENDPOINT`, `S3_REGION` (default `auto`), `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | only with `s3` | — | `config/env.ts` | S3-compatible driver settings. Not configured today. |
 | `PREP_DAILY_PLAN_LIMIT` | no | `3` | `config/env.ts` | Top-100 plan generations allowed per user per rolling 24 h (each plan costs about 20–25 model calls). |

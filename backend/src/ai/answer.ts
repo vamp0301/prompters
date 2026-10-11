@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import type { TopicSnapshot } from "../modules/learning/snapshot.js";
+import { semanticSearch, type RetrievalMode } from "../modules/learning/semantic.js";
 import { lenientDiagram, coherent, type Diagram } from "../modules/career/knowledge.schemas.js";
 import { diagramFault, repairDiagram } from "../modules/career/knowledge.validate.js";
 import { aiJson, fence } from "./json.js";
@@ -53,8 +54,22 @@ const sectionsOf = (snapshot: Prisma.JsonValue): Section[] => {
  * Current topic first (all sections), then the best keyword matches from other topics. Only the
  * PUBLISHED snapshot is read — exactly what learners see — never an author's unpublished draft.
  */
-export async function retrieve(topicId: string, question: string, locale: string, related = 4): Promise<Source[]> {
-  const topic = await prisma.topic.findUnique({ where: { id: topicId }, select: { publishedVersion: true } });
+/** Reciprocal-rank fusion constant: a section ranked well by either method rises; both = higher. */
+const RRF_K = 60;
+/**
+ * Keyword weight in the fusion. Measured on 42 real questions (scripts/eval-retrieval.ts): with equal
+ * weights keyword false positives pushed the right lesson down (MRR 0.76 vs 0.96 for meaning alone),
+ * so keywords only break ties and fill in when meaning finds nothing.
+ */
+const KEYWORD_WEIGHT = 0.2;
+
+/**
+ * Current topic first (all sections), then the best related sections from other topics, ranked by
+ * keywords AND meaning (fused). Only PUBLISHED snapshots are read — exactly what learners see. When
+ * embeddings are off or fail, it falls back to keywords alone and says so in `mode`.
+ */
+export async function retrieveWithMode(topicId: string, question: string, locale: string, related = 4): Promise<{ sources: Source[]; mode: RetrievalMode }> {
+  const topic = topicId ? await prisma.topic.findUnique({ where: { id: topicId }, select: { publishedVersion: true } }) : null;
   const current = topic?.publishedVersion ? await prisma.topicVersion.findUnique({ where: { topicId_version: { topicId, version: topic.publishedVersion } }, select: { snapshot: true } }) : null;
   const own = current ? sectionsOf(current.snapshot) : [];
   const terms = keywords(question);
@@ -71,8 +86,29 @@ export async function retrieve(topicId: string, question: string, locale: string
     const hay = `${localized(s.content, "en")} ${localized(s.content, locale)} ${s.codeJs ?? ""} ${s.codePython ?? ""}`.toLowerCase();
     return terms.reduce((n, t) => n + (hay.includes(t) ? 1 : 0) + (s.title.toLowerCase().includes(t) ? 2 : 0), 0);
   };
-  const best = others.map((s) => ({ s, n: score(s) })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, related).map((x) => x.s);
-  return [...own, ...best]
+  const keywordRanked = others.map((s) => ({ s, n: score(s) })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 8).map((x) => x.s);
+
+  let mode: RetrievalMode = "keyword";
+  let semanticRanked: Section[] = [];
+  try {
+    const hits = await semanticSearch(question, { k: 8, excludeTopicId: topicId || undefined });
+    if (hits.length) {
+      mode = "hybrid";
+      semanticRanked = hits.map((h) => ({ slug: h.slug, title: h.title, type: h.section.type, content: h.section.content, codeJs: h.section.codeJs ?? null, codePython: h.section.codePython ?? null }));
+    }
+  } catch {
+    mode = "keyword"; // provider down, quota hit or timed out: keyword search still answers
+  }
+  const fused = new Map<string, { s: Section; score: number }>();
+  for (const [list, weight] of [[keywordRanked, semanticRanked.length ? KEYWORD_WEIGHT : 1], [semanticRanked, 1]] as const) {
+    list.forEach((s, rank) => {
+      const key = `${s.slug}|${s.type}`;
+      const prev = fused.get(key);
+      fused.set(key, { s, score: (prev?.score ?? 0) + weight / (RRF_K + rank + 1) });
+    });
+  }
+  const best = [...fused.values()].sort((a, b) => b.score - a.score).slice(0, related).map((x) => x.s);
+  const sources = [...own, ...best]
     .map((s) => ({
       topicSlug: s.slug,
       topicTitle: s.title,
@@ -81,6 +117,12 @@ export async function retrieve(topicId: string, question: string, locale: string
     }))
     .filter((s) => s.text)
     .map((s, i) => ({ id: `S${i + 1}`, ...s }));
+  return { sources, mode };
+}
+
+/** Sources only (see retrieveWithMode). */
+export async function retrieve(topicId: string, question: string, locale: string, related = 4): Promise<Source[]> {
+  return (await retrieveWithMode(topicId, question, locale, related)).sources;
 }
 
 /** Model output is forgiving: object items become text and long lists are cut, never thrown away whole. */
@@ -211,6 +253,8 @@ export interface Verification {
   inventedSources: number;
   diagram: "none" | "valid" | "repaired" | "dropped";
   grounded: boolean;
+  /** How related lessons were found: keywords + meaning, or keywords only (embeddings off/unavailable). */
+  retrieval?: RetrievalMode;
 }
 
 /** Server-side checks on the model's answer: only real sources, only diagrams that teach something. */
@@ -259,7 +303,9 @@ type AnswerInput = {
 };
 
 export async function answerQuestion(input: AnswerInput & { topicId: string }) {
-  return generateAnswer(input, await retrieve(input.topicId, input.question, input.locale));
+  const { sources, mode } = await retrieveWithMode(input.topicId, input.question, input.locale);
+  const result = await generateAnswer(input, sources);
+  return { ...result, verification: { ...result.verification, retrieval: mode } };
 }
 
 /** Model call + verification over already-retrieved sources (also used by the real-model check). */

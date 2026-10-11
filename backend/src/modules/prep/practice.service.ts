@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { aiJson } from "../../ai/json.js";
-import { generateAnswer, retrieve, toMarkdown, type StructuredAnswer } from "../../ai/answer.js";
+import { generateAnswer, retrieveWithMode, toMarkdown, type StructuredAnswer } from "../../ai/answer.js";
 import { enqueuePrep } from "../../jobs/prep-queue.js";
 import { logger } from "../../lib/logger.js";
 import { prisma } from "../../lib/prisma.js";
@@ -127,12 +127,12 @@ export async function runFullAnswer(questionId: string, lang: FullAnswerLocale) 
       q.keyPoints.length ? `A strong answer covers:\n- ${q.keyPoints.join("\n- ")}` : "",
       q.followUps.length ? `Likely follow-ups:\n- ${q.followUps.join("\n- ")}` : "",
     ].filter(Boolean).join("\n");
-    const sources = await retrieve("", `${q.question} ${q.skill}`, lang);
+    const { sources, mode } = await retrieveWithMode("", `${q.question} ${q.skill}`, lang);
     const result = await generateAnswer(
       { topicTitle: q.skill, question: q.question, context, extraRules: INTERVIEW_RULES, locale: lang, level: profile?.codingLevel ?? "BEGINNER", goal: profile?.goalRole ?? "crack the interview", mode: "solution", recentMistakes: [], timeoutMs: 150_000 },
       sources,
     );
-    await setEntry(q.id, lang, { status: "READY", at: new Date().toISOString(), structured: result.structured, sources: result.sources, verification: result.verification });
+    await setEntry(q.id, lang, { status: "READY", at: new Date().toISOString(), structured: result.structured, sources: result.sources, verification: { ...result.verification, retrieval: mode } });
     await logEvent(q.plan.userId, "prep_full_answer", { meta: { planId: q.plan.id, questionId: q.id, language: lang, grounded: result.verification.grounded } });
   } catch (e) {
     logger.error({ err: e, questionId, lang }, "Full answer failed");
