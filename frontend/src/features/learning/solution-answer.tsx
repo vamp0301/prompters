@@ -107,6 +107,16 @@ export function SolutionAnswer({ data }: { data: TutorAnswer }) {
           <p className="italic">“{a.interviewAnswer}”</p>
         </Section>
       )}
+      {(a.followUps?.length ?? 0) > 0 && (
+        <Section title="Follow-up questions" defaultOpen={false}>
+          {a.followUps!.map((f, i) => (
+            <div key={i} className="rounded-md border border-border p-2">
+              <p className="font-medium">{f.question}</p>
+              <p className="mt-1 text-muted">{f.answer}</p>
+            </div>
+          ))}
+        </Section>
+      )}
       {a.nextActions.length > 0 && <Section title="Practise next" defaultOpen={false}><Bullets items={a.nextActions} /></Section>}
 
       <div className="space-y-1.5 border-t border-border pt-3 text-xs">

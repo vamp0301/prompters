@@ -41,6 +41,7 @@ export type EventType =
   | "target_role_primary"
   | "target_role_archived"
   | "prep_practice"
+  | "prep_full_answer"
   | "prep_pack_requested"
   | "interview_started"
   | "interview_completed"

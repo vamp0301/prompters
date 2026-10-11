@@ -426,10 +426,11 @@ export class FakeAI implements AIProvider {
           code: hints ? [] : [{ language: "javascript", title: "firstDuplicate.js", code: "function firstDuplicate(a) {\n  const seen = new Set();\n  for (const x of a) { if (seen.has(x)) return x; seen.add(x); }\n  return null;\n}", explanation: ["Set gives O(1) has()"] }],
           diagram: this.tutorBadDiagram
             ? { kind: "flow", title: "Flow", objective: "x", steps: [{ label: "Start" }, { label: "Start" }] }
-            : { kind: "flow", title: "Duplicate check", objective: "Show the scan", steps: [{ label: "Read next value" }, { label: "Seen before?" }, { label: "Return it or remember it" }] },
+            : { kind: "flow", title: "Duplicate check", objective: "Show the scan", steps: [{ label: "Read next value" }, { label: "Seen before?" }, { label: "Return it or remember it" }], walkthrough: [{ label: "Take the next number", highlight: "Read next value" }, { label: "Look it up in the set", highlight: "Seen before?" }, { label: "Return or store it", highlight: "Return it or remember it" }] },
           testing: ["Empty array returns null"],
           pitfalls: ["Comparing objects by reference"],
           interviewAnswer: "I would use a hash set for O(n) time.",
+          followUps: system.includes("INTERVIEW-QUESTION MODE") ? [{ question: "What if memory is limited?", answer: "Sort first and compare neighbours: O(n log n) time, O(1) extra space." }, { question: "Bad follow-up without an answer" }] : [],
           sources: [...ids.slice(0, 1), "S99"],
           assumptions: [],
           limitations: [],

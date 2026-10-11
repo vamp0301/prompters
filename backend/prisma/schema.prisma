@@ -1054,6 +1054,8 @@ model PrepQuestion {
   followUps     String[]      @default([])
   /// Cached translations: { hinglish: { question, hint, keyPoints[] }, hi: {...} }
   translations  Json          @default("{}")
+  /// Full model answers by language ({ en | hinglish | hi: TutorAnswer }), generated on request and reused.
+  fullAnswers   Json          @default("{}")
   /// NEW | PRACTICED | CONFIDENT
   status        String        @default("NEW")
   createdAt     DateTime      @default(now())

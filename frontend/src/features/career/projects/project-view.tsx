@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorState, PageHeader, Tabs } from "@/components/ui/misc";
 import { paperCard, TapedNote } from "@/components/ui/paper";
 import { DiagramView } from "@/features/knowledge/diagram";
-import { api } from "@/lib/api/client";
+import { ApiError, api } from "@/lib/api/client";
 import type { ProjectModule } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { friendlyError, InlineError } from "../shared";
@@ -25,6 +25,10 @@ type Tab = (typeof TABS)[number];
 const TAB_LABEL: Record<Tab, string> = { overview: "Overview", decisions: "Decisions", deep: "Deep dives", apis: "APIs", skills: "Skills", questions: "Questions", test: "Test", gaps: "Gaps", facts: "Facts" };
 const SOURCE_LABEL = { PROJECT: "Project", EXPERIENCE: "Work experience", BOTH: "Project + work experience" } as const;
 
+/** The AI provider was overloaded/slow, or this module is being built by another request: worth waiting for. */
+const aiBusy = (e: unknown) => e instanceof ApiError && ((e.status === 502 && e.code === "AI_UPSTREAM_ERROR") || (e.status === 503 && e.code === "GENERATION_BUSY"));
+const BUSY_RETRY_MS = [15_000, 30_000, 60_000];
+
 export function ProjectView({ id }: { id: string }) {
   const params = useSearchParams();
   const router = useRouter();
@@ -32,7 +36,7 @@ export function ProjectView({ id }: { id: string }) {
   const initial = (TABS as readonly string[]).includes(params.get("tab") ?? "") ? (params.get("tab") as Tab) : "overview";
   const [tab, setTab] = useState<Tab>(initial);
   // Opening builds the module if needed; refreshing an open module only reads it — rebuilding after a facts edit is the user's call.
-  const q = useQuery({ queryKey: projectKeys.one(id), queryFn: () => api.get<ProjectModule>(`/career/projects/${id}${qc.getQueryData<ProjectModule>(projectKeys.one(id))?.content ? "?generate=0" : ""}`), staleTime: 60_000, retry: false });
+  const q = useQuery({ queryKey: projectKeys.one(id), queryFn: () => api.get<ProjectModule>(`/career/projects/${id}${qc.getQueryData<ProjectModule>(projectKeys.one(id))?.content ? "?generate=0" : ""}`), staleTime: 60_000, retry: (n, e) => aiBusy(e) && n < BUSY_RETRY_MS.length, retryDelay: (n) => BUSY_RETRY_MS[Math.min(n, BUSY_RETRY_MS.length - 1)] });
   const rebuild = useMutation({ meta: { silent: true }, mutationFn: () => api.post<ProjectModule>(`/career/projects/${id}/regenerate`), onSuccess: (p) => qc.setQueryData(projectKeys.one(id), p) });
   const go = (t: Tab) => {
     setTab(t);
@@ -45,6 +49,9 @@ export function ProjectView({ id }: { id: string }) {
         <p className="flex items-center gap-2 font-medium">
           <Loader2 className="size-4 animate-spin text-accent" aria-hidden /> Building this project&apos;s module…
         </p>
+        {q.failureCount > 0 && (
+          <p className="mt-2 text-sm text-warn">The AI service is busy right now — retrying automatically (attempt {q.failureCount + 1} of {BUSY_RETRY_MS.length + 1}). You can stay on this page.</p>
+        )}
         <p className="mt-2 text-sm text-muted">Reading what your resume says about it, then writing the explanations, decisions and 20 questions. The first time takes up to a minute; after that it opens instantly.</p>
       </div>
     );

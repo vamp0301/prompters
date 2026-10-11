@@ -11,7 +11,9 @@ import { ensureAiInterviewEnabled } from "../career/career.routes.js";
 import { CATEGORY_LABEL, DEFAULT_ALLOCATION, PREP_CATEGORIES, TOTAL_QUESTIONS } from "./allocation.js";
 import { createPlan, generationUsage, retryPlan } from "./generation.service.js";
 import { deletePackFiles, PACK_LANGUAGES, PACK_VARIANTS, packFile, requestPack } from "./pack.service.js";
-import { practice, PRACTICE_STATUSES, questionDetail, setStatus } from "./practice.service.js";
+import { fullAnswer, practice, PRACTICE_STATUSES, questionDetail, setStatus } from "./practice.service.js";
+import { activeTimedAttempt } from "../quiz/quiz.service.js";
+import { locked } from "../../utils/errors.js";
 import { isTargetRole, roleOptions } from "./roles.js";
 import { personalScores } from "../personalization/top100.js";
 
@@ -180,6 +182,16 @@ export function prepRoutes() {
     const { answer } = parse(z.object({ answer: z.string().max(6000) }), req.body);
     res.status(201);
     return practice(me.id, param(req, "id"), param(req, "qid"), answer);
+  }));
+
+  // Complete model answer (example, code, animatable diagram, follow-ups), cached per language.
+  r.post("/:id/questions/:qid/full-answer", aiLimiter(), handler(async (req) => {
+    const me = currentUser(req);
+    await ensureAiInterviewEnabled(me.id);
+    if (await activeTimedAttempt(me.id)) throw locked("AI help is switched off while you have a test in progress.");
+    const { language, regenerate } = parse(z.object({ language: z.enum(["en", "hinglish", "hi"]).optional(), regenerate: z.boolean().default(false) }), req.body ?? {});
+    const profile = await prisma.userProfile.findUnique({ where: { userId: me.id }, select: { explanationLocale: true } });
+    return fullAnswer(me.id, param(req, "id"), param(req, "qid"), language ?? profile?.explanationLocale ?? "hinglish", { regenerate });
   }));
 
   r.patch("/:id/questions/:qid", handler(async (req) => {

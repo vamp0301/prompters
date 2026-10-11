@@ -1,6 +1,7 @@
 "use client";
-import { ArrowDown, ArrowRight, ChevronLeft, ChevronRight, GitBranch } from "lucide-react";
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { ArrowDown, ArrowRight, ChevronLeft, ChevronRight, GitBranch, Pause, Play } from "lucide-react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useReducedMotion } from "motion/react";
 import type { Diagram } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 
@@ -251,6 +252,16 @@ const KIND_LABEL: Record<Diagram["kind"], string> = { architecture: "Architectur
 export function DiagramView({ diagram, compact }: { diagram: Diagram; compact?: boolean }) {
   const steps = diagram.walkthrough ?? [];
   const [step, setStep] = useState(0);
+  // Animated walkthrough: highlights each part in turn; stops at the end. Off under reduced motion.
+  const [play, setPlay] = useState(false);
+  const reduce = useReducedMotion();
+  const atEnd = step >= steps.length - 1;
+  const playing = play && !atEnd;
+  useEffect(() => {
+    if (!playing) return;
+    const t = setTimeout(() => setStep((s) => s + 1), 2400);
+    return () => clearTimeout(t);
+  }, [playing, step]);
   const current = steps.length ? steps[Math.min(step, steps.length - 1)] : null;
   let body: ReactNode;
   switch (diagram.kind) {
@@ -297,9 +308,24 @@ export function DiagramView({ diagram, compact }: { diagram: Diagram; compact?: 
             {current.label}
           </p>
           <div className="mt-2 flex items-center justify-between gap-2">
+            {!reduce && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (playing) return setPlay(false);
+                  if (atEnd) setStep(0);
+                  setPlay(true);
+                }}
+                aria-pressed={playing}
+                className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent-soft px-2.5 py-1 text-xs font-medium hover:border-accent"
+              >
+                {playing ? <Pause className="size-3.5" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
+                {playing ? "Pause" : atEnd && step > 0 ? "Replay" : "Play"}
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => setStep((s) => Math.max(0, s - 1))}
+              onClick={() => { setPlay(false); setStep((s) => Math.max(0, s - 1)); }}
               disabled={step === 0}
               className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:border-accent disabled:opacity-40"
             >
@@ -312,7 +338,7 @@ export function DiagramView({ diagram, compact }: { diagram: Diagram; compact?: 
             </span>
             <button
               type="button"
-              onClick={() => setStep((s) => Math.min(steps.length - 1, s + 1))}
+              onClick={() => { setPlay(false); setStep((s) => Math.min(steps.length - 1, s + 1)); }}
               disabled={step === steps.length - 1}
               className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:border-accent disabled:opacity-40"
             >

@@ -1832,6 +1832,8 @@ export interface TutorAnswer {
     testing: string[];
     pitfalls: string[];
     interviewAnswer: string;
+    /** Interview-question mode: likely follow-ups with their answers. */
+    followUps?: { question: string; answer: string }[];
     sources: string[];
     assumptions: string[];
     limitations: string[];

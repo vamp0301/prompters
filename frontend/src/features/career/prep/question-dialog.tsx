@@ -1,14 +1,15 @@
 "use client";
 import { useCallback, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Lightbulb, Mic, MicOff, Quote } from "lucide-react";
+import { BookOpenCheck, ChevronLeft, ChevronRight, Lightbulb, Mic, MicOff, Quote } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Field, Textarea } from "@/components/ui/input";
 import { Dialog, Skeleton, ErrorState } from "@/components/ui/misc";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api/client";
-import type { PrepPracticeResult, PrepPracticeStatus, PrepQuestionDetail } from "@/lib/api/types";
+import type { PrepPracticeResult, PrepPracticeStatus, PrepQuestionDetail, TutorAnswer } from "@/lib/api/types";
+import { SolutionAnswer } from "@/features/learning/solution-answer";
 import { formatDate } from "@/lib/utils";
 import { useDictation } from "../live/use-voice";
 import { careerKeys, InlineError, scoreTone } from "../shared";
@@ -39,6 +40,38 @@ export function QuestionDialog({ planId, questionId, list, onNavigate, onClose }
         </Button>
       </div>
     </Dialog>
+  );
+}
+
+type FullAnswerResult = Omit<TutorAnswer, "mode"> & { cached: boolean; language: string };
+
+/** Complete model answer: example, code, an animated diagram walkthrough and answered follow-ups. Saved once written. */
+function FullAnswer({ planId, questionId }: { planId: string; questionId: string }) {
+  const get = useMutation({
+    meta: { silent: true },
+    mutationFn: (regenerate: boolean) => api.post<FullAnswerResult>(`/career/prep/${planId}/questions/${questionId}/full-answer`, { regenerate }),
+  });
+  return (
+    <section aria-label="Full answer" className="space-y-2 border-t border-border pt-4">
+      {!get.data && (
+        <>
+          <Button size="sm" loading={get.isPending} onClick={() => get.mutate(false)}>
+            <BookOpenCheck className="size-3.5" aria-hidden /> Full answer — with example, code and an animated diagram
+          </Button>
+          {get.isPending && <p role="status" className="text-xs text-muted">Writing the complete answer… usually 10–30 seconds. It&apos;s saved, so next time it opens instantly.</p>}
+        </>
+      )}
+      {get.error && <InlineError error={get.error} />}
+      {get.data && (
+        <>
+          <SolutionAnswer data={{ ...get.data, mode: "solution" }} />
+          <p className="text-[11px] text-subtle">
+            {get.data.cached ? "Saved answer." : "Just written for you and saved."}{" "}
+            <button type="button" className="underline" disabled={get.isPending} onClick={() => get.mutate(true)}>Write a fresh one</button>
+          </p>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -134,6 +167,8 @@ function QuestionBody({ planId, questionId }: { planId: string; questionId: stri
           )}
         </div>
       )}
+
+      <FullAnswer planId={planId} questionId={questionId} />
 
       <section aria-label="Practise" className="space-y-2 border-t border-border pt-4">
         <Field label="Practise your answer (in English)" htmlFor={`${uid}-a`} hint="Answer as you would in the interview. You'll get feedback like Manisha would give.">

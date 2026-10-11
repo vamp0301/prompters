@@ -267,7 +267,7 @@ describe("difficulty ladder", () => {
 });
 
 describe("topic-wise grouping", () => {
-  const base = { id: "", planId: "", stage: 0, question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", followUps: [], translations: {}, status: "NEW", createdAt: new Date(), category: "SKILL" as const };
+  const base = { id: "", planId: "", stage: 0, question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", followUps: [], translations: {}, fullAnswers: {}, status: "NEW", createdAt: new Date(), category: "SKILL" as const };
   it("groups by topic, most important first, gathers single-question topics, keeps rank order inside", () => {
     const qs = [
       { ...base, rank: 3, skill: "JWT", priority: "INTENSE" as const, keyPoints: ["Expiry", "Signature"], bestScore: 40 },
@@ -288,7 +288,7 @@ describe("topic-wise grouping", () => {
 
 describe("pack planning helpers", () => {
   it("orders skills by importance and splits the bank across a 7-day plan", () => {
-    const base = { id: "", planId: "", stage: 0, question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", keyPoints: [], followUps: [], translations: {}, status: "NEW", createdAt: new Date() };
+    const base = { id: "", planId: "", stage: 0, question: "", probability: 0.5, difficulty: 2, followUpDepth: 3, why: "", evidence: "", sourceType: "", sourceLabel: "", chunkId: null, claimId: null, hint: "", keyPoints: [], followUps: [], translations: {}, fullAnswers: {}, status: "NEW", createdAt: new Date() };
     const qs = Array.from({ length: 20 }, (_, i) => ({
       ...base,
       rank: i + 1,

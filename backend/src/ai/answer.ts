@@ -130,6 +130,8 @@ export const answerSchema = z.object({
   testing: list(300, 6),
   pitfalls: list(300, 6),
   interviewAnswer: z.unknown().transform(toText).transform((x) => x.slice(0, 800)),
+  /** Likely follow-up questions with their answers (interview-question mode). */
+  followUps: upTo(z.object({ question: z.unknown().transform(toText).transform((x) => x.slice(0, 300)), answer: z.unknown().transform(toText).transform((x) => x.slice(0, 900)) }).refine((f) => f.question && f.answer), 5),
   sources: list(10, 10),
   assumptions: list(300, 5),
   limitations: list(300, 5),
@@ -137,7 +139,7 @@ export const answerSchema = z.object({
 });
 export type StructuredAnswer = Omit<z.infer<typeof answerSchema>, "diagram"> & { diagram: Diagram | null };
 
-function prompt(input: { topicTitle: string; question: string; locale: string; level: string; goal: string; mode: AnswerMode; recentMistakes: string[]; sources: Source[] }) {
+function prompt(input: AnswerInput & { sources: Source[] }) {
   const solutionRules = [
     "SOLUTION FIRST. `answer` directly answers the exact question in 1–4 sentences — the actual answer, never a hint or a question back.",
     "`solution`: the recommended approach as concrete ordered steps the student can follow.",
@@ -154,16 +156,18 @@ function prompt(input: { topicTitle: string; question: string; locale: string; l
     LOCALE[input.locale] ?? LOCALE.hinglish,
     `Student level: ${input.level}. Goal: ${input.goal}. Topic: ${input.topicTitle}.`,
     ...(input.mode === "hints" ? hintRules : solutionRules),
-    "`diagram`: include ONE diagram only when it makes the idea clearer (a flow of steps, a request timeline between actors, a state machine, a comparison, an architecture of layers or a decision). Otherwise null.",
+    "`diagram`: include ONE diagram only when it makes the idea clearer (and give it a `walkthrough`: 3–8 steps [{\"label\": what happens at this step, \"highlight\": the EXACT label of the node/step/state it happens at}] so the student can play it as an animation)  — a flow of steps, a request timeline between actors, a state machine, a comparison, an architecture of layers or a decision. Otherwise null.",
+    ...(input.extraRules ?? []),
     'Diagram shapes: {"kind":"flow","title","objective","steps":[{"label","note"}]} | {"kind":"timeline","title","objective","actors":[..],"events":[{"from","to","label"}]} | {"kind":"state","title","objective","states":[..],"transitions":[{"from","to","label"}]} | {"kind":"comparison","title","objective","left":{"title","points":[]},"right":{"title","points":[]}} | {"kind":"architecture","title","objective","layers":[{"label","nodes":[{"label","note"}]}]} | {"kind":"decision","title","objective","question","branches":[{"answer","result"}]}.',
     "`interviewAnswer`: 2–3 sentences in clear technical English a student could say in an interview.",
     "GROUNDING: the <sources> are Prompters' own lessons. Put the ids of sources you actually used in `sources` (e.g. [\"S1\",\"S3\"]); never invent ids. If you rely on general knowledge the sources don't cover, say so in `assumptions`. Anything you are unsure of goes in `limitations`. Never invent APIs, numbers or facts.",
     "`nextActions`: 1–3 concrete next things to practise.",
-    'JSON keys: answer, solution{summary,steps}, explanation{concept,whyItWorks,tradeoffs}, examples[{title,input,output,explanation}], code[{language,title,code,explanation}], diagram, testing, pitfalls, interviewAnswer, sources, assumptions, limitations, nextActions. Omit nothing; use [] or "" when a field does not apply.',
+    'JSON keys: answer, solution{summary,steps}, explanation{concept,whyItWorks,tradeoffs}, examples[{title,input,output,explanation}], code[{language,title,code,explanation}], diagram, testing, pitfalls, interviewAnswer, followUps[{question,answer}], sources, assumptions, limitations, nextActions. Omit nothing; use [] or "" when a field does not apply.',
   ].join("\n");
   const user = [
     fence("sources", input.sources.length ? input.sources.map((s) => `[${s.id}] ${s.topicTitle} — ${s.section}\n${s.text}`).join("\n\n") : "(no lesson content found for this question)"),
     input.recentMistakes.length ? `Questions the student recently got wrong:\n- ${input.recentMistakes.slice(0, 5).join("\n- ")}` : "",
+    input.context ? fence("context", input.context) : "",
     fence("question", input.question),
   ].filter(Boolean).join("\n\n");
   return { system, user };
@@ -210,12 +214,26 @@ export function toMarkdown(a: StructuredAnswer, sources: Source[]) {
   if (a.testing.length) out.push("### How to test", ...a.testing.map((x) => `- ${x}`));
   if (a.pitfalls.length) out.push("### Common mistakes", ...a.pitfalls.map((x) => `- ${x}`));
   if (a.interviewAnswer) out.push("### Interview answer", a.interviewAnswer);
+  if (a.followUps.length) out.push("### Follow-up questions", ...a.followUps.map((f) => `**${f.question}**\n\n${f.answer}`));
   const used = sources.filter((s) => a.sources.includes(s.id));
   if (used.length) out.push("### Sources", ...used.map((s) => `- ${s.topicTitle} (${s.section.toLowerCase()})`));
   return out.filter(Boolean).join("\n\n");
 }
 
-type AnswerInput = { topicTitle: string; question: string; locale: string; level: string; goal: string; mode: AnswerMode; recentMistakes: string[] };
+type AnswerInput = {
+  topicTitle: string;
+  question: string;
+  locale: string;
+  level: string;
+  goal: string;
+  mode: AnswerMode;
+  recentMistakes: string[];
+  /** Extra instructions for a specific use (e.g. interview-question mode). */
+  extraRules?: string[];
+  /** Background the answer must use (fenced as untrusted data). */
+  context?: string;
+  timeoutMs?: number;
+};
 
 export async function answerQuestion(input: AnswerInput & { topicId: string }) {
   return generateAnswer(input, await retrieve(input.topicId, input.question, input.locale));
@@ -224,7 +242,7 @@ export async function answerQuestion(input: AnswerInput & { topicId: string }) {
 /** Model call + verification over already-retrieved sources (also used by the real-model check). */
 export async function generateAnswer(input: AnswerInput, sources: Source[]) {
   const { system, user } = prompt({ ...input, sources });
-  const raw = await aiJson("tutor_answer", system, user, answerSchema, 6000, { timeoutMs: 90_000 });
+  const raw = await aiJson("tutor_answer", system, user, answerSchema, 7000, { timeoutMs: input.timeoutMs ?? 90_000 });
   const { answer, verification } = verify(raw, sources);
   return {
     structured: answer,
