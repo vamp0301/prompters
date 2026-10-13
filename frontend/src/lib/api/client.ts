@@ -39,6 +39,13 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body ?? {}),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body ?? {}),
   delete: <T>(path: string, body?: unknown) => request<T>("DELETE", path, body),
+  /**
+   * Fire-and-forget write that survives the page closing (fetch keepalive; body must stay under ~64 KB).
+   * For last-moment saves on `pagehide`; the response is ignored.
+   */
+  keepalive: (method: "PUT" | "POST", path: string, body: unknown) => {
+    fetch(`/api${path}`, { method, credentials: "include", keepalive: true, headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => undefined);
+  },
   /** POST that answers with binary data (e.g. speech audio). Errors arrive as the usual JSON envelope. */
   blob: async (path: string, body: unknown, signal?: AbortSignal): Promise<Blob> => {
     let res: Response;

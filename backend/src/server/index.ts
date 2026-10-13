@@ -6,7 +6,7 @@ import { logger } from "../lib/logger.js";
 import { prisma } from "../lib/prisma.js";
 import { closeRedis } from "../lib/redis.js";
 import { initTaxonomy } from "../modules/roles/taxonomy.js";
-import { startWorkers } from "../workers/run.js";
+import { startWorkersInBackground } from "../workers/run.js";
 import { createApp } from "./app.js";
 
 if (isProd) {
@@ -18,10 +18,6 @@ if (isProd) {
 
 await initTaxonomy();
 
-// Hosts without a separate worker service (Render free plan) run the workers in this process.
-const stopWorkers = env.RUN_WORKERS_IN_API ? await startWorkers() : null;
-if (stopWorkers) logger.info("Background workers running inside the API process (RUN_WORKERS_IN_API=true)");
-
 const server = createApp().listen(env.PORT, () => logger.info(`Prompters API listening on :${env.PORT}`));
 // Slightly above typical load-balancer idle timeouts so the LB closes idle connections first.
 server.keepAliveTimeout = 65_000;
@@ -29,6 +25,19 @@ server.headersTimeout = 66_000;
 
 const SHUTDOWN_GRACE_MS = 25_000;
 let stopping = false;
+let stopWorkers: (() => Promise<void>) | null = null;
+
+// Hosts without a separate worker service (Render free plan) run the workers in this process. They start
+// after the API is listening, so a Redis outage at boot delays background jobs instead of the whole API.
+if (env.RUN_WORKERS_IN_API) {
+  void startWorkersInBackground({
+    stopped: () => stopping,
+    onStarted: (stop) => {
+      stopWorkers = stop;
+      logger.info("Background workers running inside the API process (RUN_WORKERS_IN_API=true)");
+    },
+  });
+}
 
 async function shutdown(signal: string) {
   if (stopping) return;

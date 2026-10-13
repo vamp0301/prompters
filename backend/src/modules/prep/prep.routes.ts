@@ -10,7 +10,7 @@ import { handler, param, parse } from "../../utils/http.js";
 import { ensureAiInterviewEnabled } from "../career/career.routes.js";
 import { CATEGORY_LABEL, DEFAULT_ALLOCATION, PREP_CATEGORIES, TOTAL_QUESTIONS } from "./allocation.js";
 import { createPlan, generationUsage, retryPlan } from "./generation.service.js";
-import { ANSWER_SCOPES, deletePackFiles, PACK_LANGUAGES, PACK_VARIANTS, packFile, requestPack } from "./pack.service.js";
+import { ANSWER_SCOPES, deletePackFiles, PACK_LANGUAGES, PACK_VARIANTS, PACK_VIEW, packFile, requestPack } from "./pack.service.js";
 import { getFullAnswer, practice, PRACTICE_STATUSES, questionDetail, requestFullAnswer, setStatus } from "./practice.service.js";
 import { aiProvider } from "../../ai/provider.js";
 import { activeTimedAttempt } from "../quiz/quiz.service.js";
@@ -225,7 +225,7 @@ export function prepRoutes() {
   r.get("/:id/packs/:packId", handler(async (req) => {
     const pack = await prisma.prepPack.findFirst({
       where: { id: param(req, "packId"), planId: param(req, "id"), userId: currentUser(req).id },
-      select: { id: true, variant: true, language: true, status: true, error: true, scope: true, progress: true, createdAt: true, completedAt: true },
+      select: PACK_VIEW,
     });
     if (!pack) throw notFound("Interview pack");
     return pack;

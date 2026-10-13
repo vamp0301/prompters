@@ -127,6 +127,25 @@ describe("stage exam with integrity rules", () => {
     expect(res.body.data.result.score).toBe(100);
   });
 
+  it("refuses drafts after the deadline and grades only what was saved in time", async () => {
+    const { agent } = await login();
+    const start = await agent.post("/api/assessments/foundations-exam/start");
+    const id = start.body.data.id;
+    const wrong = await answersFor(id, "wrong");
+    expect((await agent.put(`/api/attempts/${id}/draft`).send({ answers: wrong })).status).toBe(200);
+    // The timer ran out (beyond the grace period).
+    await prisma.quizAttempt.update({ where: { id }, data: { expiresAt: new Date(Date.now() - 5 * 60_000) } });
+    const late = await agent.put(`/api/attempts/${id}/draft`).send({ answers: await answersFor(id, "correct") });
+    expect(late.status).toBe(409);
+    const result = await agent.post(`/api/attempts/${id}/submit`).send({ answers: await answersFor(id, "correct") });
+    expect(result.body.data.status).toBe("EXPIRED");
+    expect(result.body.data.score).toBe(0);
+    // A draft arriving after submission doesn't touch the graded attempt.
+    expect((await agent.put(`/api/attempts/${id}/draft`).send({ answers: await answersFor(id, "correct") })).status).toBe(409);
+    const row = await prisma.quizAttempt.findUniqueOrThrow({ where: { id } });
+    expect(row.draftAnswers).toEqual(wrong);
+  });
+
   it("passing the exam unlocks the next stage", async () => {
     const { agent } = await login();
     const start = await agent.post("/api/assessments/foundations-exam/start");

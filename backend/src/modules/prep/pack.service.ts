@@ -28,6 +28,9 @@ type Localized = { question: string; hint: string; why: string; keyPoints: strin
 
 // ───────────────────────── API-facing ─────────────────────────
 
+/** What clients see of a pack: never the stored PDF bytes (`pdf`, ~100 KB+) or storage keys. */
+export const PACK_VIEW = { id: true, variant: true, language: true, status: true, error: true, scope: true, progress: true, createdAt: true, completedAt: true } as const;
+
 export async function requestPack(userId: string, planId: string, variant: PackVariant, language: PackLanguage, scope?: number) {
   // Check-then-create below: one request at a time per plan, so a double-click makes one PDF.
   return withLock(`lock:prep-pack:${userId}:${planId}`, 15_000, () => requestPackLocked(userId, planId, variant, language, scope), 5_000).catch((e) => {
@@ -49,9 +52,10 @@ async function requestPackLocked(userId: string, planId: string, variant: PackVa
   const reusable = await prisma.prepPack.findFirst({
     where: { planId, variant, language, ...(answers ? { scope: size, status: { in: ["QUEUED", "RUNNING"] } } : { status: { in: ["QUEUED", "RUNNING", "READY"] } }), ...(lastAttempt ? { createdAt: { gt: lastAttempt.createdAt } } : {}) },
     orderBy: { createdAt: "desc" },
+    select: PACK_VIEW,
   });
   if (reusable) return reusable;
-  const pack = await prisma.prepPack.create({ data: { planId, userId, variant, language, scope: size } });
+  const pack = await prisma.prepPack.create({ data: { planId, userId, variant, language, scope: size }, select: PACK_VIEW });
   await enqueuePrep({ kind: "pack", packId: pack.id, long: answers });
   await logEvent(userId, "prep_pack_requested", { meta: { planId, variant, language, ...(size ? { scope: size } : {}) } });
   return pack;

@@ -72,21 +72,40 @@ function Workspace({ slug, task, preferred }: { slug: string; task: BuildTask; p
   const [submitResult, setSubmitResult] = useState<SubmitResponse | null>(null);
   const [answers, setAnswers] = useState<string[]>(() => task.explainQuestions?.map(() => "") ?? []);
   const [explainResult, setExplainResult] = useState<ExplainResponse | null>(null);
-  const dirty = useRef(false);
+  // Languages edited since the last save, and the latest code (read by the timer and the unload flush).
+  const dirty = useRef(new Set<Lang>());
+  const latest = useRef(code);
+  useEffect(() => {
+    latest.current = code;
+  }, [code]);
 
   useEffect(() => {
     if (!task.submission) api.post(`/build-tasks/${slug}/start`, { language: preferred }).catch(() => undefined);
   }, [task.submission, slug, preferred]);
 
-  // Autosave the code every 5 seconds while editing.
+  // Autosave every 5 seconds while editing (the timer is not reset by typing), and flush when the page
+  // is hidden or closed, or this task is left, so a refresh never loses more than a few seconds.
   useEffect(() => {
-    const t = setInterval(() => {
-      if (!dirty.current) return;
-      dirty.current = false;
-      api.put(`/build-tasks/${slug}/code`, { language: lang, code: code[lang] }).catch(() => { dirty.current = true; });
-    }, 5000);
-    return () => clearInterval(t);
-  }, [slug, lang, code]);
+    const save = (keepalive: boolean) => {
+      for (const l of [...dirty.current]) {
+        dirty.current.delete(l);
+        const body = { language: l, code: latest.current[l] };
+        if (keepalive) api.keepalive("PUT", `/build-tasks/${slug}/code`, body);
+        else api.put(`/build-tasks/${slug}/code`, body).catch(() => dirty.current.add(l));
+      }
+    };
+    const t = setInterval(() => save(false), 5000);
+    const onHide = () => save(true);
+    const onVisibility = () => { if (document.visibilityState === "hidden") save(true); };
+    window.addEventListener("pagehide", onHide);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("pagehide", onHide);
+      document.removeEventListener("visibilitychange", onVisibility);
+      save(true);
+    };
+  }, [slug]);
 
   const canRun = useCodeExecution();
   const runM = useMutation({
@@ -227,7 +246,7 @@ function Workspace({ slug, task, preferred }: { slug: string; task: BuildTask; p
           </div>
           {!canRun && <p role="status" className="border-b border-warn/30 bg-warn-soft px-3 py-2 text-xs text-warn">{CODE_EXECUTION_OFF}</p>}
           <div className="min-h-0 flex-1 bg-code">
-            <CodeEditor value={code[lang]} onChange={(v) => { dirty.current = true; setCode((c) => ({ ...c, [lang]: v })); }} language={lang} ariaLabel={`${lang} solution`} />
+            <CodeEditor value={code[lang]} onChange={(v) => { dirty.current.add(lang); setCode((c) => ({ ...c, [lang]: v })); }} language={lang} ariaLabel={`${lang} solution`} />
           </div>
           <div className="h-64 shrink-0 overflow-hidden border-t border-border bg-surface">
             <div className="flex items-center justify-between border-b border-border px-3 py-1.5">

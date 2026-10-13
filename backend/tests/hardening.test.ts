@@ -10,6 +10,7 @@ import { CODE_QUEUE, executeCode } from "../src/jobs/queues.js";
 import { liveTargets } from "../src/jobs/prep-queue.js";
 import { bullConnection } from "../src/lib/redis.js";
 import { startHeartbeat } from "../src/lib/heartbeat.js";
+import { startWorkersInBackground } from "../src/workers/run.js";
 import { prisma } from "../src/lib/prisma.js";
 import { redis } from "../src/lib/redis.js";
 import { deleteUserObjects, storage } from "../src/lib/storage.js";
@@ -360,6 +361,41 @@ describe("dependency outages", () => {
 });
 
 // ───────────────────────── health ─────────────────────────
+
+describe("worker start at boot", () => {
+  it("retries a failed worker start in the background instead of blocking the API", async () => {
+    let calls = 0;
+    let stop: (() => Promise<void>) | null = null;
+    const started = await startWorkersInBackground({
+      baseDelayMs: 5,
+      stopped: () => false,
+      start: async () => {
+        calls++;
+        if (calls < 3) throw new Error("ERR max requests limit exceeded");
+        return async () => undefined;
+      },
+      onStarted: (s) => (stop = s),
+    });
+    expect(started).toBe(true);
+    expect(calls).toBe(3);
+    expect(stop).toBeTypeOf("function");
+  });
+
+  it("gives up retrying once the API is shutting down", async () => {
+    let calls = 0;
+    const started = await startWorkersInBackground({
+      baseDelayMs: 5,
+      stopped: () => calls >= 2,
+      start: async () => {
+        calls++;
+        throw new Error("redis down");
+      },
+      onStarted: () => undefined,
+    });
+    expect(started).toBe(false);
+    expect(calls).toBe(2);
+  });
+});
 
 describe("health checks", () => {
   it("separates liveness, readiness and worker status", async () => {

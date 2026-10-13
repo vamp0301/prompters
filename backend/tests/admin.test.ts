@@ -124,6 +124,16 @@ describe("content lifecycle", () => {
     expect(dash.body.data.daily.length).toBeGreaterThan(25);
   });
 
+  it("global search shows users to admins but not to authors", async () => {
+    const student = await login();
+    const email = (await prisma.user.findUniqueOrThrow({ where: { id: student.id } })).email;
+    const admin = await login("ADMIN");
+    const author = await login("AUTHOR");
+    const types = async (agent: typeof admin.agent) => (await agent.get(`/api/admin/search?q=${encodeURIComponent(email)}`)).body.data.results.map((r: { type: string }) => r.type);
+    expect(await types(admin.agent)).toContain("User");
+    expect(await types(author.agent)).not.toContain("User");
+  });
+
   it("super admin can change roles, never their own", async () => {
     const { agent, id } = await login("SUPER_ADMIN");
     const { id: target } = await login();

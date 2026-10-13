@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma.js";
-import { requireRole } from "../../middleware/auth.js";
+import { currentUser, hasRole, requireRole } from "../../middleware/auth.js";
 import { handler } from "../../utils/http.js";
 import { completenessInclude, completenessOf, SECTION_ORDER } from "../learning/snapshot.js";
 
@@ -142,7 +142,8 @@ export function insightsRoutes() {
     if (q.length < 2) return { query: q, results: [] };
     const like = { contains: q, mode: Prisma.QueryMode.insensitive };
     const [users, topics, modules, stages, questions, builds, projects, prompts, interviews, viz] = await Promise.all([
-      prisma.user.findMany({ where: { OR: [{ email: like }, { name: like }] }, take: 5, select: { id: true, name: true, email: true } }),
+      // Student names and emails only for staff who can open /admin/users (ADMIN+), never for authors.
+      hasRole(currentUser(req).role, "ADMIN") ? prisma.user.findMany({ where: { OR: [{ email: like }, { name: like }] }, take: 5, select: { id: true, name: true, email: true } }) : [],
       prisma.topic.findMany({ where: { OR: [{ title: like }, { slug: like }] }, take: 8, select: { id: true, title: true, slug: true, status: true } }),
       prisma.module.findMany({ where: { title: like }, take: 5, select: { id: true, title: true } }),
       prisma.stage.findMany({ where: { title: like }, take: 5, select: { id: true, title: true } }),

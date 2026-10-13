@@ -121,6 +121,11 @@ describe("STORAGE_DRIVER=none", () => {
       // The download is the stored PDF byte for byte (a re-render would differ, e.g. in its timestamp).
       expect(Buffer.compare(file.body as Buffer, Buffer.from(row.pdf!))).toBe(0);
       expect((await other.agent.get(`/api/career/prep/${plan.id}/packs/${pack.id}/download`)).status).toBe(404);
+      // Asking for the same pack again reuses the ready row, and the response never carries the PDF bytes.
+      const reused = await agent.post(`/api/career/prep/${plan.id}/packs`).send({ variant: "GUIDE", language });
+      expect(reused.body.data.id).toBe(pack.id);
+      expect(reused.body.data).not.toHaveProperty("pdf");
+      expect(JSON.stringify(reused.body).length).toBeLessThan(2000);
     }
     // Downloading again doesn't call the model: translations were saved by the worker.
     const translations = fake.calls.filter((c) => c.task === "translate_hi").length;

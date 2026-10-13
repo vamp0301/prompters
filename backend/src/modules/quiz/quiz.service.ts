@@ -224,8 +224,12 @@ export async function getAttempt(userId: string, attemptId: string) {
 export async function saveDraft(userId: string, attemptId: string, answers: Answers) {
   const attempt = await ownedAttempt(userId, attemptId);
   if (attempt.status !== "IN_PROGRESS") throw conflict("This attempt is already submitted.");
+  // After the deadline (plus grace) the saved answers are final: submit grades them as they were.
+  if (attempt.expiresAt && attempt.expiresAt.getTime() + GRACE_MS < Date.now()) throw conflict("Time is up for this attempt.");
   const allowed = Object.fromEntries(Object.entries(answers).filter(([k]) => attempt.questionIds.includes(k)));
-  await prisma.quizAttempt.update({ where: { id: attemptId }, data: { draftAnswers: allowed as Prisma.InputJsonValue } });
+  // Conditional write: a draft racing a submit never overwrites the graded attempt's answers.
+  const saved = await prisma.quizAttempt.updateMany({ where: { id: attemptId, status: "IN_PROGRESS" }, data: { draftAnswers: allowed as Prisma.InputJsonValue } });
+  if (saved.count === 0) throw conflict("This attempt is already submitted.");
   return { savedAt: new Date() };
 }
 
